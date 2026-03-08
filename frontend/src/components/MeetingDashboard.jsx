@@ -1,33 +1,10 @@
 import { useState, useEffect } from 'react';
 import './MeetingDashboard.css';
 
-export default function MeetingDashboard() {
-    const [meetings, setMeetings] = useState([]);
-    const [loading, setLoading] = useState(true);
+export default function MeetingDashboard({ meetings, onRefresh }) {
+    const [loading, setLoading] = useState(false);
     const [expandedMeetingId, setExpandedMeetingId] = useState(null);
 
-    const [showCreateModal, setShowCreateModal] = useState(false);
-    const [newMeetingData, setNewMeetingData] = useState({ title: '', durationMinutes: 60, participantIds: ['u2'] });
-
-    useEffect(() => {
-        fetchMeetings();
-    }, []);
-
-    const fetchMeetings = () => {
-        fetch('https://aeox6n4cja.execute-api.us-east-1.amazonaws.com/api/meetings')
-            .then(res => {
-                if (!res.ok) throw new Error('API Error');
-                return res.json();
-            })
-            .then(data => {
-                setMeetings(data);
-                setLoading(false);
-            })
-            .catch(err => {
-                console.error(err);
-                setLoading(false);
-            });
-    };
 
     const handleCreateMeeting = (e) => {
         e.preventDefault();
@@ -44,37 +21,32 @@ export default function MeetingDashboard() {
                 return res.json();
             })
             .then(() => {
-                fetchMeetings();
+                onRefresh();
                 setNewMeetingData({ title: '', durationMinutes: 60, participantIds: ['u2'] }); // Reset
+                setLoading(false);
             })
             .catch(err => {
-                alert("שגיאה ביצירת פגישה");
+                alert("Error creating meeting request");
                 console.error(err);
                 setLoading(false);
             });
     };
 
     const handleBookSlot = (meetingId, slot) => {
-        // Optimistic UI Update
-        const updatedMeetings = meetings.map(m => {
-            if (m.requestId === meetingId) {
-                return { ...m, status: 'confirmed' };
-            }
-            return m;
-        });
-        setMeetings(updatedMeetings);
-        setExpandedMeetingId(null); // Close accordion
+        setLoading(true);
+        setExpandedMeetingId(null); 
 
         // API Call
         fetch(`https://aeox6n4cja.execute-api.us-east-1.amazonaws.com/api/meetings/${meetingId}/book/${encodeURIComponent(slot.startIso)}`, { method: 'POST' })
             .then(res => {
                 if (!res.ok) throw new Error('Booking failed');
-                // Refresh to get latest state from server
-                fetchMeetings();
+                onRefresh();
+                setLoading(false);
             })
             .catch(err => {
-                alert("שגיאה בקביעת הפגישה");
-                fetchMeetings(); // Revert
+                alert("Failed to book the selected slot");
+                onRefresh(); 
+                setLoading(false);
             });
     };
 
@@ -87,19 +59,19 @@ export default function MeetingDashboard() {
     };
 
     const formatTime = (isoString) => {
-        return new Date(isoString).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+        return new Date(isoString).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
     };
 
     const formatDate = (isoString) => {
-        return new Date(isoString).toLocaleDateString('he-IL', { weekday: 'long', day: 'numeric', month: 'numeric' });
+        return new Date(isoString).toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' });
     };
 
-    if (loading) return <div className="loading">מחשב הצעות הוגנות... 🤖</div>;
+    if (loading) return <div className="loading">Updating schedule... 🤖</div>;
 
     return (
         <div className="meeting-dashboard">
             <div className="dashboard-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                <h2>ניהול לו"ז חכם 🧠</h2>
+                <h2>Smart Schedule Management 🧠</h2>
                 <button
                     className="create-btn"
                     onClick={() => setShowCreateModal(true)}
@@ -108,7 +80,7 @@ export default function MeetingDashboard() {
                         borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold'
                     }}
                 >
-                    + פגישה חדשה
+                    + New Meeting
                 </button>
             </div>
 
@@ -121,10 +93,10 @@ export default function MeetingDashboard() {
                         background: 'var(--bg-secondary)', padding: '2rem', borderRadius: '16px',
                         border: '1px solid var(--accent-color)', width: '400px', maxWidth: '90%'
                     }}>
-                        <h3 style={{ marginTop: 0 }}>יצירת בקשה חדשה</h3>
+                        <h3 style={{ marginTop: 0 }}>Create New Request</h3>
                         <form onSubmit={handleCreateMeeting} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                             <div>
-                                <label style={{ display: 'block', marginBottom: '0.5rem' }}>נושא הפגישה:</label>
+                                <label style={{ display: 'block', marginBottom: '0.5rem' }}>Meeting Title:</label>
                                 <input
                                     autoFocus
                                     type="text"
@@ -132,29 +104,29 @@ export default function MeetingDashboard() {
                                     value={newMeetingData.title}
                                     onChange={e => setNewMeetingData({ ...newMeetingData, title: e.target.value })}
                                     style={{ width: '100%', padding: '8px', borderRadius: '4px', border: 'none' }}
-                                    placeholder="לדוגמה: ישיבת צוות"
+                                    placeholder="e.g. Weekly Sync"
                                 />
                             </div>
                             <div>
-                                <label style={{ display: 'block', marginBottom: '0.5rem' }}>משך זמן (דקות):</label>
+                                <label style={{ display: 'block', marginBottom: '0.5rem' }}>Duration (Minutes):</label>
                                 <select
                                     value={newMeetingData.durationMinutes}
                                     onChange={e => setNewMeetingData({ ...newMeetingData, durationMinutes: Number(e.target.value) })}
                                     style={{ width: '100%', padding: '8px', borderRadius: '4px', border: 'none' }}
                                 >
-                                    <option value={15}>15 דק' (קצר)</option>
-                                    <option value={30}>30 דק' (רגיל)</option>
-                                    <option value={45}>45 דק'</option>
-                                    <option value={60}>60 דק' (שעה)</option>
-                                    <option value={90}>90 דק'</option>
+                                    <option value={15}>15 min (Quick)</option>
+                                    <option value={30}>30 min (Standard)</option>
+                                    <option value={45}>45 min</option>
+                                    <option value={60}>60 min (1 Hour)</option>
+                                    <option value={90}>90 min</option>
                                 </select>
                             </div>
                             <div style={{ display: 'flex', gap: '10px', marginTop: '1rem' }}>
                                 <button type="submit" style={{ flex: 1, background: 'var(--success)', border: 'none', padding: '10px', borderRadius: '4px', cursor: 'pointer', color: 'white', fontWeight: 'bold' }}>
-                                    🚀 חשב הוגנות וצור
+                                    🚀 Calculate & Create
                                 </button>
                                 <button type="button" onClick={() => setShowCreateModal(false)} style={{ flex: 1, background: '#555', border: 'none', padding: '10px', borderRadius: '4px', cursor: 'pointer', color: 'white' }}>
-                                    ביטול
+                                    Cancel
                                 </button>
                             </div>
                         </form>
@@ -162,7 +134,7 @@ export default function MeetingDashboard() {
                 </div>
             )}
 
-            {meetings.length === 0 && !loading && <div className="empty-state">אין בקשות לפגישות כרגע. צור אחת!</div>}
+            {meetings.length === 0 && !loading && <div className="empty-state">No meeting requests found. Start one!</div>}
 
             <div className="meetings-grid">
                 {meetings.map(meeting => {
@@ -177,18 +149,18 @@ export default function MeetingDashboard() {
                                         {isConfirmed ? '✅' : '📅'} {meeting.title}
                                     </h3>
                                     <div className="meeting-meta">
-                                        <span>⏳ {meeting.durationMinutes} דק'</span>
-                                        <span>👥 {meeting.participantUserIds.length} משתתפים</span>
+                                        <span>⏳ {meeting.durationMinutes}m</span>
+                                        <span>👥 {meeting.participantUserIds.length} Participants</span>
                                     </div>
                                 </div>
                                 <div className={`meeting-status ${meeting.status}`}>
-                                    {isConfirmed ? 'נקבע' : 'ממתין לשיבוץ'}
+                                    {isConfirmed ? 'Scheduled' : 'Pending Selection'}
                                 </div>
                             </div>
 
-                            {isExpanded && !isConfirmed && (
+                             {isExpanded && !isConfirmed && (
                                 <div className="meeting-slots">
-                                    <h4>בחר מועד (ממויין לפי הוגנות)</h4>
+                                    <h4>Select a Slot (Optimized by Fairness)</h4>
                                     <div className="slot-list">
                                         {meeting.slots.map((slot, idx) => (
                                             <div
@@ -196,12 +168,12 @@ export default function MeetingDashboard() {
                                                 className={`time-slot ${idx === 0 ? 'best-match' : ''}`}
                                                 onClick={() => handleBookSlot(meeting.requestId, slot)}
                                             >
-                                                {idx === 0 && <span className="slot-badge">מומלץ ⭐</span>}
+                                                {idx === 0 && <span className="slot-badge">Recommended ⭐</span>}
                                                 <div className="slot-time">
                                                     {formatDate(slot.startIso)} | {formatTime(slot.startIso)} - {formatTime(slot.endIso)}
                                                 </div>
                                                 <div className="slot-score">
-                                                    <span>דירוג: {slot.score}</span>
+                                                    <span>Fairness Score: {Math.round(slot.score)}%</span>
                                                     <div className="score-bar">
                                                         <div className="score-fill" style={{ width: `${slot.score}%` }}></div>
                                                     </div>

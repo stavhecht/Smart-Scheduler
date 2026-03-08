@@ -8,16 +8,53 @@
   gap: 2rem;
 }
 
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 3rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
 h1 {
-  font-size: 3rem;
+  font-size: 2.5rem;
   font-weight: 800;
-  text-align: center;
   background: linear-gradient(to right, #38bdf8, #818cf8);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  margin-bottom: 2rem;
-  text-shadow: 0 0 30px rgba(56, 189, 248, 0.2);
+  margin: 0;
+}
+
+.view-toggle {
+  display: flex;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 4px;
+  border-radius: 12px;
+  gap: 4px;
+}
+
+.view-toggle button {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  padding: 10px 20px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.view-toggle button.active {
+  background: var(--bg-secondary);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.view-toggle button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
 }
 
 .profile-card {

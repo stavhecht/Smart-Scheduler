@@ -1,50 +1,43 @@
-# Smart Scheduler - מערכת שיבוץ משמרות הוגנת
+# Smart Scheduler - Fair Schedule Management System
 
-מערכת לניהול משמרות מבוססת אלגוריתם הוגנות, הבנויה בטכנולוגיות מודרניות ומוכנה לפריסה בענן.
+A schedule management system based on a fairness algorithm, built with modern technologies and ready for cloud deployment.
 
-## 🚀 טכנולוגיות
+## 🚀 Technologies
 
 *   **Frontend**: React, Vite, Premium Dark Mode UI (Vanilla CSS).
-*   **Backend**: Python FastAPI.
-*   **Infrastructure**: Docker, Docker Compose, Nginx.
+*   **Backend**: Python FastAPI (AWS Lambda ready).
+*   **Infrastructure**: AWS Amplify, Terraform, API Gateway, DynamoDB.
 
-## 🛠️ הרצה מקומית (Local Development)
+## 🛠️ Local Development
 
-הדרך הפשוטה ביותר להריץ את המערכת היא באמצעות Docker Compose:
+The simplest way to run the system is using Docker Compose:
 
-1.  ודא ש-Docker Desktop רץ במחשב.
-2.  הרץ את הפקודה הבאה בתיקייה הראשית:
+1.  Ensure Docker Desktop is running.
+2.  Run the following command in the main directory:
 
 ```bash
 docker-compose up --build
 ```
 
-המערכת תהיה זמינה בכתובת: **[http://localhost](http://localhost)**
-(ה-Frontend רץ על פורט 80 ומדבר עם ה-Backend באופן אוטומטי).
+The system will be available at: **[http://localhost](http://localhost)**
+(The Frontend runs on port 80 and communicates with the Backend automatically).
 
-## ☁️ פריסה ל-AWS (AWS Deployment)
+## ☁️ AWS Deployment
 
-המערכת מוכנה לפריסה ב-AWS. מומלץ להשתמש ב-**AWS App Runner** לפריסה הקלה ביותר ללא ניהול שרתים.
+The system is configured for AWS deployment using Terraform and AWS Amplify.
 
-### אפשרות א': AWS App Runner (מומלץ)
-1.  העלה את הקוד ל-GitHub.
-2.  לך לקונסולת AWS App Runner.
-3.  צור שירות חדש וקשר אותו ל-GitHub Repository שלך.
-4.  הגדר את ה-Build Command ואת ה-Start Command לפי ה-Dockerfile.
-    *   **Frontend**: הגדר שימוש ב-Docker.
-    *   **Backend**: הגדר שימוש ב-Docker.
+### Frontend: AWS Amplify
+1.  Connect your GitHub repository to AWS Amplify.
+2.  Set the build settings to point to the `frontend/` directory.
 
-### אפשרות ב': EC2 + Docker Compose
-1.  צור מכונת EC2 (למשל t3.small) עם Ubuntu.
-2.  התקן Docker ו-Docker Compose על המכונה.
-3.  שכפל את ה-Repository למכונה.
-4.  הרץ `docker-compose up -d --build`.
+### Backend: Terraform
+1.  Navigate to the `/terraform` directory.
+2.  Run `terraform init` and `terraform apply`.
+3.  This will provision Lambda, API Gateway, and DynamoDB.
 
-## 📁 מבנה הפרויקט
+## 📁 Project Structure
 
-*   `/frontend` - קוד צד לקוח (React).
-    *   `Dockerfile` - הגדרות בנייה ל-Production (עם Nginx).
-*   `/backend` - קוד צד שרת (FastAPI).
-    *   `/api` - לוגיקת ה-API, מודלים, ומסד נתונים (זמני).
-    *   `Dockerfile` - הגדרות הריצה לשרת.
-*   `docker-compose.yml` - מנצח על כל התזמורת מקומית.
+*   `/frontend` - Client-side code (React).
+*   `/backend` - Server-side code (FastAPI).
+*   `/terraform` - Infrastructure as Code definitions.
+*   `docker-compose.yml` - Local orchestration.
