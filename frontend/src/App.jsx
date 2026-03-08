@@ -11,9 +11,14 @@ function App() {
 
   useEffect(() => {
     // Initial data fetch
+    const fetchWithCheck = (url) => fetch(url).then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText} at ${url}`);
+      return res.json();
+    });
+
     Promise.all([
-      fetch('https://aeox6n4cja.execute-api.us-east-1.amazonaws.com/api/profile').then(res => res.json()),
-      fetch('https://aeox6n4cja.execute-api.us-east-1.amazonaws.com/api/meetings').then(res => res.json())
+      fetchWithCheck('https://aeox6n4cja.execute-api.us-east-1.amazonaws.com/api/profile'),
+      fetchWithCheck('https://aeox6n4cja.execute-api.us-east-1.amazonaws.com/api/meetings')
     ])
       .then(([profileData, meetingsData]) => {
         setProfile(profileData);
@@ -21,8 +26,8 @@ function App() {
         setLoading(false);
       })
       .catch(err => {
-        console.error('Error:', err);
-        setError('Could not sync data from AWS.');
+        console.error('Detailed Error:', err);
+        setError(err.message || 'Unknown connection error');
         setLoading(false);
       });
   }, []);
