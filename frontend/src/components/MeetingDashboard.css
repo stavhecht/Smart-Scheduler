@@ -1,0 +1,172 @@
+.meeting-dashboard {
+    margin-top: 2rem;
+}
+
+.meetings-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.meeting-card {
+    background: var(--bg-secondary);
+    border: var(--glass-border);
+    border-radius: 16px;
+    overflow: hidden;
+    transition: all 0.3s ease;
+    position: relative;
+}
+
+.meeting-card:hover {
+    border-color: rgba(56, 189, 248, 0.3);
+    box-shadow: var(--shadow-lg);
+}
+
+.meeting-card.confirmed {
+    border-color: var(--success);
+    opacity: 0.8;
+}
+
+.meeting-header {
+    padding: 1.5rem;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.meeting-title-section h3 {
+    margin: 0;
+    font-size: 1.25rem;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.meeting-meta {
+    margin-top: 0.5rem;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    display: flex;
+    gap: 1rem;
+}
+
+.meeting-status {
+    padding: 0.25rem 0.75rem;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.meeting-status.pending {
+    background: rgba(245, 158, 11, 0.1);
+    color: var(--warning);
+}
+
+.meeting-status.confirmed {
+    background: rgba(34, 197, 94, 0.1);
+    color: var(--success);
+}
+
+/* Slots Area */
+.meeting-slots {
+    padding: 1.5rem;
+    background: rgba(0, 0, 0, 0.2);
+    border-top: var(--glass-border);
+    animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.slot-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1rem;
+}
+
+.time-slot {
+    background: var(--bg-card);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    padding: 1rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+    overflow: hidden;
+}
+
+.time-slot:hover:not(.disabled) {
+    background: rgba(56, 189, 248, 0.1);
+    border-color: var(--accent-color);
+    transform: translateY(-2px);
+}
+
+.time-slot.best-match {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 15px rgba(56, 189, 248, 0.1);
+}
+
+.slot-badge {
+    position: absolute;
+    top: 0;
+    right: 0;
+    background: var(--accent-color);
+    color: #000;
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-bottom-left-radius: 8px;
+    font-weight: bold;
+}
+
+.slot-time {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 0.5rem;
+}
+
+.slot-score {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.9rem;
+}
+
+.score-bar {
+    flex-grow: 1;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.score-fill {
+    height: 100%;
+    background: var(--success);
+}
+
+.slot-explanation {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+.time-slot.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    filter: grayscale(1);
+}
