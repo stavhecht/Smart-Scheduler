@@ -4,6 +4,8 @@ import './MeetingDashboard.css';
 export default function MeetingDashboard({ meetings, onRefresh }) {
     const [loading, setLoading] = useState(false);
     const [expandedMeetingId, setExpandedMeetingId] = useState(null);
+    const [showCreateModal, setShowCreateModal] = useState(false);
+    const [newMeetingData, setNewMeetingData] = useState({ title: '', durationMinutes: 60, participantIds: ['u2'] });
 
 
     const handleCreateMeeting = (e) => {
