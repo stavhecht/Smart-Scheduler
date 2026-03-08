@@ -37,6 +37,7 @@ def _query_begins_with(pk: str, sk_prefix: str) -> List[dict]:
     )
     return response.get('Items', [])
 
+# Initialize on module load
 def init_db():
     # Helper func to seed DynamoDB
     try:
@@ -56,7 +57,22 @@ def init_db():
         meetingLoadMetrics={"meetings_this_week": 12}, inconvenientMeetingsCount=3
     ).model_dump())
 
-# Initialize on module load
+    # Seed a confirmed meeting for the calendar
+    req_id = "seed-meeting-1"
+    tomorrow = datetime.now() + timedelta(days=1)
+    meeting_start = tomorrow.replace(hour=10, minute=0, second=0, microsecond=0)
+    
+    _put_item(f"MEET#{req_id}", "META", {
+        "requestId": req_id,
+        "creatorUserId": user_id,
+        "participantUserIds": ["u2"],
+        "title": "Strategy Sync (Mock)",
+        "durationMinutes": 60,
+        "status": "confirmed",
+        "selectedSlotStart": meeting_start.isoformat(),
+        "createdAt": datetime.now().isoformat()
+    })
+
 init_db()
 
 # --- Repository Functions ---

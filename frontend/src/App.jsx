@@ -3,13 +3,24 @@ import './App.css'
 import MeetingDashboard from './components/MeetingDashboard';
 import CalendarView from './components/CalendarView';
 
-function App() {
+// Amplify Auth Imports
+import { Amplify } from 'aws-amplify';
+import { Authenticator, useAuthenticator } from '@aws-amplify/ui-react';
+import '@aws-amplify/ui-react/styles.css';
+import awsConfig from './aws-exports';
+
+Amplify.configure(awsConfig);
+
+function AppContent() {
+  const { user, signOut } = useAuthenticator((context) => [context.user]);
   const [profile, setProfile] = useState(null);
   const [meetings, setMeetings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   useEffect(() => {
+    if (!user) return;
+    
     // Initial data fetch
     const fetchWithCheck = (url) => fetch(url).then(res => {
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText} at ${url}`);
@@ -30,7 +41,7 @@ function App() {
         setError(err.message || 'Unknown connection error');
         setLoading(false);
       });
-  }, []);
+  }, [user]);
 
   const refreshMeetings = () => {
     fetch('https://aeox6n4cja.execute-api.us-east-1.amazonaws.com/api/meetings')
@@ -40,13 +51,15 @@ function App() {
   };
 
   return (
-
     <div className="app-container">
       <header className="app-header">
         <h1>Smart Scheduler 📅</h1>
-        <div className="view-toggle">
-          <button className="active">Dashboard</button>
-          <button disabled title="Coming soon">Analytics</button>
+        <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
+          <div className="view-toggle">
+            <button className="active">Dashboard</button>
+            <button disabled title="Coming soon">Analytics</button>
+          </div>
+          <button onClick={signOut} className="signout-btn">Sign Out</button>
         </div>
       </header>
 
@@ -95,7 +108,14 @@ function App() {
       )}
     </div>
   )
-
 }
 
-export default App
+export default function App() {
+  return (
+    <Authenticator.Provider>
+      <Authenticator>
+        <AppContent />
+      </Authenticator>
+    </Authenticator.Provider>
+  );
+}
