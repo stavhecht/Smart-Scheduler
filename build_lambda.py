@@ -20,7 +20,7 @@ BUILD_DIR = ROOT / "build_tmp"
 OUTPUT_ZIP = ROOT / "terraform" / "api_deployment.zip"
 
 # Files to include from backend/api (exclude dev/test artifacts)
-EXCLUDE_PATTERNS = {".venv", "__pycache__", ".env", "*.pyc", ".pytest_cache", "setup_aws.py"}
+EXCLUDE_PATTERNS = {".venv", "__pycache__", ".env", "*.pyc", ".pytest_cache", "setup_aws.py", "package", "Dockerfile", ".dockerignore"}
 
 def matches_exclude(name: str) -> bool:
     import fnmatch

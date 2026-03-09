@@ -1,19 +1,14 @@
-annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.12.0
-click==8.3.1
-colorama==0.4.6
-fastapi==0.127.0
-h11==0.16.0
-idna==3.11
-pydantic==2.12.5
-pydantic_core==2.41.5
-starlette==0.50.0
-typing-inspection==0.4.2
-typing_extensions==4.15.0
-uvicorn==0.40.0
-# AWS SDK
-boto3==1.34.0
-python-dotenv==1.0.0
+fastapi==0.115.12
+idna==3.10
+pydantic==2.11.3
+pydantic_core==2.33.1
+starlette==0.46.2
+typing-inspection==0.4.0
+typing_extensions==4.13.2
 # Lambda Adapter
 mangum==0.17.0
+# NOTE: boto3 / botocore / uvicorn / python-dotenv are intentionally omitted.
+# boto3 is pre-installed in the Lambda Python 3.12 runtime (no need to bundle it).
+# uvicorn / click / colorama / h11 are dev-only (Mangum handles ASGI in Lambda).
