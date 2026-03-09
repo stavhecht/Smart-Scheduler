@@ -107,16 +107,41 @@ def update_fairness_on_booking(user_id: str, slot_fairness_impact: float):
 # ---------------------------------------------------------------------------
 
 def get_user_meetings(user_id: str) -> List[MeetingRequest]:
+    """Returns meetings where user is creator OR a participant."""
     response = table.scan(
         FilterExpression=(
             Attr('PK').begins_with('MEET#') &
             Attr('SK').eq('META') &
-            Attr('creatorUserId').eq(user_id)
+            (Attr('creatorUserId').eq(user_id) | Attr('participantUserIds').contains(user_id))
         )
     )
-    meetings = [MeetingRequest(**item) for item in response.get('Items', [])]
+    meetings = []
+    for item in response.get('Items', []):
+        try:
+            meetings.append(MeetingRequest(**item))
+        except Exception:
+            pass
     meetings.sort(key=lambda x: x.createdAt, reverse=True)
     return meetings
+
+
+def get_users_by_emails(emails: List[str]) -> List[dict]:
+    """Look up registered users by email address (for invitation flow)."""
+    found = []
+    for email in emails:
+        email = email.strip().lower()
+        if not email:
+            continue
+        response = table.scan(
+            FilterExpression=(
+                Attr('SK').eq('PROFILE') &
+                Attr('email').eq(email)
+            )
+        )
+        items = response.get('Items', [])
+        if items:
+            found.append(items[0])
+    return found
 
 
 def get_meeting_slots(request_id: str) -> List[SuggestedTimeSlot]:

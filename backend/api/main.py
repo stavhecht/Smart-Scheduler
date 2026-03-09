@@ -136,6 +136,7 @@ def get_user_profile(request: Request):
     return {
         "id": user_id,
         "name": profile.displayName,
+        "email": profile.email,
         "role": "Cloud Architect",
         "fairness_score": float(fairness.fairnessScore) if fairness else 100.0,
         "details": {
@@ -157,6 +158,8 @@ def get_meetings(request: Request):
         slots = db.get_meeting_slots(m.requestId)
         meeting_dict = m.model_dump()
         meeting_dict['slots'] = [s.model_dump() for s in slots]
+        # Compute role: organizer if user created it, participant otherwise
+        meeting_dict['userRole'] = 'organizer' if m.creatorUserId == user_id else 'participant'
         response_data.append(meeting_dict)
 
     return response_data
@@ -167,15 +170,22 @@ def create_meeting(meeting_data: MeetingCreateSchema, request: Request):
     """
     Creates a new meeting request.
 
-    If Step Functions is configured (STATE_MACHINE_ARN or AWS_ACCOUNT_ID is set),
-    the scheduling workflow runs through the full state machine:
-      FetchParticipantData → GenerateCandidateSlots → CalculateFairnessScores
-      → (if needed) ReshuffleSlots → StoreResults
-
-    Otherwise falls back to direct in-process computation.
+    Resolves participantEmails → user IDs before scheduling.
+    If Step Functions is configured (AWS_ACCOUNT_ID is set), runs the full
+    state machine workflow. Otherwise falls back to direct in-process computation.
     """
     identity = get_current_user(request)
     user_id = identity["user_id"]
+
+    # Resolve participant emails to user IDs
+    if meeting_data.participantEmails:
+        found_users = db.get_users_by_emails(meeting_data.participantEmails)
+        resolved_ids = list(meeting_data.participantIds)
+        for u in found_users:
+            uid = u.get('userId', '')
+            if uid and uid not in resolved_ids and uid != user_id:
+                resolved_ids.append(uid)
+        meeting_data.participantIds = resolved_ids
 
     account_id = os.environ.get('AWS_ACCOUNT_ID', '')
     use_step_functions = bool(account_id)  # Only use SFN in AWS environment
@@ -259,3 +269,29 @@ def book_meeting_slot(request_id: str, slot_start_iso: str, request: Request):
     db._put_item(f"MEET#{request_id}", "META", meeting)
 
     return {"status": "success", "message": "Meeting confirmed successfully", "meeting": meeting}
+
+
+@app.post("/api/meetings/{request_id}/accept")
+def accept_meeting(request_id: str, request: Request):
+    """
+    Participant accepts a confirmed meeting invitation.
+    Adds their user ID to the meeting's acceptedBy list.
+    """
+    identity = get_current_user(request)
+    user_id = identity["user_id"]
+
+    meeting = db._get_item(f"MEET#{request_id}", "META")
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+
+    participant_ids = meeting.get('participantUserIds', [])
+    if user_id not in participant_ids:
+        raise HTTPException(status_code=403, detail="You are not a participant in this meeting")
+
+    accepted_by = meeting.get('acceptedBy', [])
+    if user_id not in accepted_by:
+        accepted_by.append(user_id)
+    meeting['acceptedBy'] = accepted_by
+
+    db._put_item(f"MEET#{request_id}", "META", meeting)
+    return {"status": "success", "message": "Meeting accepted", "acceptedBy": accepted_by}

@@ -28,6 +28,8 @@ class MeetingRequest(BaseModel):
     dateRangeStart: datetime
     dateRangeEnd: datetime
     status: str = "pending"  # pending, confirmed, cancelled
+    selectedSlotStart: Optional[str] = None  # ISO string of booked slot
+    acceptedBy: List[str] = []              # user IDs who accepted
     createdAt: datetime = Field(default_factory=datetime.now)
 
 # --- Input Model for Creation ---
@@ -35,8 +37,8 @@ class MeetingCreateSchema(BaseModel):
     title: str
     durationMinutes: int
     participantIds: List[str] = []
-    # In a real app we'd ask for date range, simplified for demo:
-    daysForward: int = 3 
+    participantEmails: List[str] = []  # invite by email
+    daysForward: int = 3
 
 # --- 4. Suggested Time Slot ---
 class SuggestedTimeSlot(BaseModel):

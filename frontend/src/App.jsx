@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import './App.css'
 import MeetingDashboard from './components/MeetingDashboard';
 import CalendarView from './components/CalendarView';
+import ProfileView from './components/ProfileView';
 import { apiGet } from './apiClient';
 
 import { Amplify } from 'aws-amplify';
@@ -13,10 +14,10 @@ Amplify.configure(awsConfig);
 
 function AppContent() {
   const { user, signOut } = useAuthenticator((context) => [context.user]);
-  const [profile, setProfile] = useState(null);
-  const [meetings, setMeetings] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [profile, setProfile]       = useState(null);
+  const [meetings, setMeetings]     = useState([]);
+  const [loading, setLoading]       = useState(true);
+  const [error, setError]           = useState(null);
   const [activeView, setActiveView] = useState('dashboard');
 
   useEffect(() => {
@@ -31,30 +32,35 @@ function AppContent() {
         setLoading(false);
       })
       .catch(err => {
-        console.error('Detailed Error:', err);
-        if (err.message && err.message.includes('401')) {
+        console.error('Load error:', err);
+        if (err.message?.includes('401')) {
           signOut();
         } else {
-          setError(err.message || 'Unknown connection error');
+          setError(err.message || 'Connection error — check API Gateway');
           setLoading(false);
         }
       });
   }, [user]);
 
-  const refreshMeetings = () => {
+  const refreshMeetings = () =>
     apiGet('/api/meetings')
       .then(data => setMeetings(data))
       .catch(err => console.error('Refresh failed', err));
-  };
+
+  /* Badge counts */
+  const needsAction = meetings.filter(
+    m => m.userRole === 'participant' && m.status === 'confirmed' &&
+         !(m.acceptedBy || []).includes(profile?.id)
+  ).length;
+  const meetingsBadge = (meetings.filter(m => m.status === 'pending' && m.userRole === 'organizer').length + needsAction) || null;
 
   const navItems = [
     { id: 'dashboard', emoji: '🏠', label: 'Dashboard' },
-    { id: 'calendar',  emoji: '🗓️', label: 'Calendar' },
-    { id: 'meetings',  emoji: '📋', label: 'Meetings' },
-    { id: 'analytics', emoji: '📊', label: 'Analytics', disabled: true },
+    { id: 'calendar',  emoji: '🗓️', label: 'Calendar'  },
+    { id: 'meetings',  emoji: '📋', label: 'Meetings', badge: meetingsBadge },
+    { id: 'profile',   emoji: '👤', label: 'Profile'   },
   ];
 
-  const pendingCount = meetings.filter(m => m.status === 'pending').length;
   const initials = profile?.name
     ? profile.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
     : '??';
@@ -72,27 +78,31 @@ function AppContent() {
           {navItems.map(item => (
             <button
               key={item.id}
-              className={`nav-item ${activeView === item.id ? 'active' : ''} ${item.disabled ? 'nav-disabled' : ''}`}
-              onClick={() => !item.disabled && setActiveView(item.id)}
-              title={item.disabled ? 'Coming soon' : item.label}
+              className={`nav-item ${activeView === item.id ? 'active' : ''}`}
+              onClick={() => setActiveView(item.id)}
+              title={item.label}
             >
               <span className="nav-emoji">{item.emoji}</span>
               <span className="nav-label">{item.label}</span>
-              {item.id === 'meetings' && pendingCount > 0 && (
-                <span className="nav-badge">{pendingCount}</span>
+              {item.badge > 0 && (
+                <span className="nav-badge">{item.badge}</span>
               )}
-              {item.disabled && <span className="nav-soon">Soon</span>}
             </button>
           ))}
         </nav>
 
         <div className="sidebar-footer">
           {profile && (
-            <div className="sidebar-user">
+            <div
+              className="sidebar-user"
+              onClick={() => setActiveView('profile')}
+              style={{ cursor: 'pointer' }}
+              title="View profile"
+            >
               <div className="sidebar-avatar">{initials}</div>
               <div className="sidebar-user-info">
                 <div className="sidebar-user-name">{profile.name}</div>
-                <div className="sidebar-user-role">{profile.role}</div>
+                <div className="sidebar-user-role">Score: {Math.round(profile.fairness_score ?? 100)}</div>
               </div>
             </div>
           )}
@@ -105,7 +115,7 @@ function AppContent() {
         {loading && (
           <div className="loading-screen">
             <div className="spinner" />
-            <span>Syncing with AWS…</span>
+            <span>Connecting to AWS…</span>
           </div>
         )}
 
@@ -122,20 +132,37 @@ function AppContent() {
                 profile={profile}
                 meetings={meetings}
                 onNavigate={setActiveView}
+                needsAction={needsAction}
               />
             )}
+
             {activeView === 'calendar' && (
               <div className="view-wrap">
                 <div className="view-header">
                   <h2>Calendar</h2>
-                  <p className="view-subtitle">Your weekly scheduling overview</p>
+                  <p className="view-subtitle">Visual overview of your confirmed meetings</p>
                 </div>
                 <CalendarView meetings={meetings} />
               </div>
             )}
+
             {activeView === 'meetings' && (
               <div className="view-wrap">
-                <MeetingDashboard meetings={meetings} onRefresh={refreshMeetings} />
+                <MeetingDashboard
+                  meetings={meetings}
+                  onRefresh={refreshMeetings}
+                  currentUserId={profile.id}
+                />
+              </div>
+            )}
+
+            {activeView === 'profile' && (
+              <div className="view-wrap">
+                <div className="view-header">
+                  <h2>Profile & Settings</h2>
+                  <p className="view-subtitle">Account details and fairness analytics</p>
+                </div>
+                <ProfileView profile={profile} meetings={meetings} />
               </div>
             )}
           </>
@@ -145,10 +172,13 @@ function AppContent() {
   );
 }
 
-function DashboardView({ profile, meetings, onNavigate }) {
-  const pendingMeetings   = meetings.filter(m => m.status === 'pending');
-  const confirmedMeetings = meetings.filter(m => m.status === 'confirmed');
-  const score      = Math.round(profile.fairness_score);
+/* ─────────────────────────────────────────────
+   DashboardView — home screen overview
+───────────────────────────────────────────── */
+function DashboardView({ profile, meetings, onNavigate, needsAction }) {
+  const myPending = meetings.filter(m => m.status === 'pending' && m.userRole === 'organizer');
+  const confirmed = meetings.filter(m => m.status === 'confirmed');
+  const score     = Math.round(profile.fairness_score ?? 100);
   const scoreColor = score >= 80 ? 'var(--success)' : score >= 60 ? 'var(--warning)' : 'var(--danger)';
 
   return (
@@ -156,13 +186,28 @@ function DashboardView({ profile, meetings, onNavigate }) {
       {/* Hero */}
       <div className="dash-hero">
         <div>
-          <h1 className="dash-greeting">Welcome back, {profile.name} 👋</h1>
+          <h1 className="dash-greeting">Welcome back, {profile.name.split(' ')[0]} 👋</h1>
           <p className="dash-subtitle">Here's your scheduling overview for today.</p>
         </div>
         <button className="btn-primary" onClick={() => onNavigate('meetings')}>
           + New Meeting
         </button>
       </div>
+
+      {/* Invitations action banner */}
+      {needsAction > 0 && (
+        <div
+          className="insight-banner"
+          style={{ marginBottom: '1.5rem', cursor: 'pointer', borderColor: 'rgba(245,158,11,0.3)', background: 'rgba(245,158,11,0.06)' }}
+          onClick={() => onNavigate('meetings')}
+        >
+          <span>🔔</span>
+          <span>
+            You have <strong>{needsAction}</strong> meeting{needsAction > 1 ? 's' : ''} awaiting your acceptance.{' '}
+            <span style={{ color: 'var(--accent-color)' }}>View invitations →</span>
+          </span>
+        </div>
+      )}
 
       {/* Stats */}
       <div className="stats-row">
@@ -186,63 +231,65 @@ function DashboardView({ profile, meetings, onNavigate }) {
         </div>
 
         <div className="stat-card">
-          <div className="stat-icon">⚠️</div>
+          <div className="stat-icon">✅</div>
           <div className="stat-body">
-            <div className="stat-value">{profile.details?.cancellations_last_month ?? 0}</div>
-            <div className="stat-label">Conflicts</div>
+            <div className="stat-value">{confirmed.length}</div>
+            <div className="stat-label">Confirmed</div>
           </div>
         </div>
 
         <div className="stat-card">
-          <div className="stat-icon">🛡️</div>
+          <div className="stat-icon">📨</div>
           <div className="stat-body">
-            <div className="stat-value">{profile.details?.suffering_score ?? 0}</div>
-            <div className="stat-label">Focus Score</div>
+            <div className="stat-value">{meetings.filter(m => m.userRole === 'participant').length}</div>
+            <div className="stat-label">Invitations</div>
           </div>
         </div>
       </div>
 
-      {/* Two-column */}
+      {/* Two-col grid */}
       <div className="dash-grid">
+        {/* Pending selections */}
         <div className="dash-card">
           <div className="dash-card-head">
-            <h3>Pending Decisions</h3>
-            <span className="pill warning">{pendingMeetings.length}</span>
+            <h3>Pending Selections</h3>
+            <span className="pill warning">{myPending.length}</span>
           </div>
-          {pendingMeetings.length === 0 ? (
-            <p className="empty-hint">All caught up — no pending meetings. ✅</p>
+          {myPending.length === 0 ? (
+            <p className="empty-hint">All caught up — no pending slot selections. ✅</p>
           ) : (
             <div className="mini-list">
-              {pendingMeetings.slice(0, 4).map(m => (
+              {myPending.slice(0, 4).map(m => (
                 <div key={m.requestId} className="mini-item" onClick={() => onNavigate('meetings')}>
                   <span className="mini-dot pending" />
                   <div className="mini-body">
                     <div className="mini-title">{m.title}</div>
-                    <div className="mini-meta">{m.durationMinutes} min · {m.slots?.length ?? 0} slots available</div>
+                    <div className="mini-meta">{m.durationMinutes}m · {m.slots?.length ?? 0} slots</div>
                   </div>
                   <span className="mini-arrow">›</span>
                 </div>
               ))}
-              {pendingMeetings.length > 4 && (
+              {myPending.length > 4 && (
                 <button className="see-all" onClick={() => onNavigate('meetings')}>
-                  View all {pendingMeetings.length} →
+                  View all {myPending.length} →
                 </button>
               )}
             </div>
           )}
         </div>
 
+        {/* Upcoming confirmed */}
         <div className="dash-card">
           <div className="dash-card-head">
-            <h3>Upcoming Scheduled</h3>
-            <span className="pill success">{confirmedMeetings.length}</span>
+            <h3>Upcoming Meetings</h3>
+            <span className="pill success">{confirmed.length}</span>
           </div>
-          {confirmedMeetings.length === 0 ? (
-            <p className="empty-hint">No confirmed meetings yet. Create one to get started!</p>
+          {confirmed.length === 0 ? (
+            <p className="empty-hint">No confirmed meetings yet. Create one!</p>
           ) : (
             <div className="mini-list">
-              {confirmedMeetings.slice(0, 4).map(m => (
-                <div key={m.requestId} className="mini-item">
+              {confirmed.slice(0, 4).map(m => (
+                <div key={m.requestId} className="mini-item" onClick={() => onNavigate('calendar')}>
                   <span className="mini-dot confirmed" />
                   <div className="mini-body">
                     <div className="mini-title">{m.title}</div>
@@ -252,7 +299,7 @@ function DashboardView({ profile, meetings, onNavigate }) {
                             weekday: 'short', month: 'short', day: 'numeric',
                             hour: '2-digit', minute: '2-digit',
                           })
-                        : `${m.durationMinutes} min`}
+                        : `${m.durationMinutes}m`}
                     </div>
                   </div>
                   <span className="mini-arrow" style={{ color: 'var(--success)' }}>✓</span>
@@ -263,13 +310,13 @@ function DashboardView({ profile, meetings, onNavigate }) {
         </div>
       </div>
 
-      {/* Insight */}
+      {/* Fairness insight */}
       <div className="insight-banner">
         <span>💡</span>
         <span>
           {score >= 80
-            ? 'Your high fairness score grants you priority in upcoming slot selections.'
-            : 'Your fairness score is below 80 — accepting less convenient slots will improve it over time.'}
+            ? 'Your high fairness score grants you priority in upcoming slot selections. Keep up the great collaboration!'
+            : 'Your fairness score is below 80. Accepting less convenient slots will improve it over time and give you priority access.'}
         </span>
       </div>
     </div>
