@@ -6,18 +6,18 @@ export default function MeetingDashboard({ meetings, onRefresh }) {
     const [loading, setLoading] = useState(false);
     const [expandedMeetingId, setExpandedMeetingId] = useState(null);
     const [showCreateModal, setShowCreateModal] = useState(false);
-    const [newMeetingData, setNewMeetingData] = useState({ title: '', durationMinutes: 60, participantIds: ['u2'] });
-
+    const [newMeetingData, setNewMeetingData] = useState({
+        title: '', durationMinutes: 60, participantIds: ['u2']
+    });
 
     const handleCreateMeeting = (e) => {
         e.preventDefault();
         setLoading(true);
         setShowCreateModal(false);
-
         apiPost('/api/meetings/create', newMeetingData)
             .then(() => {
                 onRefresh();
-                setNewMeetingData({ title: '', durationMinutes: 60, participantIds: [] }); // Reset
+                setNewMeetingData({ title: '', durationMinutes: 60, participantIds: ['u2'] });
                 setLoading(false);
             })
             .catch(err => {
@@ -30,12 +30,8 @@ export default function MeetingDashboard({ meetings, onRefresh }) {
     const handleBookSlot = (meetingId, slot) => {
         setLoading(true);
         setExpandedMeetingId(null);
-
         apiPost(`/api/meetings/${meetingId}/book/${encodeURIComponent(slot.startIso)}`)
-            .then(() => {
-                onRefresh();
-                setLoading(false);
-            })
+            .then(() => { onRefresh(); setLoading(false); })
             .catch(err => {
                 alert('Failed to book the selected slot');
                 console.error(err);
@@ -44,83 +40,80 @@ export default function MeetingDashboard({ meetings, onRefresh }) {
             });
     };
 
-    const toggleMeeting = (id) => {
-        if (expandedMeetingId === id) {
-            setExpandedMeetingId(null);
-        } else {
-            setExpandedMeetingId(id);
-        }
-    };
+    const toggleMeeting = (id) =>
+        setExpandedMeetingId(prev => prev === id ? null : id);
 
-    const formatTime = (isoString) => {
-        return new Date(isoString).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-    };
+    const fmtDate = iso => new Date(iso).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    const fmtTime = iso => new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
-    const formatDate = (isoString) => {
-        return new Date(isoString).toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' });
-    };
+    if (loading) {
+        return (
+            <div className="loading-screen">
+                <div className="spinner" />
+                <span>Updating schedule…</span>
+            </div>
+        );
+    }
 
-    if (loading) return <div className="loading">Updating schedule... 🤖</div>;
+    const pending   = meetings.filter(m => m.status === 'pending');
+    const confirmed = meetings.filter(m => m.status === 'confirmed');
 
     return (
-        <div className="meeting-dashboard">
-            <div className="dashboard-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                <h2>Smart Schedule Management 🧠</h2>
-                <button
-                    className="create-btn"
-                    onClick={() => setShowCreateModal(true)}
-                    style={{
-                        background: 'var(--accent-color)', color: '#000', border: 'none', padding: '10px 20px',
-                        borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold'
-                    }}
-                >
+        <div className="meetings-page">
+            {/* Page Header */}
+            <div className="meetings-page-head">
+                <div>
+                    <h2>Meeting Requests</h2>
+                    <p className="view-subtitle">Manage and schedule meetings with AI-powered fairness scoring.</p>
+                </div>
+                <button className="btn-primary" onClick={() => setShowCreateModal(true)}>
                     + New Meeting
                 </button>
             </div>
 
+            {/* Create Modal */}
             {showCreateModal && (
-                <div style={{
-                    position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
-                    background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000
-                }}>
-                    <div style={{
-                        background: 'var(--bg-secondary)', padding: '2rem', borderRadius: '16px',
-                        border: '1px solid var(--accent-color)', width: '400px', maxWidth: '90%'
-                    }}>
-                        <h3 style={{ marginTop: 0 }}>Create New Request</h3>
-                        <form onSubmit={handleCreateMeeting} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                            <div>
-                                <label style={{ display: 'block', marginBottom: '0.5rem' }}>Meeting Title:</label>
+                <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setShowCreateModal(false)}>
+                    <div className="modal">
+                        <div className="modal-header">
+                            <h3>Create New Meeting Request</h3>
+                            <button className="modal-close" onClick={() => setShowCreateModal(false)}>✕</button>
+                        </div>
+                        <form onSubmit={handleCreateMeeting} className="modal-form">
+                            <div className="form-group">
+                                <label>Meeting Title</label>
                                 <input
                                     autoFocus
                                     type="text"
                                     required
+                                    placeholder="e.g. Weekly Team Sync"
                                     value={newMeetingData.title}
                                     onChange={e => setNewMeetingData({ ...newMeetingData, title: e.target.value })}
-                                    style={{ width: '100%', padding: '8px', borderRadius: '4px', border: 'none' }}
-                                    placeholder="e.g. Weekly Sync"
                                 />
                             </div>
-                            <div>
-                                <label style={{ display: 'block', marginBottom: '0.5rem' }}>Duration (Minutes):</label>
+                            <div className="form-group">
+                                <label>Duration</label>
                                 <select
                                     value={newMeetingData.durationMinutes}
                                     onChange={e => setNewMeetingData({ ...newMeetingData, durationMinutes: Number(e.target.value) })}
-                                    style={{ width: '100%', padding: '8px', borderRadius: '4px', border: 'none' }}
                                 >
-                                    <option value={15}>15 min (Quick)</option>
-                                    <option value={30}>30 min (Standard)</option>
+                                    <option value={15}>15 min — Quick check-in</option>
+                                    <option value={30}>30 min — Standard</option>
                                     <option value={45}>45 min</option>
-                                    <option value={60}>60 min (1 Hour)</option>
-                                    <option value={90}>90 min</option>
+                                    <option value={60}>60 min — 1 Hour</option>
+                                    <option value={90}>90 min — Extended</option>
                                 </select>
                             </div>
-                            <div style={{ display: 'flex', gap: '10px', marginTop: '1rem' }}>
-                                <button type="submit" style={{ flex: 1, background: 'var(--success)', border: 'none', padding: '10px', borderRadius: '4px', cursor: 'pointer', color: 'white', fontWeight: 'bold' }}>
-                                    🚀 Calculate & Create
-                                </button>
-                                <button type="button" onClick={() => setShowCreateModal(false)} style={{ flex: 1, background: '#555', border: 'none', padding: '10px', borderRadius: '4px', cursor: 'pointer', color: 'white' }}>
+                            <div className="modal-info">
+                                <span>🧠</span>
+                                <span>The fairness engine will generate 3 optimized time slots based on all participants' availability and fairness scores.</span>
+                            </div>
+                            <div className="modal-actions">
+                                <button type="button" className="btn-ghost" onClick={() => setShowCreateModal(false)}>
                                     Cancel
+                                </button>
+                                <button type="submit" className="btn-success">
+                                    ⚖️ Calculate Fairness &amp; Create
                                 </button>
                             </div>
                         </form>
@@ -128,62 +121,130 @@ export default function MeetingDashboard({ meetings, onRefresh }) {
                 </div>
             )}
 
-            {meetings.length === 0 && !loading && <div className="empty-state">No meeting requests found. Start one!</div>}
+            {/* Empty state */}
+            {meetings.length === 0 && (
+                <div className="meetings-empty">
+                    <div className="empty-big-icon">📭</div>
+                    <h3>No meetings yet</h3>
+                    <p>Create your first meeting request and let the AI find the fairest time for everyone.</p>
+                    <button className="btn-primary" onClick={() => setShowCreateModal(true)}>+ New Meeting</button>
+                </div>
+            )}
 
-            <div className="meetings-grid">
-                {meetings.map(meeting => {
-                    const isConfirmed = meeting.status === 'confirmed';
-                    const isExpanded = expandedMeetingId === meeting.requestId;
+            {/* Pending */}
+            {pending.length > 0 && (
+                <section className="meetings-section">
+                    <div className="section-label">
+                        <span className="section-dot pending" />
+                        Pending — Select a Time Slot
+                        <span className="pill warning">{pending.length}</span>
+                    </div>
+                    <div className="meeting-cards">
+                        {pending.map(m => (
+                            <MeetingCard
+                                key={m.requestId}
+                                meeting={m}
+                                isExpanded={expandedMeetingId === m.requestId}
+                                onToggle={() => toggleMeeting(m.requestId)}
+                                onBook={(slot) => handleBookSlot(m.requestId, slot)}
+                                fmtDate={fmtDate}
+                                fmtTime={fmtTime}
+                            />
+                        ))}
+                    </div>
+                </section>
+            )}
 
-                    return (
-                        <div key={meeting.requestId} className={`meeting-card ${isConfirmed ? 'confirmed' : ''}`}>
-                            <div className="meeting-header" onClick={() => !isConfirmed && toggleMeeting(meeting.requestId)}>
-                                <div className="meeting-title-section">
-                                    <h3>
-                                        {isConfirmed ? '✅' : '📅'} {meeting.title}
-                                    </h3>
-                                    <div className="meeting-meta">
-                                        <span>⏳ {meeting.durationMinutes}m</span>
-                                        <span>👥 {meeting.participantUserIds.length} Participants</span>
-                                    </div>
-                                </div>
-                                <div className={`meeting-status ${meeting.status}`}>
-                                    {isConfirmed ? 'Scheduled' : 'Pending Selection'}
-                                </div>
-                            </div>
+            {/* Confirmed */}
+            {confirmed.length > 0 && (
+                <section className="meetings-section">
+                    <div className="section-label">
+                        <span className="section-dot confirmed" />
+                        Confirmed &amp; Scheduled
+                        <span className="pill success">{confirmed.length}</span>
+                    </div>
+                    <div className="meeting-cards">
+                        {confirmed.map(m => (
+                            <MeetingCard
+                                key={m.requestId}
+                                meeting={m}
+                                isExpanded={false}
+                                onToggle={() => {}}
+                                onBook={() => {}}
+                                fmtDate={fmtDate}
+                                fmtTime={fmtTime}
+                            />
+                        ))}
+                    </div>
+                </section>
+            )}
+        </div>
+    );
+}
 
-                             {isExpanded && !isConfirmed && (
-                                <div className="meeting-slots">
-                                    <h4>Select a Slot (Optimized by Fairness)</h4>
-                                    <div className="slot-list">
-                                        {meeting.slots.map((slot, idx) => (
-                                            <div
-                                                key={idx}
-                                                className={`time-slot ${idx === 0 ? 'best-match' : ''}`}
-                                                onClick={() => handleBookSlot(meeting.requestId, slot)}
-                                            >
-                                                {idx === 0 && <span className="slot-badge">Recommended ⭐</span>}
-                                                <div className="slot-time">
-                                                    {formatDate(slot.startIso)} | {formatTime(slot.startIso)} - {formatTime(slot.endIso)}
-                                                </div>
-                                                <div className="slot-score">
-                                                    <span>Fairness Score: {Math.round(slot.score)}%</span>
-                                                    <div className="score-bar">
-                                                        <div className="score-fill" style={{ width: `${slot.score}%` }}></div>
-                                                    </div>
-                                                </div>
-                                                <div className="slot-explanation">
-                                                    "{slot.explanation}"
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
+function MeetingCard({ meeting, isExpanded, onToggle, onBook, fmtDate, fmtTime }) {
+    const isConfirmed = meeting.status === 'confirmed';
+
+    return (
+        <div className={`meeting-card ${isConfirmed ? 'confirmed' : ''} ${isExpanded ? 'expanded' : ''}`}>
+            <div
+                className="meeting-card-head"
+                onClick={() => !isConfirmed && onToggle()}
+                style={{ cursor: isConfirmed ? 'default' : 'pointer' }}
+            >
+                <div className="meeting-card-left">
+                    <span className="meeting-icon">{isConfirmed ? '✅' : '📅'}</span>
+                    <div>
+                        <div className="meeting-title">{meeting.title}</div>
+                        <div className="meeting-meta">
+                            <span>{meeting.durationMinutes} min</span>
+                            <span className="meta-sep">·</span>
+                            <span>{meeting.participantUserIds.length} participants</span>
+                            {isConfirmed && meeting.selectedSlotStart && (
+                                <>
+                                    <span className="meta-sep">·</span>
+                                    <span>{fmtDate(meeting.selectedSlotStart)} at {fmtTime(meeting.selectedSlotStart)}</span>
+                                </>
                             )}
                         </div>
-                    );
-                })}
+                    </div>
+                </div>
+                <div className="meeting-card-right">
+                    <span className={`status-badge ${meeting.status}`}>
+                        {isConfirmed ? 'Scheduled' : 'Awaiting Selection'}
+                    </span>
+                    {!isConfirmed && (
+                        <span className={`expand-arrow ${isExpanded ? 'open' : ''}`}>›</span>
+                    )}
+                </div>
             </div>
+
+            {isExpanded && !isConfirmed && meeting.slots?.length > 0 && (
+                <div className="slot-area">
+                    <div className="slot-area-title">⚖️ AI-Optimized Time Slots — Click to Book</div>
+                    <div className="slots-grid">
+                        {meeting.slots.map((slot, idx) => (
+                            <div
+                                key={idx}
+                                className={`slot-card ${idx === 0 ? 'recommended' : ''}`}
+                                onClick={() => onBook(slot)}
+                            >
+                                {idx === 0 && <div className="slot-ribbon">⭐ Recommended</div>}
+                                <div className="slot-date">{fmtDate(slot.startIso)}</div>
+                                <div className="slot-time-range">{fmtTime(slot.startIso)} – {fmtTime(slot.endIso)}</div>
+                                <div className="slot-score-row">
+                                    <span className="slot-score-num">{Math.round(slot.score)}%</span>
+                                    <div className="slot-score-bar">
+                                        <div className="slot-score-fill" style={{ width: `${slot.score}%` }} />
+                                    </div>
+                                </div>
+                                <div className="slot-explanation">"{slot.explanation}"</div>
+                                <button className="slot-book-btn">Select This Slot</button>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
