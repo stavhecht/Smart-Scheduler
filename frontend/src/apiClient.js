@@ -6,7 +6,7 @@
 
 import { fetchAuthSession } from 'aws-amplify/auth';
 
-const API_BASE = 'https://85iuh9a158.execute-api.us-east-1.amazonaws.com';
+const API_BASE = 'https://aeox6n4cja.execute-api.us-east-1.amazonaws.com';
 
 /**
  * Fetches the current user's Cognito idToken and returns it as an auth header.
