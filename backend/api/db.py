@@ -93,14 +93,14 @@ def ensure_user_profile(user_id: str, email: str, display_name: str):
         displayName=display_name,
         timezone="Asia/Jerusalem",
         workingHours={"start": "09:00", "end": "18:00"}
-    ).model_dump())
+    ).model_dump(mode="json"))
 
     _put_item(f"USER#{user_id}", "FAIRNESS", FairnessState(
         userId=user_id,
         fairnessScore=50.0,
         meetingLoadMetrics={"meetings_this_week": 0},
         inconvenientMeetingsCount=0
-    ).model_dump())
+    ).model_dump(mode="json"))
 
 def get_profile(user_id: str):
     data = _get_item(f"USER#{user_id}", "PROFILE")
@@ -151,7 +151,7 @@ def create_meeting_with_simulation(req_data: MeetingCreateSchema, creator_id: st
         status="pending"
     )
     
-    _put_item(f"MEET#{req_id}", "META", new_meeting.model_dump())
+    _put_item(f"MEET#{req_id}", "META", new_meeting.model_dump(mode="json"))
     
     # 2. Simulate slot generation logic (The "AI")
     # In reality, this would query all users' calendars and run the fairness algo.
@@ -188,6 +188,6 @@ def create_meeting_with_simulation(req_data: MeetingCreateSchema, creator_id: st
             explanation=random.choice(explanations)
         )
         
-        _put_item(f"MEET#{req_id}", f"SLOT#{start_dt.isoformat()}", slot.model_dump())
+        _put_item(f"MEET#{req_id}", f"SLOT#{start_dt.isoformat()}", slot.model_dump(mode="json"))
 
     return new_meeting

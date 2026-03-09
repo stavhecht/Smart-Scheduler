@@ -34,8 +34,13 @@ function AppContent() {
       })
       .catch(err => {
         console.error('Detailed Error:', err);
-        setError(err.message || 'Unknown connection error');
-        setLoading(false);
+        // If the user was deleted manually or token is invalid, force sign out to clear cache
+        if (err.message && err.message.includes('401')) {
+          signOut();
+        } else {
+          setError(err.message || 'Unknown connection error');
+          setLoading(false);
+        }
       });
   }, [user]);
 
