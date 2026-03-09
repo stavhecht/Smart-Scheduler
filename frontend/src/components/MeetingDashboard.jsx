@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import './MeetingDashboard.css';
+import { apiPost } from '../apiClient';
 
 export default function MeetingDashboard({ meetings, onRefresh }) {
     const [loading, setLoading] = useState(false);
@@ -13,22 +14,14 @@ export default function MeetingDashboard({ meetings, onRefresh }) {
         setLoading(true);
         setShowCreateModal(false);
 
-        fetch('https://aeox6n4cja.execute-api.us-east-1.amazonaws.com/api/meetings/create', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(newMeetingData)
-        })
-            .then(res => {
-                if (!res.ok) throw new Error('Creating failed');
-                return res.json();
-            })
+        apiPost('/api/meetings/create', newMeetingData)
             .then(() => {
                 onRefresh();
-                setNewMeetingData({ title: '', durationMinutes: 60, participantIds: ['u2'] }); // Reset
+                setNewMeetingData({ title: '', durationMinutes: 60, participantIds: [] }); // Reset
                 setLoading(false);
             })
             .catch(err => {
-                alert("Error creating meeting request");
+                alert('Error creating meeting request');
                 console.error(err);
                 setLoading(false);
             });
@@ -36,18 +29,17 @@ export default function MeetingDashboard({ meetings, onRefresh }) {
 
     const handleBookSlot = (meetingId, slot) => {
         setLoading(true);
-        setExpandedMeetingId(null); 
+        setExpandedMeetingId(null);
 
-        // API Call
-        fetch(`https://aeox6n4cja.execute-api.us-east-1.amazonaws.com/api/meetings/${meetingId}/book/${encodeURIComponent(slot.startIso)}`, { method: 'POST' })
-            .then(res => {
-                if (!res.ok) throw new Error('Booking failed');
+        apiPost(`/api/meetings/${meetingId}/book/${encodeURIComponent(slot.startIso)}`)
+            .then(() => {
                 onRefresh();
                 setLoading(false);
             })
             .catch(err => {
-                alert("Failed to book the selected slot");
-                onRefresh(); 
+                alert('Failed to book the selected slot');
+                console.error(err);
+                onRefresh();
                 setLoading(false);
             });
     };

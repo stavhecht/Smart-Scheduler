@@ -37,9 +37,9 @@ def _query_begins_with(pk: str, sk_prefix: str) -> List[dict]:
     )
     return response.get('Items', [])
 
-# Initialize on module load
+# Initialize on module load (only if SEED_DEMO_DATA=true, for local dev)
 def init_db():
-    # Helper func to seed DynamoDB
+    # Helper func to seed DynamoDB with demo data
     try:
         if _get_item("USER#u1", "PROFILE"): return # Don't re-init if already has data
     except Exception:
@@ -73,9 +73,34 @@ def init_db():
         "createdAt": datetime.now().isoformat()
     })
 
-init_db()
+if os.environ.get("SEED_DEMO_DATA") == "true":
+    init_db()
 
 # --- Repository Functions ---
+
+def ensure_user_profile(user_id: str, email: str, display_name: str):
+    """
+    Called on every authenticated request.
+    Creates a user PROFILE + FAIRNESS record if this is their first login.
+    This is the "auto-registration" mechanism for new Cognito users.
+    """
+    if _get_item(f"USER#{user_id}", "PROFILE"):
+        return  # Already exists – nothing to do
+
+    _put_item(f"USER#{user_id}", "PROFILE", UserProfile(
+        userId=user_id,
+        email=email,
+        displayName=display_name,
+        timezone="Asia/Jerusalem",
+        workingHours={"start": "09:00", "end": "18:00"}
+    ).model_dump())
+
+    _put_item(f"USER#{user_id}", "FAIRNESS", FairnessState(
+        userId=user_id,
+        fairnessScore=50.0,
+        meetingLoadMetrics={"meetings_this_week": 0},
+        inconvenientMeetingsCount=0
+    ).model_dump())
 
 def get_profile(user_id: str):
     data = _get_item(f"USER#{user_id}", "PROFILE")
@@ -85,19 +110,22 @@ def get_fairness_state(user_id: str):
     data = _get_item(f"USER#{user_id}", "FAIRNESS")
     return FairnessState(**data) if data else None
 
-def get_all_meetings():
-    from boto3.dynamodb.conditions import Key
-    # We query the Global Secondary Index or Scan. Since this is Demo, we'll scan for MEETING METAs
+def get_user_meetings(user_id: str):
+    """
+    Returns all meeting requests created by the given user.
+    Uses a DynamoDB scan with a filter on creatorUserId.
+    (Acceptable for demo scale; a GSI on creatorUserId would be better at scale.)
+    """
     response = table.scan(
-        FilterExpression=boto3.dynamodb.conditions.Attr('PK').begins_with('MEET#') & boto3.dynamodb.conditions.Attr('SK').eq('META')
+        FilterExpression=(
+            boto3.dynamodb.conditions.Attr('PK').begins_with('MEET#') &
+            boto3.dynamodb.conditions.Attr('SK').eq('META') &
+            boto3.dynamodb.conditions.Attr('creatorUserId').eq(user_id)
+        )
     )
-    all_meetings = []
-    for item in response.get('Items', []):
-        all_meetings.append(MeetingRequest(**item))
-    
-    # Sort in memory
-    all_meetings.sort(key=lambda x: x.createdAt, reverse=True)
-    return all_meetings
+    meetings = [MeetingRequest(**item) for item in response.get('Items', [])]
+    meetings.sort(key=lambda x: x.createdAt, reverse=True)
+    return meetings
 
 def get_meeting_slots(request_id: str):
     items = _query_begins_with(f"MEET#{request_id}", "SLOT#")

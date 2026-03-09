@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import './App.css'
 import MeetingDashboard from './components/MeetingDashboard';
 import CalendarView from './components/CalendarView';
+import { apiGet } from './apiClient';
 
 // Amplify Auth Imports
 import { Amplify } from 'aws-amplify';
@@ -20,16 +21,11 @@ function AppContent() {
 
   useEffect(() => {
     if (!user) return;
-    
-    // Initial data fetch
-    const fetchWithCheck = (url) => fetch(url).then(res => {
-      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText} at ${url}`);
-      return res.json();
-    });
 
+    // Fetch profile and meetings in parallel, authenticated via JWT
     Promise.all([
-      fetchWithCheck('https://aeox6n4cja.execute-api.us-east-1.amazonaws.com/api/profile'),
-      fetchWithCheck('https://aeox6n4cja.execute-api.us-east-1.amazonaws.com/api/meetings')
+      apiGet('/api/profile'),
+      apiGet('/api/meetings'),
     ])
       .then(([profileData, meetingsData]) => {
         setProfile(profileData);
@@ -44,10 +40,9 @@ function AppContent() {
   }, [user]);
 
   const refreshMeetings = () => {
-    fetch('https://aeox6n4cja.execute-api.us-east-1.amazonaws.com/api/meetings')
-      .then(res => res.json())
+    apiGet('/api/meetings')
       .then(data => setMeetings(data))
-      .catch(err => console.error("Refresh failed", err));
+      .catch(err => console.error('Refresh failed', err));
   };
 
   return (
