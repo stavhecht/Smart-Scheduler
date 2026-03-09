@@ -4,8 +4,8 @@ import MeetingDashboard from './components/MeetingDashboard';
 import CalendarView from './components/CalendarView';
 
 // Amplify Auth Imports
+import { apiGet } from './apiClient';
 import { Amplify } from 'aws-amplify';
-import { fetchAuthSession } from 'aws-amplify/auth';
 import { Authenticator, useAuthenticator } from '@aws-amplify/ui-react';
 import '@aws-amplify/ui-react/styles.css';
 import awsConfig from './aws-exports';
@@ -19,24 +19,12 @@ function AppContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const API_BASE = 'https://aeox6n4cja.execute-api.us-east-1.amazonaws.com';
-
-  const authFetch = async (url) => {
-    const session = await fetchAuthSession();
-    const token = session.tokens?.idToken?.toString();
-    const res = await fetch(url, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {}
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText} at ${url}`);
-    return res.json();
-  };
-
   useEffect(() => {
     if (!user) return;
 
     Promise.all([
-      authFetch(`${API_BASE}/api/profile`),
-      authFetch(`${API_BASE}/api/meetings`)
+      apiGet('/api/profile'),
+      apiGet('/api/meetings'),
     ])
       .then(([profileData, meetingsData]) => {
         setProfile(profileData);
@@ -51,9 +39,9 @@ function AppContent() {
   }, [user]);
 
   const refreshMeetings = () => {
-    authFetch(`${API_BASE}/api/meetings`)
+    apiGet('/api/meetings')
       .then(data => setMeetings(data))
-      .catch(err => console.error("Refresh failed", err));
+      .catch(err => console.error('Refresh failed', err));
   };
 
   return (
