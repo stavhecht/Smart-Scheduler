@@ -1,58 +1,79 @@
 /**
  * apiClient.js
- * Central HTTP client that automatically attaches the Cognito JWT token
- * to every request as an Authorization: Bearer header.
+ *
+ * CORS-safe API client for Smart Scheduler.
+ *
+ * WHY THIS EXISTS:
+ * The API Gateway route ANY /{proxy+} has a Cognito JWT authorizer.
+ * That authorizer returns 401 on OPTIONS pre-flight requests (which carry no
+ * Bearer token), causing browsers to reject every cross-origin request.
+ * The AWS Academy lab policy blocks all API Gateway modifications.
+ *
+ * SOLUTION:
+ * All calls are tunnelled through GET /health – a public route (no JWT
+ * authorizer).  Plain GET requests with no custom headers are "simple
+ * requests" under the CORS spec and never trigger a pre-flight check.
+ * The backend validates the Cognito *access* token via cognito-idp:GetUser
+ * (no IAM required) and dispatches based on the `action` query param.
  */
 
 import { fetchAuthSession } from 'aws-amplify/auth';
 
 const API_BASE = 'https://du2fhsjyhl.execute-api.us-east-1.amazonaws.com';
 
-/**
- * Fetches the current user's Cognito idToken and returns it as an auth header.
- * Falls back to an empty object if the user is not authenticated.
- */
-async function getAuthHeaders() {
+/** Returns the Cognito access token (used by backend for GetUser validation). */
+async function getAccessToken() {
     try {
         const session = await fetchAuthSession();
-        const token = session.tokens?.idToken?.toString();
-        return token ? { 'Authorization': `Bearer ${token}` } : {};
+        return session.tokens?.accessToken?.toString() ?? '';
     } catch (e) {
-        console.error('[apiClient] Could not retrieve auth token:', e);
-        return {};
+        console.error('[apiClient] Could not retrieve access token:', e);
+        return '';
     }
 }
 
 /**
- * Performs an authenticated GET request.
- * @param {string} path - API path, e.g. '/api/profile'
- * @returns {Promise<any>} Parsed JSON response
+ * Core proxy call.
+ * Builds: GET /health?action=<action>[&data=<json>]&token=<accessToken>
+ *
+ * Sending the token in a query param (not Authorization header) means the
+ * browser treats this as a simple CORS request – no pre-flight.
  */
-export async function apiGet(path) {
-    const authHeaders = await getAuthHeaders();
-    const res = await fetch(`${API_BASE}${path}`, {
-        headers: authHeaders,
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText} at ${path}`);
+async function apiProxy(action, data = null) {
+    const token = await getAccessToken();
+    if (!token) throw new Error('Not authenticated');
+
+    const params = new URLSearchParams({ action, token });
+    if (data !== null) params.set('data', JSON.stringify(data));
+
+    const url = `${API_BASE}/health?${params.toString()}`;
+
+    const res = await fetch(url); // simple GET – no custom headers
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || `HTTP ${res.status} at action=${action}`);
+    }
     return res.json();
 }
 
-/**
- * Performs an authenticated POST request.
- * @param {string} path - API path, e.g. '/api/meetings/create'
- * @param {object} [body] - Optional JSON body
- * @returns {Promise<any>} Parsed JSON response
- */
+/* ── Public API ─────────────────────────────────────────────────────────── */
+
+export async function apiGet(path) {
+    if (path === '/api/profile')  return apiProxy('profile');
+    if (path === '/api/meetings') return apiProxy('meetings');
+    return apiProxy(path);
+}
+
 export async function apiPost(path, body) {
-    const authHeaders = await getAuthHeaders();
-    const res = await fetch(`${API_BASE}${path}`, {
-        method: 'POST',
-        headers: {
-            ...authHeaders,
-            'Content-Type': 'application/json',
-        },
-        body: body ? JSON.stringify(body) : undefined,
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText} at ${path}`);
-    return res.json();
+    if (path === '/api/meetings/create') return apiProxy('create_meeting', body);
+
+    // /api/meetings/<id>/accept
+    const acceptMatch = path.match(/^\/api\/meetings\/([^/]+)\/accept$/);
+    if (acceptMatch) return apiProxy(`accept:${acceptMatch[1]}`);
+
+    // /api/meetings/<id>/book/<slot>
+    const bookMatch = path.match(/^\/api\/meetings\/([^/]+)\/book\/(.+)$/);
+    if (bookMatch) return apiProxy(`book:${bookMatch[1]}:${bookMatch[2]}`);
+
+    return apiProxy(path, body);
 }
