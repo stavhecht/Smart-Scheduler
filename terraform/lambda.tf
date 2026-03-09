@@ -13,7 +13,8 @@ resource "aws_lambda_function" "api_handler" {
 
   environment {
     variables = {
-      TABLE_NAME = aws_dynamodb_table.smart_scheduler_table.name
+      TABLE_NAME     = aws_dynamodb_table.smart_scheduler_table.name
+      AWS_ACCOUNT_ID = data.aws_caller_identity.current.account_id
       # Set SEED_DEMO_DATA = "true" here only if you want legacy demo data seeded
     }
   }
