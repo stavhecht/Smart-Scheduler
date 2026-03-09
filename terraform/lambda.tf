@@ -34,6 +34,10 @@ resource "aws_apigatewayv2_api" "api_gateway" {
     expose_headers    = ["date", "keep-alive"]
     max_age           = 86400
   }
+
+  lifecycle {
+    ignore_changes = [target]
+  }
 }
 
 # $default stage with auto-deploy (equivalent to what "target" created before)
