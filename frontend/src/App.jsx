@@ -19,9 +19,12 @@ function AppContent() {
   const [loading, setLoading]       = useState(true);
   const [error, setError]           = useState(null);
   const [activeView, setActiveView] = useState('dashboard');
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     if (!user) return;
+    setLoading(true);
+    setError(null);
     Promise.all([
       apiGet('/api/profile'),
       apiGet('/api/meetings'),
@@ -40,11 +43,18 @@ function AppContent() {
           setLoading(false);
         }
       });
-  }, [user]);
+  }, [user, retryCount]);
 
-  const refreshMeetings = () =>
-    apiGet('/api/meetings')
-      .then(data => setMeetings(data))
+  /** Refreshes both profile (fairness score) AND meetings list. */
+  const refreshAll = () =>
+    Promise.all([
+      apiGet('/api/profile'),
+      apiGet('/api/meetings'),
+    ])
+      .then(([profileData, meetingsData]) => {
+        setProfile(profileData);
+        setMeetings(meetingsData);
+      })
       .catch(err => console.error('Refresh failed', err));
 
   /* Badge counts */
@@ -121,7 +131,13 @@ function AppContent() {
 
         {error && (
           <div className="error-banner">
-            ⚠️ <strong>Error:</strong> {error}
+            <span>⚠️ <strong>Error:</strong> {error}</span>
+            <button
+              className="retry-btn"
+              onClick={() => { setError(null); setRetryCount(n => n + 1); }}
+            >
+              ↺ Retry
+            </button>
           </div>
         )}
 
@@ -150,7 +166,7 @@ function AppContent() {
               <div className="view-wrap">
                 <MeetingDashboard
                   meetings={meetings}
-                  onRefresh={refreshMeetings}
+                  onRefresh={refreshAll}
                   currentUserId={profile.id}
                 />
               </div>

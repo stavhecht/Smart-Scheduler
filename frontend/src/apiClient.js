@@ -21,10 +21,10 @@ import { fetchAuthSession } from 'aws-amplify/auth';
 
 const API_BASE = 'https://du2fhsjyhl.execute-api.us-east-1.amazonaws.com';
 
-/** Returns the Cognito access token (used by backend for GetUser validation). */
-async function getAccessToken() {
+/** Returns the Cognito access token. Pass forceRefresh=true to force a new token. */
+async function getAccessToken(forceRefresh = false) {
     try {
-        const session = await fetchAuthSession();
+        const session = await fetchAuthSession({ forceRefresh });
         return session.tokens?.accessToken?.toString() ?? '';
     } catch (e) {
         console.error('[apiClient] Could not retrieve access token:', e);
@@ -38,9 +38,12 @@ async function getAccessToken() {
  *
  * Sending the token in a query param (not Authorization header) means the
  * browser treats this as a simple CORS request – no pre-flight.
+ *
+ * On a 401, automatically retries once with a force-refreshed token in case
+ * the access token had just expired.
  */
-async function apiProxy(action, data = null) {
-    const token = await getAccessToken();
+async function apiProxy(action, data = null, _isRetry = false) {
+    const token = await getAccessToken(_isRetry);
     if (!token) throw new Error('Not authenticated');
 
     const params = new URLSearchParams({ action, token });
@@ -50,6 +53,11 @@ async function apiProxy(action, data = null) {
 
     const res = await fetch(url); // simple GET – no custom headers
     if (!res.ok) {
+        // If 401 and we haven't retried yet, force-refresh the token and try once more
+        if (res.status === 401 && !_isRetry) {
+            console.warn('[apiClient] Got 401, refreshing token and retrying…');
+            return apiProxy(action, data, true);
+        }
         const body = await res.json().catch(() => ({}));
         throw new Error(body.detail || `HTTP ${res.status} at action=${action}`);
     }
@@ -71,9 +79,9 @@ export async function apiPost(path, body) {
     const acceptMatch = path.match(/^\/api\/meetings\/([^/]+)\/accept$/);
     if (acceptMatch) return apiProxy(`accept:${acceptMatch[1]}`);
 
-    // /api/meetings/<id>/book/<slot>
+    // /api/meetings/<id>/book/<slot>  (slot may be URL-encoded; decode before embedding in action)
     const bookMatch = path.match(/^\/api\/meetings\/([^/]+)\/book\/(.+)$/);
-    if (bookMatch) return apiProxy(`book:${bookMatch[1]}:${bookMatch[2]}`);
+    if (bookMatch) return apiProxy(`book:${bookMatch[1]}:${decodeURIComponent(bookMatch[2])}`);
 
     return apiProxy(path, body);
 }

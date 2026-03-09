@@ -1,6 +1,7 @@
 import json
 import os
 from typing import Optional
+from urllib.parse import unquote
 
 import boto3
 from fastapi import FastAPI, HTTPException, Request
@@ -194,8 +195,8 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
         result = []
         for m in meetings:
             slots = db.get_meeting_slots(m.requestId)
-            d = m.model_dump()
-            d['slots']    = [s.model_dump() for s in slots]
+            d = m.model_dump(mode="json")
+            d['slots']    = [s.model_dump(mode="json") for s in slots]
             d['userRole'] = 'organizer' if m.creatorUserId == user_id else 'participant'
             result.append(d)
         return result
@@ -241,7 +242,7 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
                     raise Exception(resp.get('error', 'Workflow failed'))
             except Exception:
                 _run_local_scheduling(meeting_data, user_id, meeting.requestId)
-            return meeting
+            return meeting.model_dump(mode="json")
         else:
             return db.create_meeting_with_simulation(meeting_data, user_id)
 
@@ -250,7 +251,7 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
         parts = action.split(":", 2)
         if len(parts) < 3:
             raise HTTPException(status_code=400, detail="Invalid book action (expected book:<id>:<slot>)")
-        request_id, slot_start_iso = parts[1], parts[2]
+        request_id, slot_start_iso = parts[1], unquote(parts[2])
         meeting = db._get_item(f"MEET#{request_id}", "META")
         if not meeting:
             raise HTTPException(status_code=404, detail="Meeting not found")
@@ -318,8 +319,8 @@ def get_meetings(request: Request):
     response_data = []
     for m in meetings:
         slots = db.get_meeting_slots(m.requestId)
-        meeting_dict = m.model_dump()
-        meeting_dict['slots'] = [s.model_dump() for s in slots]
+        meeting_dict = m.model_dump(mode="json")
+        meeting_dict['slots'] = [s.model_dump(mode="json") for s in slots]
         # Compute role: organizer if user created it, participant otherwise
         meeting_dict['userRole'] = 'organizer' if m.creatorUserId == user_id else 'participant'
         response_data.append(meeting_dict)

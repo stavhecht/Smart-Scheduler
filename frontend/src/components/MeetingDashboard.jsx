@@ -18,12 +18,19 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId })
     title: '',
     durationMinutes: 60,
     participantEmails: '',
+    daysForward: 7,
   });
 
-  // Split meetings by role
-  const myMeetings    = meetings.filter(m => m.userRole === 'organizer');
-  const invitations   = meetings.filter(m => m.userRole === 'participant');
-  const needsAction   = invitations.filter(
+  // Split meetings by role; sort invitations so "needs action" ones appear first
+  const myMeetings  = meetings.filter(m => m.userRole === 'organizer');
+  const invitations = meetings
+    .filter(m => m.userRole === 'participant')
+    .sort((a, b) => {
+      const aNeedsAct = a.status === 'confirmed' && !(a.acceptedBy || []).includes(currentUserId) ? 1 : 0;
+      const bNeedsAct = b.status === 'confirmed' && !(b.acceptedBy || []).includes(currentUserId) ? 1 : 0;
+      return bNeedsAct - aNeedsAct;
+    });
+  const needsAction = invitations.filter(
     m => m.status === 'confirmed' && !(m.acceptedBy || []).includes(currentUserId)
   ).length;
 
@@ -53,8 +60,9 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId })
         durationMinutes: Number(newMeeting.durationMinutes),
         participantEmails: emails,
         participantIds: [],
+        daysForward: newMeeting.daysForward,
       });
-      setNewMeeting({ title: '', durationMinutes: 60, participantEmails: '' });
+      setNewMeeting({ title: '', durationMinutes: 60, participantEmails: '', daysForward: 7 });
       notify('Meeting created! AI is optimizing slots…');
       onRefresh();
     } catch (err) {
@@ -162,6 +170,26 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId })
                     </button>
                   ))}
                 </div>
+              </div>
+
+              <div className="form-group">
+                <label>Scheduling Horizon</label>
+                <div className="dur-pills">
+                  {[
+                    { days: 3,  label: '3 days'  },
+                    { days: 7,  label: '1 week'  },
+                    { days: 14, label: '2 weeks' },
+                  ].map(({ days, label }) => (
+                    <button
+                      key={days} type="button"
+                      className={`dur-pill ${newMeeting.daysForward === days ? 'active' : ''}`}
+                      onClick={() => setNewMeeting({ ...newMeeting, daysForward: days })}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <span className="form-hint">How far ahead the AI will search for available slots.</span>
               </div>
 
               <div className="form-group">

@@ -43,6 +43,19 @@ def _query_begins_with(pk: str, sk_prefix: str) -> List[dict]:
     return response.get('Items', [])
 
 
+def _paginate_scan(**kwargs) -> List[dict]:
+    """DynamoDB scan with automatic pagination (handles tables > 1 MB)."""
+    items: List[dict] = []
+    while True:
+        response = table.scan(**kwargs)
+        items.extend(response.get('Items', []))
+        last_key = response.get('LastEvaluatedKey')
+        if not last_key:
+            break
+        kwargs['ExclusiveStartKey'] = last_key
+    return items
+
+
 # ---------------------------------------------------------------------------
 # User profile / fairness
 # ---------------------------------------------------------------------------
@@ -107,8 +120,8 @@ def update_fairness_on_booking(user_id: str, slot_fairness_impact: float):
 # ---------------------------------------------------------------------------
 
 def get_user_meetings(user_id: str) -> List[MeetingRequest]:
-    """Returns meetings where user is creator OR a participant."""
-    response = table.scan(
+    """Returns meetings where user is creator OR a participant (paginated scan)."""
+    items = _paginate_scan(
         FilterExpression=(
             Attr('PK').begins_with('MEET#') &
             Attr('SK').eq('META') &
@@ -116,7 +129,7 @@ def get_user_meetings(user_id: str) -> List[MeetingRequest]:
         )
     )
     meetings = []
-    for item in response.get('Items', []):
+    for item in items:
         try:
             meetings.append(MeetingRequest(**item))
         except Exception:
@@ -126,22 +139,16 @@ def get_user_meetings(user_id: str) -> List[MeetingRequest]:
 
 
 def get_users_by_emails(emails: List[str]) -> List[dict]:
-    """Look up registered users by email address (for invitation flow)."""
-    found = []
-    for email in emails:
-        email = email.strip().lower()
-        if not email:
-            continue
-        response = table.scan(
-            FilterExpression=(
-                Attr('SK').eq('PROFILE') &
-                Attr('email').eq(email)
-            )
-        )
-        items = response.get('Items', [])
-        if items:
-            found.append(items[0])
-    return found
+    """Look up registered users by email address (single paginated scan)."""
+    normalised = {e.strip().lower() for e in emails if e.strip()}
+    if not normalised:
+        return []
+    # One full scan filtered to PROFILE items, then match in Python
+    # This is O(1) scan instead of O(N) separate scans.
+    all_profiles = _paginate_scan(
+        FilterExpression=Attr('SK').eq('PROFILE')
+    )
+    return [p for p in all_profiles if p.get('email', '').lower() in normalised]
 
 
 def get_meeting_slots(request_id: str) -> List[SuggestedTimeSlot]:
@@ -351,12 +358,12 @@ def init_db():
     _put_item(f"USER#{user_id}", "PROFILE", UserProfile(
         userId=user_id, email="yoed@example.com", displayName="Yoed (Dev)",
         timezone="Asia/Jerusalem", workingHours={"start": "09:00", "end": "18:00"}
-    ).model_dump())
+    ).model_dump(mode="json"))
     _put_item(f"USER#{user_id}", "FAIRNESS", FairnessState(
         userId=user_id, fairnessScore=78.5,
         meetingLoadMetrics={"meetings_this_week": 3, "cancellations_last_month": 0, "suffering_score": 2},
         inconvenientMeetingsCount=1
-    ).model_dump())
+    ).model_dump(mode="json"))
 
     req_id = "seed-meeting-1"
     tomorrow = datetime.now() + timedelta(days=1)

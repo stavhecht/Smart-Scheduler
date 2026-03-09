@@ -38,7 +38,7 @@ class MeetingCreateSchema(BaseModel):
     durationMinutes: int
     participantIds: List[str] = []
     participantEmails: List[str] = []  # invite by email
-    daysForward: int = 3
+    daysForward: int = 7
 
 # --- 4. Suggested Time Slot ---
 class SuggestedTimeSlot(BaseModel):

@@ -16,6 +16,7 @@ const ROLE_COLOR = {
 export default function CalendarView({ meetings }) {
   const [weekOffset, setWeekOffset] = useState(0);
   const [hovered, setHovered]       = useState(null);
+  const [mousePos, setMousePos]     = useState({ x: 0, y: 0 });
   const nowRef = useRef(null);
 
   const confirmed = meetings.filter(m => m.status === 'confirmed' && m.selectedSlotStart);
@@ -69,8 +70,16 @@ export default function CalendarView({ meetings }) {
     }
   }, []);
 
+  /* Which confirmed meetings fall in the visible week */
+  const thisWeekEvents = confirmed.filter(m =>
+    weekDays.some(day => new Date(m.selectedSlotStart).toDateString() === day.date.toDateString())
+  );
+
   return (
-    <div className="cv-wrap">
+    <div
+      className="cv-wrap"
+      onMouseMove={e => setMousePos({ x: e.clientX, y: e.clientY })}
+    >
 
       {/* ── Toolbar ── */}
       <div className="cv-header">
@@ -154,9 +163,15 @@ export default function CalendarView({ meetings }) {
         </div>
       </div>
 
-      {/* ── Hover tooltip ── */}
+      {/* ── Hover tooltip (follows cursor) ── */}
       {hovered && (
-        <div className="cv-tooltip">
+        <div
+          className="cv-tooltip"
+          style={{
+            left: Math.min(mousePos.x + 18, window.innerWidth  - 248),
+            top:  Math.min(mousePos.y + 18, window.innerHeight - 175),
+          }}
+        >
           <div className="cv-tt-title">{hovered.title}</div>
           <div className="cv-tt-row">
             📅 {new Date(hovered.selectedSlotStart).toLocaleDateString('en-US', {
@@ -174,7 +189,13 @@ export default function CalendarView({ meetings }) {
       {confirmed.length === 0 && (
         <div className="cv-empty">
           <span>📅</span>
-          <span>No confirmed meetings this week. Create one to see it here!</span>
+          <span>No confirmed meetings yet. Create one to see it here!</span>
+        </div>
+      )}
+      {confirmed.length > 0 && thisWeekEvents.length === 0 && (
+        <div className="cv-empty">
+          <span>📭</span>
+          <span>No meetings this week. Use the arrows to navigate to other weeks.</span>
         </div>
       )}
     </div>
