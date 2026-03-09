@@ -25,11 +25,15 @@ resource "aws_apigatewayv2_api" "api_gateway" {
 
   cors_configuration {
     allow_credentials = false
-    allow_headers     = ["date", "keep-alive", "content-type"]
+    allow_headers     = ["date", "keep-alive", "content-type", "authorization"]
     allow_methods     = ["*"]
     allow_origins     = ["*"]
     expose_headers    = ["date", "keep-alive"]
     max_age           = 86400
+  }
+
+  lifecycle {
+    ignore_changes = [target]
   }
 }
 

@@ -5,6 +5,7 @@ import CalendarView from './components/CalendarView';
 
 // Amplify Auth Imports
 import { Amplify } from 'aws-amplify';
+import { fetchAuthSession } from 'aws-amplify/auth';
 import { Authenticator, useAuthenticator } from '@aws-amplify/ui-react';
 import '@aws-amplify/ui-react/styles.css';
 import awsConfig from './aws-exports';
@@ -18,18 +19,24 @@ function AppContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  const API_BASE = 'https://aeox6n4cja.execute-api.us-east-1.amazonaws.com';
+
+  const authFetch = async (url) => {
+    const session = await fetchAuthSession();
+    const token = session.tokens?.idToken?.toString();
+    const res = await fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText} at ${url}`);
+    return res.json();
+  };
+
   useEffect(() => {
     if (!user) return;
-    
-    // Initial data fetch
-    const fetchWithCheck = (url) => fetch(url).then(res => {
-      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText} at ${url}`);
-      return res.json();
-    });
 
     Promise.all([
-      fetchWithCheck('https://aeox6n4cja.execute-api.us-east-1.amazonaws.com/api/profile'),
-      fetchWithCheck('https://aeox6n4cja.execute-api.us-east-1.amazonaws.com/api/meetings')
+      authFetch(`${API_BASE}/api/profile`),
+      authFetch(`${API_BASE}/api/meetings`)
     ])
       .then(([profileData, meetingsData]) => {
         setProfile(profileData);
@@ -44,8 +51,7 @@ function AppContent() {
   }, [user]);
 
   const refreshMeetings = () => {
-    fetch('https://aeox6n4cja.execute-api.us-east-1.amazonaws.com/api/meetings')
-      .then(res => res.json())
+    authFetch(`${API_BASE}/api/meetings`)
       .then(data => setMeetings(data))
       .catch(err => console.error("Refresh failed", err));
   };
