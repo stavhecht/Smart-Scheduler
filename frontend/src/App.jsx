@@ -21,7 +21,7 @@ function AppContent() {
   const [error, setError]                 = useState(null);
   const [activeView, setActiveView]       = useState('dashboard');
   const [retryCount, setRetryCount]       = useState(0);
-  const [calendarToast, setCalendarToast] = useState(null); // 'google' | 'microsoft' | null
+  const [calendarToast, setCalendarToast] = useState(null); // { type: 'success'|'error'|'info', msg } | null
   const oauthProcessed = useRef(false);
 
   // Capture OAuth callback params from URL on component mount (before they disappear).
@@ -53,7 +53,8 @@ function AppContent() {
         try {
           await apiPost('/api/calendar/callback', oauthPending);
           const provider = oauthPending.provider;
-          setCalendarToast(provider);
+          const label = oauthPending.provider === 'google' ? 'Google Calendar' : 'Microsoft Outlook';
+          setCalendarToast({ type: 'success', msg: `${label} connected successfully!` });
           setTimeout(() => setCalendarToast(null), 5000);
           setActiveView('profile'); // navigate straight to profile to show connected calendar
         } catch (err) {
@@ -97,6 +98,12 @@ function AppContent() {
       })
       .catch(err => console.error('Refresh failed', err));
 
+  /** Show a toast notification. */
+  const showCalendarToast = (type, msg) => {
+    setCalendarToast({ type, msg });
+    setTimeout(() => setCalendarToast(null), 6000);
+  };
+
   /** Open Google / Microsoft OAuth flow (redirects the page). */
   const handleCalendarConnect = async (provider) => {
     try {
@@ -107,8 +114,11 @@ function AppContent() {
     } catch (err) {
       const label = provider === 'google' ? 'Google' : 'Microsoft';
       if (err.message?.toLowerCase().includes('not configured')) {
-        alert(`${label} Calendar OAuth credentials are not yet configured in the backend. Add GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET to the Lambda environment variables.`);
+        showCalendarToast('info',
+          `${label} OAuth credentials not yet configured. Add ${provider === 'google' ? 'GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET' : 'MICROSOFT_CLIENT_ID + MICROSOFT_CLIENT_SECRET'} to the Lambda environment variables.`
+        );
       } else {
+        showCalendarToast('error', `Failed to connect ${label}. Please try again.`);
         console.error('Failed to get OAuth URL:', err);
       }
     }
@@ -190,18 +200,28 @@ function AppContent() {
 
       {/* ── Main ── */}
       <main className="main-content">
-        {/* Calendar OAuth success toast */}
-        {calendarToast && (
-          <div style={{
-            position: 'fixed', top: '1.5rem', right: '1.5rem', zIndex: 9999,
-            padding: '0.8rem 1.2rem', borderRadius: '12px', fontSize: '0.875rem',
-            fontWeight: 500, boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
-            background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)',
-            color: '#4ade80',
-          }}>
-            ✅ {calendarToast === 'google' ? 'Google Calendar' : 'Microsoft Outlook'} connected successfully!
-          </div>
-        )}
+        {/* Calendar toast notification */}
+        {calendarToast && (() => {
+          const styles = {
+            success: { bg: 'rgba(34,197,94,0.12)',   border: 'rgba(34,197,94,0.3)',   color: '#4ade80', icon: '✅' },
+            error:   { bg: 'rgba(239,68,68,0.12)',   border: 'rgba(239,68,68,0.3)',   color: '#f87171', icon: '❌' },
+            info:    { bg: 'rgba(56,189,248,0.12)',  border: 'rgba(56,189,248,0.3)',  color: '#38bdf8', icon: 'ℹ️' },
+          };
+          const s = styles[calendarToast.type] || styles.info;
+          return (
+            <div style={{
+              position: 'fixed', top: '1.5rem', right: '1.5rem', zIndex: 9999,
+              padding: '0.8rem 1.2rem', borderRadius: '12px', fontSize: '0.84rem',
+              fontWeight: 500, boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+              background: s.bg, border: `1px solid ${s.border}`, color: s.color,
+              maxWidth: '380px', lineHeight: 1.5,
+              display: 'flex', alignItems: 'flex-start', gap: '0.5rem',
+            }}>
+              <span style={{ flexShrink: 0 }}>{s.icon}</span>
+              <span>{calendarToast.msg}</span>
+            </div>
+          );
+        })()}
 
         {loading && (
           <div className="loading-screen">
