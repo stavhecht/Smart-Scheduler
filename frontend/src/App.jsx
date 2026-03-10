@@ -76,6 +76,7 @@ function AppContent() {
     run().catch(err => {
       console.error('Load error:', err);
       if (err.message?.includes('401')) {
+        setLoading(false);
         signOut();
       } else {
         setError(err.message || 'Connection error — check API Gateway');
