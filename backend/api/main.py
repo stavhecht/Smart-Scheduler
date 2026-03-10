@@ -362,8 +362,7 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
         db._put_item(f"MEET#{request_id}", "META", meeting)
         # Delete old slots
         db.delete_meeting_slots(request_id)
-        # Regenerate slots
-        from models import MeetingCreateSchema
+        # Regenerate slots (reuse globally imported MeetingCreateSchema)
         mock_schema = MeetingCreateSchema(
             title=meeting['title'],
             durationMinutes=meeting['durationMinutes'],
