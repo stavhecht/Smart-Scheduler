@@ -382,6 +382,13 @@
   letter-spacing: 0.04em;
 }
 
+.stat-subtext {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.4);
+  margin-top: 0.2rem;
+  font-weight: 400;
+}
+
 .stat-bar-track {
   height: 4px;
   background: rgba(255, 255, 255, 0.07);
