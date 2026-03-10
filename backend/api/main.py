@@ -10,8 +10,7 @@ from mangum import Mangum
 
 import db
 import calendar_client
-from models import (UserProfile, MeetingRequest, SuggestedTimeSlot,
-                    FairnessState, MeetingCreateSchema, MeetingEditSchema)
+import models
 
 app = FastAPI()
 
@@ -215,7 +214,7 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
         if not data:
             raise HTTPException(status_code=400, detail="Missing data for create_meeting")
         try:
-            meeting_data = MeetingCreateSchema(**json.loads(data))
+            meeting_data = models.MeetingCreateSchema(**json.loads(data))
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Invalid meeting data: {exc}")
 
@@ -319,7 +318,7 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
         if not data:
             raise HTTPException(status_code=400, detail="Missing data for edit")
         try:
-            payload = MeetingEditSchema(**json.loads(data))
+            payload = models.MeetingEditSchema(**json.loads(data))
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Invalid edit data: {exc}")
         meeting = db._get_item(f"MEET#{request_id}", "META")
@@ -363,7 +362,7 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
         # Delete old slots
         db.delete_meeting_slots(request_id)
         # Regenerate slots (reuse globally imported MeetingCreateSchema)
-        mock_schema = MeetingCreateSchema(
+        mock_schema = models.MeetingCreateSchema(
             title=meeting['title'],
             durationMinutes=meeting['durationMinutes'],
             participantIds=meeting.get('participantUserIds', []),
@@ -533,7 +532,7 @@ def get_meetings(request: Request):
 
 
 @app.post("/api/meetings/create")
-def create_meeting(meeting_data: MeetingCreateSchema, request: Request):
+def create_meeting(meeting_data: models.MeetingCreateSchema, request: Request):
     """
     Creates a new meeting request.
 

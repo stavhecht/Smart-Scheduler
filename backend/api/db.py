@@ -4,7 +4,7 @@ import uuid
 import json
 import os
 
-from models import UserProfile, MeetingRequest, SuggestedTimeSlot, FairnessState, MeetingCreateSchema
+import models
 from fairness_engine import engine as fairness_engine
 
 import boto3
@@ -66,7 +66,7 @@ def ensure_user_profile(user_id: str, email: str, display_name: str):
     if _get_item(f"USER#{user_id}", "PROFILE"):
         return
 
-    _put_item(f"USER#{user_id}", "PROFILE", UserProfile(
+    _put_item(f"USER#{user_id}", "PROFILE", models.UserProfile(
         userId=user_id,
         email=email,
         displayName=display_name,
@@ -74,7 +74,7 @@ def ensure_user_profile(user_id: str, email: str, display_name: str):
         workingHours={"start": "09:00", "end": "18:00"}
     ).model_dump(mode="json"))
 
-    _put_item(f"USER#{user_id}", "FAIRNESS", FairnessState(
+    _put_item(f"USER#{user_id}", "FAIRNESS", models.FairnessState(
         userId=user_id,
         fairnessScore=100.0,
         meetingLoadMetrics={"meetings_this_week": 0, "cancellations_last_month": 0, "suffering_score": 0},
@@ -82,14 +82,14 @@ def ensure_user_profile(user_id: str, email: str, display_name: str):
     ).model_dump(mode="json"))
 
 
-def get_profile(user_id: str) -> Optional[UserProfile]:
+def get_profile(user_id: str) -> Optional[models.UserProfile]:
     data = _get_item(f"USER#{user_id}", "PROFILE")
-    return UserProfile(**data) if data else None
+    return models.UserProfile(**data) if data else None
 
 
-def get_fairness_state(user_id: str) -> Optional[FairnessState]:
+def get_fairness_state(user_id: str) -> Optional[models.FairnessState]:
     data = _get_item(f"USER#{user_id}", "FAIRNESS")
-    return FairnessState(**data) if data else None
+    return models.FairnessState(**data) if data else None
 
 
 def update_fairness_on_booking(user_id: str, slot_fairness_impact: float):
@@ -120,7 +120,7 @@ def update_fairness_on_booking(user_id: str, slot_fairness_impact: float):
 # Meetings
 # ---------------------------------------------------------------------------
 
-def get_user_meetings(user_id: str) -> List[MeetingRequest]:
+def get_user_meetings(user_id: str) -> List[models.MeetingRequest]:
     """Returns meetings where user is creator OR a participant (paginated scan)."""
     items = _paginate_scan(
         FilterExpression=(
@@ -132,7 +132,7 @@ def get_user_meetings(user_id: str) -> List[MeetingRequest]:
     meetings = []
     for item in items:
         try:
-            meetings.append(MeetingRequest(**item))
+            meetings.append(models.MeetingRequest(**item))
         except Exception:
             pass
     meetings.sort(key=lambda x: x.createdAt, reverse=True)
@@ -152,9 +152,9 @@ def get_users_by_emails(emails: List[str]) -> List[dict]:
     return [p for p in all_profiles if p.get('email', '').lower() in normalised]
 
 
-def get_meeting_slots(request_id: str) -> List[SuggestedTimeSlot]:
+def get_meeting_slots(request_id: str) -> List[models.SuggestedTimeSlot]:
     items = _query_begins_with(f"MEET#{request_id}", "SLOT#")
-    slots = [SuggestedTimeSlot(**item) for item in items]
+    slots = [models.SuggestedTimeSlot(**item) for item in items]
     slots.sort(key=lambda x: x.score, reverse=True)
     return slots
 
@@ -320,10 +320,10 @@ def validate_and_consume_oauth_state(user_id: str, state: str) -> Optional[str]:
 # Meeting creation
 # ---------------------------------------------------------------------------
 
-def create_meeting_record(req_data: MeetingCreateSchema, creator_id: str) -> MeetingRequest:
+def create_meeting_record(req_data: models.MeetingCreateSchema, creator_id: str) -> models.MeetingRequest:
     """Create the meeting record in DynamoDB (without slots). Returns the new meeting."""
     req_id = f"m{uuid.uuid4().hex[:6]}"
-    new_meeting = MeetingRequest(
+    new_meeting = models.MeetingRequest(
         requestId=req_id,
         creatorUserId=creator_id,
         participantUserIds=req_data.participantIds,
@@ -337,7 +337,7 @@ def create_meeting_record(req_data: MeetingCreateSchema, creator_id: str) -> Mee
     return new_meeting
 
 
-def create_meeting_with_simulation(req_data: MeetingCreateSchema, creator_id: str) -> MeetingRequest:
+def create_meeting_with_simulation(req_data: models.MeetingCreateSchema, creator_id: str) -> models.MeetingRequest:
     """
     Fallback path (used when Step Functions is not configured).
     Creates a meeting and uses the real FairnessEngine for slot scoring.
@@ -372,7 +372,7 @@ def create_meeting_with_simulation(req_data: MeetingCreateSchema, creator_id: st
 
     # Persist the final slots
     for slot_data in best_slots:
-        slot = SuggestedTimeSlot(
+        slot = models.SuggestedTimeSlot(
             requestId=meeting.requestId,
             startIso=datetime.fromisoformat(slot_data['startIso']),
             endIso=datetime.fromisoformat(slot_data['endIso']),
@@ -482,7 +482,7 @@ def sfn_store_results(payload: dict) -> dict:
         best_slots = fairness_engine.select_best_slots(scored_slots, count=3)
 
     for slot_data in best_slots:
-        slot = SuggestedTimeSlot(
+        slot = models.SuggestedTimeSlot(
             requestId=request_id,
             startIso=datetime.fromisoformat(slot_data['startIso']),
             endIso=datetime.fromisoformat(slot_data['endIso']),
@@ -513,11 +513,11 @@ def init_db():
         pass
 
     user_id = "u1"
-    _put_item(f"USER#{user_id}", "PROFILE", UserProfile(
+    _put_item(f"USER#{user_id}", "PROFILE", models.UserProfile(
         userId=user_id, email="yoed@example.com", displayName="Yoed (Dev)",
         timezone="Asia/Jerusalem", workingHours={"start": "09:00", "end": "18:00"}
     ).model_dump(mode="json"))
-    _put_item(f"USER#{user_id}", "FAIRNESS", FairnessState(
+    _put_item(f"USER#{user_id}", "FAIRNESS", models.FairnessState(
         userId=user_id, fairnessScore=78.5,
         meetingLoadMetrics={"meetings_this_week": 3, "cancellations_last_month": 0, "suffering_score": 2},
         inconvenientMeetingsCount=1
