@@ -249,9 +249,10 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId })
               </div>
 
               <div className="form-group">
-                <label>Invite Participants</label>
+                <label>Invite Participants *</label>
                 <input
                   type="text"
+                  required
                   placeholder="alice@co.com, bob@co.com"
                   value={newMeeting.participantEmails}
                   onChange={e => setNewMeeting({ ...newMeeting, participantEmails: e.target.value })}
@@ -260,7 +261,13 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId })
               </div>
 
               <div className="modal-actions">
-                <button type="submit" className="btn-submit">🤖 Optimise & Create</button>
+                <button
+                  type="submit"
+                  className="btn-submit"
+                  disabled={!newMeeting.title || !newMeeting.participantEmails.trim() || loading}
+                >
+                  {loading ? '⏳ Creating...' : '🤖 Optimise & Create'}
+                </button>
                 <button type="button" className="btn-cancel" onClick={() => setShowCreate(false)}>Cancel</button>
               </div>
             </form>
