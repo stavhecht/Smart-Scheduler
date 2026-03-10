@@ -15,7 +15,12 @@ resource "aws_lambda_function" "api_handler" {
     variables = {
       TABLE_NAME     = aws_dynamodb_table.smart_scheduler_table.name
       AWS_ACCOUNT_ID = data.aws_caller_identity.current.account_id
-      # Set SEED_DEMO_DATA = "true" here only if you want legacy demo data seeded
+      FRONTEND_URL   = "https://main.d2v1ecqqvohzov.amplifyapp.com"
+      # Calendar OAuth — fill these in after creating OAuth apps:
+      # GOOGLE_CLIENT_ID     = "xxxx.apps.googleusercontent.com"
+      # GOOGLE_CLIENT_SECRET = "GOCSPX-xxxx"
+      # MICROSOFT_CLIENT_ID  = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+      # MICROSOFT_CLIENT_SECRET = "xxxx"
     }
   }
 

@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import './App.css'
 import MeetingDashboard from './components/MeetingDashboard';
 import CalendarView from './components/CalendarView';
 import ProfileView from './components/ProfileView';
-import { apiGet } from './apiClient';
+import { apiGet, apiPost } from './apiClient';
 
 import { Amplify } from 'aws-amplify';
 import { Authenticator, useAuthenticator } from '@aws-amplify/ui-react';
@@ -14,48 +14,116 @@ Amplify.configure(awsConfig);
 
 function AppContent() {
   const { user, signOut } = useAuthenticator((context) => [context.user]);
-  const [profile, setProfile]       = useState(null);
-  const [meetings, setMeetings]     = useState([]);
-  const [loading, setLoading]       = useState(true);
-  const [error, setError]           = useState(null);
-  const [activeView, setActiveView] = useState('dashboard');
-  const [retryCount, setRetryCount] = useState(0);
+  const [profile, setProfile]             = useState(null);
+  const [meetings, setMeetings]           = useState([]);
+  const [calendarStatus, setCalendarStatus] = useState({ google: { connected: false, email: '' }, microsoft: { connected: false, email: '' } });
+  const [loading, setLoading]             = useState(true);
+  const [error, setError]                 = useState(null);
+  const [activeView, setActiveView]       = useState('dashboard');
+  const [retryCount, setRetryCount]       = useState(0);
+  const [calendarToast, setCalendarToast] = useState(null); // 'google' | 'microsoft' | null
+  const oauthProcessed = useRef(false);
+
+  // Capture OAuth callback params from URL on component mount (before they disappear).
+  // State initializer runs only once — safe to use window.location here.
+  const [oauthPending] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code   = params.get('code');
+    const state  = params.get('state');
+    if (code && state) {
+      const provider = state.split(':')[0];
+      if (provider === 'google' || provider === 'microsoft') {
+        // Clean the URL immediately so a page refresh doesn't re-trigger
+        window.history.replaceState({}, '', window.location.pathname);
+        return { code, state, provider };
+      }
+    }
+    return null;
+  });
 
   useEffect(() => {
     if (!user) return;
     setLoading(true);
     setError(null);
-    Promise.all([
-      apiGet('/api/profile'),
-      apiGet('/api/meetings'),
-    ])
-      .then(([profileData, meetingsData]) => {
-        setProfile(profileData);
-        setMeetings(meetingsData);
-        setLoading(false);
-      })
-      .catch(err => {
-        console.error('Load error:', err);
-        if (err.message?.includes('401')) {
-          signOut();
-        } else {
-          setError(err.message || 'Connection error — check API Gateway');
-          setLoading(false);
+
+    const run = async () => {
+      // Process OAuth callback first (if the user just came back from Google/Microsoft)
+      if (oauthPending && !oauthProcessed.current) {
+        oauthProcessed.current = true;
+        try {
+          await apiPost('/api/calendar/callback', oauthPending);
+          const provider = oauthPending.provider;
+          setCalendarToast(provider);
+          setTimeout(() => setCalendarToast(null), 5000);
+          setActiveView('profile'); // navigate straight to profile to show connected calendar
+        } catch (err) {
+          console.error('OAuth callback exchange failed:', err);
         }
-      });
+      }
+
+      const [profileData, meetingsData, calStatus] = await Promise.all([
+        apiGet('/api/profile'),
+        apiGet('/api/meetings'),
+        apiGet('/api/calendar/status').catch(() => null), // non-fatal
+      ]);
+      setProfile(profileData);
+      setMeetings(meetingsData);
+      if (calStatus) setCalendarStatus(calStatus);
+      setLoading(false);
+    };
+
+    run().catch(err => {
+      console.error('Load error:', err);
+      if (err.message?.includes('401')) {
+        signOut();
+      } else {
+        setError(err.message || 'Connection error — check API Gateway');
+        setLoading(false);
+      }
+    });
   }, [user, retryCount]);
 
-  /** Refreshes both profile (fairness score) AND meetings list. */
+  /** Refreshes profile (fairness score), meetings list, and calendar status. */
   const refreshAll = () =>
     Promise.all([
       apiGet('/api/profile'),
       apiGet('/api/meetings'),
+      apiGet('/api/calendar/status').catch(() => null),
     ])
-      .then(([profileData, meetingsData]) => {
+      .then(([profileData, meetingsData, calStatus]) => {
         setProfile(profileData);
         setMeetings(meetingsData);
+        if (calStatus) setCalendarStatus(calStatus);
       })
       .catch(err => console.error('Refresh failed', err));
+
+  /** Open Google / Microsoft OAuth flow (redirects the page). */
+  const handleCalendarConnect = async (provider) => {
+    try {
+      const result = await apiGet(`/api/calendar/oauth_url?provider=${provider}`);
+      if (result?.url) {
+        window.location.href = result.url;
+      }
+    } catch (err) {
+      const label = provider === 'google' ? 'Google' : 'Microsoft';
+      if (err.message?.toLowerCase().includes('not configured')) {
+        alert(`${label} Calendar OAuth credentials are not yet configured in the backend. Add GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET to the Lambda environment variables.`);
+      } else {
+        console.error('Failed to get OAuth URL:', err);
+      }
+    }
+  };
+
+  /** Disconnect a calendar provider. */
+  const handleCalendarDisconnect = async (provider) => {
+    try {
+      await apiPost('/api/calendar/disconnect', { provider });
+      const updated = await apiGet('/api/calendar/status').catch(() => null);
+      if (updated) setCalendarStatus(updated);
+    } catch (err) {
+      console.error('Failed to disconnect calendar:', err);
+    }
+  };
 
   /* Badge counts */
   const needsAction = meetings.filter(
@@ -122,6 +190,19 @@ function AppContent() {
 
       {/* ── Main ── */}
       <main className="main-content">
+        {/* Calendar OAuth success toast */}
+        {calendarToast && (
+          <div style={{
+            position: 'fixed', top: '1.5rem', right: '1.5rem', zIndex: 9999,
+            padding: '0.8rem 1.2rem', borderRadius: '12px', fontSize: '0.875rem',
+            fontWeight: 500, boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+            background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)',
+            color: '#4ade80',
+          }}>
+            ✅ {calendarToast === 'google' ? 'Google Calendar' : 'Microsoft Outlook'} connected successfully!
+          </div>
+        )}
+
         {loading && (
           <div className="loading-screen">
             <div className="spinner" />
@@ -176,9 +257,15 @@ function AppContent() {
               <div className="view-wrap">
                 <div className="view-header">
                   <h2>Profile & Settings</h2>
-                  <p className="view-subtitle">Account details and fairness analytics</p>
+                  <p className="view-subtitle">Account details, fairness analytics & calendar integrations</p>
                 </div>
-                <ProfileView profile={profile} meetings={meetings} />
+                <ProfileView
+                  profile={profile}
+                  meetings={meetings}
+                  calendarStatus={calendarStatus}
+                  onCalendarConnect={handleCalendarConnect}
+                  onCalendarDisconnect={handleCalendarDisconnect}
+                />
               </div>
             )}
           </>
@@ -192,9 +279,9 @@ function AppContent() {
    DashboardView — home screen overview
 ───────────────────────────────────────────── */
 function DashboardView({ profile, meetings, onNavigate, needsAction }) {
-  const myPending = meetings.filter(m => m.status === 'pending' && m.userRole === 'organizer');
-  const confirmed = meetings.filter(m => m.status === 'confirmed');
-  const score     = Math.round(profile.fairness_score ?? 100);
+  const myPending  = meetings.filter(m => m.status === 'pending' && m.userRole === 'organizer');
+  const confirmed  = meetings.filter(m => m.status === 'confirmed');
+  const score      = Math.round(profile.fairness_score ?? 100);
   const scoreColor = score >= 80 ? 'var(--success)' : score >= 60 ? 'var(--warning)' : 'var(--danger)';
 
   return (

@@ -360,6 +360,126 @@
   color: #818cf8;
 }
 
+/* ── Calendar Integration ── */
+.cal-intro {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  margin: 0 0 1.25rem;
+  line-height: 1.5;
+}
+
+.cal-providers {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.cal-provider-row {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.9rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.cal-provider-row:last-child { border-bottom: none; }
+
+.cal-provider-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  font-weight: 800;
+  flex-shrink: 0;
+  color: white;
+}
+
+.google-icon {
+  background: linear-gradient(135deg, #ea4335, #fbbc05, #34a853, #4285f4);
+  background-size: 200%;
+}
+
+.ms-icon {
+  background: linear-gradient(135deg, #f25022, #7fba00, #00a4ef, #ffb900);
+  background-size: 200%;
+}
+
+.cal-provider-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.cal-provider-name {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.cal-status-connected {
+  font-size: 0.75rem;
+  color: var(--success);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cal-status-disconnected {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.cal-btn {
+  padding: 0.38rem 0.9rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 700;
+  transition: all 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-family: inherit;
+}
+
+.cal-btn-connect {
+  background: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  color: var(--accent-color);
+}
+
+.cal-btn-connect:hover {
+  background: rgba(56, 189, 248, 0.2);
+  transform: translateY(-1px);
+}
+
+.cal-btn-disconnect {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  color: #f87171;
+}
+
+.cal-btn-disconnect:hover {
+  background: rgba(239, 68, 68, 0.16);
+  transform: translateY(-1px);
+}
+
+.cal-note {
+  font-size: 0.76rem;
+  color: var(--text-secondary);
+  margin: 1rem 0 0;
+  padding: 0.75rem 1rem;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 8px;
+  border-left: 2px solid rgba(56, 189, 248, 0.2);
+  line-height: 1.5;
+}
+
 /* ── Responsive ── */
 @media (max-width: 900px) {
   .pv-detail-grid { grid-template-columns: 1fr; }

@@ -1,6 +1,15 @@
 import './ProfileView.css';
 
-export default function ProfileView({ profile, meetings }) {
+/* ─────────────────────────────────────────────
+   ProfileView
+   Props:
+     profile               – user profile object
+     meetings              – array of all user meetings
+     calendarStatus        – { google: {connected, email}, microsoft: {connected, email} }
+     onCalendarConnect     – fn(provider) → initiates OAuth flow
+     onCalendarDisconnect  – fn(provider) → disconnects calendar
+───────────────────────────────────────────── */
+export default function ProfileView({ profile, meetings, calendarStatus, onCalendarConnect, onCalendarDisconnect }) {
   const score      = Math.round(profile.fairness_score ?? 100);
   const scoreColor = score >= 80 ? '#22c55e' : score >= 60 ? '#f59e0b' : '#ef4444';
 
@@ -15,14 +24,19 @@ export default function ProfileView({ profile, meetings }) {
   const focusScore  = profile.details?.suffering_score ?? 0;
 
   // Circular progress
-  const R            = 52;
-  const C            = 2 * Math.PI * R;
-  const dashOffset   = C - (score / 100) * C;
+  const R          = 52;
+  const C          = 2 * Math.PI * R;
+  const dashOffset = C - (score / 100) * C;
 
   // Initials from name
   const initials = profile.name
     ? profile.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
     : '??';
+
+  const googleConnected    = calendarStatus?.google?.connected;
+  const googleEmail        = calendarStatus?.google?.email || '';
+  const microsoftConnected = calendarStatus?.microsoft?.connected;
+  const microsoftEmail     = calendarStatus?.microsoft?.email || '';
 
   return (
     <div className="pv-wrap">
@@ -151,14 +165,77 @@ export default function ProfileView({ profile, meetings }) {
               toggle
               defaultOn
             />
-            <SettingRow
-              label="Calendar Integration"
-              desc="Google Calendar · Microsoft 365"
-              action="Coming Soon"
-              disabled
-            />
           </div>
         </div>
+      </div>
+
+      {/* ── Calendar Integration card ── */}
+      <div className="pv-card">
+        <h3>🗓️ Calendar Integration</h3>
+        <p className="cal-intro">
+          Connect your calendar so Smart Scheduler can read your availability and automatically add confirmed meetings.
+        </p>
+        <div className="cal-providers">
+
+          {/* Google Calendar */}
+          <div className="cal-provider-row">
+            <div className="cal-provider-icon google-icon">G</div>
+            <div className="cal-provider-info">
+              <span className="cal-provider-name">Google Calendar</span>
+              {googleConnected
+                ? <span className="cal-status-connected">✓ Connected{googleEmail ? ` · ${googleEmail}` : ''}</span>
+                : <span className="cal-status-disconnected">Not connected</span>
+              }
+            </div>
+            {googleConnected ? (
+              <button
+                className="cal-btn cal-btn-disconnect"
+                onClick={() => onCalendarDisconnect?.('google')}
+              >
+                Disconnect
+              </button>
+            ) : (
+              <button
+                className="cal-btn cal-btn-connect"
+                onClick={() => onCalendarConnect?.('google')}
+              >
+                Connect
+              </button>
+            )}
+          </div>
+
+          {/* Microsoft Outlook */}
+          <div className="cal-provider-row">
+            <div className="cal-provider-icon ms-icon">M</div>
+            <div className="cal-provider-info">
+              <span className="cal-provider-name">Microsoft Outlook</span>
+              {microsoftConnected
+                ? <span className="cal-status-connected">✓ Connected{microsoftEmail ? ` · ${microsoftEmail}` : ''}</span>
+                : <span className="cal-status-disconnected">Not connected</span>
+              }
+            </div>
+            {microsoftConnected ? (
+              <button
+                className="cal-btn cal-btn-disconnect"
+                onClick={() => onCalendarDisconnect?.('microsoft')}
+              >
+                Disconnect
+              </button>
+            ) : (
+              <button
+                className="cal-btn cal-btn-connect"
+                onClick={() => onCalendarConnect?.('microsoft')}
+              >
+                Connect
+              </button>
+            )}
+          </div>
+        </div>
+
+        <p className="cal-note">
+          💡 After connecting, the AI will use your real calendar availability when generating meeting slots.
+          Confirmed meetings will be added to your calendar automatically.
+        </p>
       </div>
 
       {/* ── Activity timeline ── */}

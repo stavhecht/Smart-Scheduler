@@ -9,7 +9,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
 
 import db
-from models import UserProfile, MeetingRequest, SuggestedTimeSlot, FairnessState, MeetingCreateSchema
+import calendar_client
+from models import (UserProfile, MeetingRequest, SuggestedTimeSlot,
+                    FairnessState, MeetingCreateSchema, MeetingEditSchema)
 
 app = FastAPI()
 
@@ -193,11 +195,18 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
     if action == "meetings":
         meetings = db.get_user_meetings(user_id)
         result = []
+        all_participant_ids: set = set()
+        for m in meetings:
+            for pid in m.participantUserIds:
+                all_participant_ids.add(pid)
+        name_map = db.get_users_by_ids(list(all_participant_ids))
         for m in meetings:
             slots = db.get_meeting_slots(m.requestId)
             d = m.model_dump(mode="json")
-            d['slots']    = [s.model_dump(mode="json") for s in slots]
-            d['userRole'] = 'organizer' if m.creatorUserId == user_id else 'participant'
+            d['slots']            = [s.model_dump(mode="json") for s in slots]
+            d['userRole']         = 'organizer' if m.creatorUserId == user_id else 'participant'
+            d['participantNames'] = {pid: name_map.get(pid, {}).get('name', pid)
+                                     for pid in m.participantUserIds}
             result.append(d)
         return result
 
@@ -261,6 +270,19 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
         meeting['status']            = 'confirmed'
         meeting['selectedSlotStart'] = slot_start_iso
         db._put_item(f"MEET#{request_id}", "META", meeting)
+        db.log_meeting_activity(request_id, 'booked', user_id)
+        # Best-effort: write to connected calendars
+        try:
+            end_slot = slot_data.get('endIso', '') if slot_data else ''
+            calendar_client.write_meeting_to_calendars(
+                creator_id=meeting.get('creatorUserId', ''),
+                participant_ids=meeting.get('participantUserIds', []),
+                title=meeting.get('title', 'Meeting'),
+                start_iso=slot_start_iso,
+                end_iso=end_slot,
+            )
+        except Exception:
+            pass
         return {"status": "success", "message": "Meeting confirmed successfully", "meeting": meeting}
 
     # ── accept:<request_id> ───────────────────────────────────────────────
@@ -277,7 +299,190 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
             accepted.append(user_id)
         meeting['acceptedBy'] = accepted
         db._put_item(f"MEET#{request_id}", "META", meeting)
+        db.log_meeting_activity(request_id, 'accepted', user_id)
         return {"status": "success", "message": "Meeting accepted", "acceptedBy": accepted}
+
+    # ── cancel:<request_id> ───────────────────────────────────────────────
+    if action.startswith("cancel:"):
+        request_id = action.split(":", 1)[1]
+        meeting    = db._get_item(f"MEET#{request_id}", "META")
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        if meeting.get('creatorUserId') != user_id:
+            raise HTTPException(status_code=403, detail="Only the organizer can cancel a meeting")
+        updated = db.cancel_meeting(request_id, user_id)
+        return {"status": "success", "message": "Meeting cancelled", "meeting": updated}
+
+    # ── edit:<request_id> ─────────────────────────────────────────────────
+    if action.startswith("edit:"):
+        request_id = action.split(":", 1)[1]
+        if not data:
+            raise HTTPException(status_code=400, detail="Missing data for edit")
+        try:
+            payload = MeetingEditSchema(**json.loads(data))
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid edit data: {exc}")
+        meeting = db._get_item(f"MEET#{request_id}", "META")
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        if meeting.get('creatorUserId') != user_id:
+            raise HTTPException(status_code=403, detail="Only the organizer can edit a meeting")
+        if meeting.get('status') == 'cancelled':
+            raise HTTPException(status_code=400, detail="Cannot edit a cancelled meeting")
+        updated = db.edit_meeting(request_id, user_id,
+                                  title=payload.title,
+                                  duration_minutes=payload.durationMinutes)
+        return {"status": "success", "meeting": updated}
+
+    # ── reschedule:<request_id> ───────────────────────────────────────────
+    if action.startswith("reschedule:"):
+        request_id = action.split(":", 1)[1]
+        days_forward = 7
+        if data:
+            try:
+                days_forward = int(json.loads(data).get('daysForward', 7))
+            except Exception:
+                pass
+        meeting = db._get_item(f"MEET#{request_id}", "META")
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        if meeting.get('creatorUserId') != user_id:
+            raise HTTPException(status_code=403, detail="Only the organizer can reschedule")
+        if meeting.get('status') == 'cancelled':
+            raise HTTPException(status_code=400, detail="Cannot reschedule a cancelled meeting")
+        # Reset meeting to pending
+        from datetime import datetime, timedelta
+        now = datetime.now()
+        meeting['status']            = 'pending'
+        meeting['selectedSlotStart'] = None
+        meeting['acceptedBy']        = []
+        meeting['dateRangeStart']    = now.isoformat()
+        meeting['dateRangeEnd']      = (now + timedelta(days=days_forward)).isoformat()
+        meeting['updatedAt']         = now.isoformat()
+        db._put_item(f"MEET#{request_id}", "META", meeting)
+        # Delete old slots
+        db.delete_meeting_slots(request_id)
+        # Regenerate slots
+        from models import MeetingCreateSchema
+        mock_schema = MeetingCreateSchema(
+            title=meeting['title'],
+            durationMinutes=meeting['durationMinutes'],
+            participantIds=meeting.get('participantUserIds', []),
+            daysForward=days_forward,
+        )
+        _run_local_scheduling(mock_schema, user_id, request_id)
+        db.log_meeting_activity(request_id, 'rescheduled', user_id, {'daysForward': days_forward})
+        return {"status": "success", "message": "Meeting rescheduled — new slots generated"}
+
+    # ── meeting_log:<request_id> ──────────────────────────────────────────
+    if action.startswith("meeting_log:"):
+        request_id = action.split(":", 1)[1]
+        meeting    = db._get_item(f"MEET#{request_id}", "META")
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        # Check access: creator or participant
+        pids = meeting.get('participantUserIds', [])
+        if meeting.get('creatorUserId') != user_id and user_id not in pids:
+            raise HTTPException(status_code=403, detail="Access denied")
+        logs = db.get_meeting_activity_log(request_id)
+        return logs
+
+    # ── calendar_status ───────────────────────────────────────────────────
+    if action == "calendar_status":
+        return db.get_connected_calendars(user_id)
+
+    # ── oauth_url:google | oauth_url:microsoft ────────────────────────────
+    if action.startswith("oauth_url:"):
+        provider = action.split(":", 1)[1]
+        if provider == "google":
+            if not calendar_client.GOOGLE_CLIENT_ID:
+                raise HTTPException(status_code=503,
+                    detail="Google Calendar not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in Lambda environment.")
+            url = calendar_client.get_google_auth_url(user_id)
+            return {"url": url, "provider": "google"}
+        elif provider == "microsoft":
+            if not calendar_client.MS_CLIENT_ID:
+                raise HTTPException(status_code=503,
+                    detail="Microsoft Calendar not configured. Set MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET in Lambda environment.")
+            url = calendar_client.get_microsoft_auth_url(user_id)
+            return {"url": url, "provider": "microsoft"}
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
+
+    # ── oauth_callback:google | oauth_callback:microsoft ──────────────────
+    if action.startswith("oauth_callback:"):
+        provider = action.split(":", 1)[1]
+        if not data:
+            raise HTTPException(status_code=400, detail="Missing callback data")
+        try:
+            cb = json.loads(data)
+            code      = cb.get('code', '')
+            raw_state = cb.get('state', '')   # "provider:userId:nonce"
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid callback data: {exc}")
+
+        if not code:
+            raise HTTPException(status_code=400, detail="Missing OAuth code")
+
+        # Parse and validate state nonce
+        state_parts = raw_state.split(':', 2)
+        if len(state_parts) != 3 or state_parts[0] != provider or state_parts[1] != user_id:
+            raise HTTPException(status_code=400, detail="Invalid state parameter")
+        nonce = state_parts[2]
+        validated_provider = db.validate_and_consume_oauth_state(user_id, nonce)
+        if not validated_provider:
+            raise HTTPException(status_code=400, detail="Invalid or expired state. Please try connecting again.")
+
+        if provider == "google":
+            try:
+                tokens = calendar_client.exchange_google_code(code)
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"Token exchange failed: {exc}")
+            calendar_email = calendar_client.get_google_user_email(tokens.get('access_token', ''))
+            from datetime import datetime, timedelta
+            expires_at = datetime.now() + timedelta(seconds=tokens.get('expires_in', 3600))
+            db.save_oauth_tokens(user_id, 'google', {
+                'access_token':   tokens.get('access_token', ''),
+                'refresh_token':  tokens.get('refresh_token', ''),
+                'expires_at':     expires_at.isoformat(),
+                'scope':          tokens.get('scope', ''),
+                'calendar_email': calendar_email,
+            })
+            return {"status": "success", "provider": "google", "email": calendar_email}
+
+        elif provider == "microsoft":
+            try:
+                tokens = calendar_client.exchange_microsoft_code(code)
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"Token exchange failed: {exc}")
+            # Decode the id_token to get email (it's a JWT — parse the payload)
+            calendar_email = ""
+            try:
+                import base64
+                id_token = tokens.get('id_token', '')
+                payload  = id_token.split('.')[1]
+                payload += '=' * (4 - len(payload) % 4)   # fix padding
+                claims   = json.loads(base64.b64decode(payload))
+                calendar_email = claims.get('email') or claims.get('preferred_username', '')
+            except Exception:
+                pass
+            from datetime import datetime, timedelta
+            expires_at = datetime.now() + timedelta(seconds=tokens.get('expires_in', 3600))
+            db.save_oauth_tokens(user_id, 'microsoft', {
+                'access_token':   tokens.get('access_token', ''),
+                'refresh_token':  tokens.get('refresh_token', ''),
+                'expires_at':     expires_at.isoformat(),
+                'scope':          tokens.get('scope', ''),
+                'calendar_email': calendar_email,
+            })
+            return {"status": "success", "provider": "microsoft", "email": calendar_email}
+
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
+
+    # ── calendar_disconnect:google | calendar_disconnect:microsoft ─────────
+    if action.startswith("calendar_disconnect:"):
+        provider = action.split(":", 1)[1]
+        db.delete_oauth_tokens(user_id, provider)
+        return {"status": "success", "provider": provider, "connected": False}
 
     raise HTTPException(status_code=400, detail=f"Unknown action: '{action}'")
 

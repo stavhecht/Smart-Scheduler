@@ -10,20 +10,25 @@ import './MeetingDashboard.css';
      currentUserId – authenticated user's ID (profile.id)
 ───────────────────────────────────────────── */
 export default function MeetingDashboard({ meetings, onRefresh, currentUserId }) {
-  const [expandedId, setExpandedId]     = useState(null);
-  const [loading, setLoading]           = useState(false);
-  const [showCreate, setShowCreate]     = useState(false);
-  const [notification, setNotification] = useState(null);
-  const [newMeeting, setNewMeeting]     = useState({
-    title: '',
-    durationMinutes: 60,
-    participantEmails: '',
-    daysForward: 7,
+  const [expandedId, setExpandedId]             = useState(null);
+  const [loading, setLoading]                   = useState(false);
+  const [showCreate, setShowCreate]             = useState(false);
+  const [notification, setNotification]         = useState(null);
+  const [editModal, setEditModal]               = useState(null);       // { requestId, title, durationMinutes }
+  const [cancelConfirmId, setCancelConfirmId]   = useState(null);       // requestId
+  const [rescheduleConfirmId, setRescheduleConfirmId] = useState(null); // requestId
+  const [showCancelled, setShowCancelled]       = useState(false);
+  const [newMeeting, setNewMeeting]             = useState({
+    title: '', durationMinutes: 60, participantEmails: '', daysForward: 7,
   });
 
-  // Split meetings by role; sort invitations so "needs action" ones appear first
-  const myMeetings  = meetings.filter(m => m.userRole === 'organizer');
-  const invitations = meetings
+  // Split meetings by status then role
+  const activeMeetings    = meetings.filter(m => m.status !== 'cancelled');
+  const cancelledMeetings = meetings.filter(m => m.status === 'cancelled');
+  const myActiveMeetings  = activeMeetings.filter(m => m.userRole === 'organizer');
+
+  // Sort invitations so "needs action" ones appear first
+  const invitations = activeMeetings
     .filter(m => m.userRole === 'participant')
     .sort((a, b) => {
       const aNeedsAct = a.status === 'confirmed' && !(a.acceptedBy || []).includes(currentUserId) ? 1 : 0;
@@ -97,6 +102,57 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId })
     }
   };
 
+  const handleEdit = async (e) => {
+    e.preventDefault();
+    if (!editModal) return;
+    setLoading(true);
+    try {
+      await apiPost(`/api/meetings/${editModal.requestId}/edit`, {
+        title: editModal.title,
+        durationMinutes: Number(editModal.durationMinutes),
+      });
+      notify('Meeting updated!');
+      setEditModal(null);
+      onRefresh();
+    } catch (err) {
+      notify('Failed to update meeting', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCancel = async () => {
+    if (!cancelConfirmId) return;
+    setLoading(true);
+    try {
+      await apiPost(`/api/meetings/${cancelConfirmId}/cancel`);
+      notify('Meeting cancelled.');
+      setCancelConfirmId(null);
+      setExpandedId(null);
+      onRefresh();
+    } catch (err) {
+      notify('Failed to cancel meeting', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleReschedule = async () => {
+    if (!rescheduleConfirmId) return;
+    setLoading(true);
+    try {
+      await apiPost(`/api/meetings/${rescheduleConfirmId}/reschedule`);
+      notify('Meeting reset to pending — AI is regenerating slots…');
+      setRescheduleConfirmId(null);
+      setExpandedId(null);
+      onRefresh();
+    } catch (err) {
+      notify('Failed to reschedule', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   /* ── Render ── */
   return (
     <div className="md-wrap">
@@ -138,7 +194,7 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId })
         </div>
       )}
 
-      {/* Create Modal */}
+      {/* ── Create Modal ── */}
       {showCreate && (
         <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowCreate(false)}>
           <div className="modal-box">
@@ -204,14 +260,88 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId })
               </div>
 
               <div className="modal-actions">
-                <button type="submit" className="btn-submit">
-                  🤖 Optimise & Create
-                </button>
-                <button type="button" className="btn-cancel" onClick={() => setShowCreate(false)}>
-                  Cancel
-                </button>
+                <button type="submit" className="btn-submit">🤖 Optimise & Create</button>
+                <button type="button" className="btn-cancel" onClick={() => setShowCreate(false)}>Cancel</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Edit Modal ── */}
+      {editModal && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setEditModal(null)}>
+          <div className="modal-box">
+            <div className="modal-head">
+              <h3>✏️ Edit Meeting</h3>
+              <button className="modal-close" onClick={() => setEditModal(null)}>✕</button>
+            </div>
+            <form onSubmit={handleEdit} className="modal-form">
+              <div className="form-group">
+                <label>Meeting Title</label>
+                <input
+                  autoFocus required
+                  value={editModal.title}
+                  onChange={e => setEditModal({ ...editModal, title: e.target.value })}
+                />
+              </div>
+              <div className="form-group">
+                <label>Duration</label>
+                <div className="dur-pills">
+                  {[15, 30, 45, 60, 90].map(d => (
+                    <button
+                      key={d} type="button"
+                      className={`dur-pill ${editModal.durationMinutes === d ? 'active' : ''}`}
+                      onClick={() => setEditModal({ ...editModal, durationMinutes: d })}
+                    >
+                      {d < 60 ? `${d}m` : d === 60 ? '1h' : '1.5h'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="modal-actions">
+                <button type="submit" className="btn-submit">💾 Save Changes</button>
+                <button type="button" className="btn-cancel" onClick={() => setEditModal(null)}>Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Cancel Confirmation ── */}
+      {cancelConfirmId && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setCancelConfirmId(null)}>
+          <div className="modal-box confirm-box">
+            <div className="modal-head">
+              <h3>🗑️ Cancel Meeting</h3>
+              <button className="modal-close" onClick={() => setCancelConfirmId(null)}>✕</button>
+            </div>
+            <div className="confirm-body">
+              <p>Are you sure you want to cancel this meeting? All participants will be notified.</p>
+              <div className="modal-actions">
+                <button className="btn-danger" onClick={handleCancel}>Yes, Cancel Meeting</button>
+                <button className="btn-cancel" onClick={() => setCancelConfirmId(null)}>Keep It</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Reschedule Confirmation ── */}
+      {rescheduleConfirmId && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setRescheduleConfirmId(null)}>
+          <div className="modal-box confirm-box">
+            <div className="modal-head">
+              <h3>🔄 Reschedule Meeting</h3>
+              <button className="modal-close" onClick={() => setRescheduleConfirmId(null)}>✕</button>
+            </div>
+            <div className="confirm-body">
+              <p>This will reset the meeting to <strong>pending</strong> and the AI will generate new time slots.</p>
+              <div className="modal-actions">
+                <button className="btn-submit" onClick={handleReschedule}>🤖 Regenerate Slots</button>
+                <button className="btn-cancel" onClick={() => setRescheduleConfirmId(null)}>Cancel</button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -249,10 +379,10 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId })
         <div className="section-head">
           <span className="section-icon">📋</span>
           <h3>My Meetings</h3>
-          <span className="count-chip organizer">{myMeetings.length}</span>
+          <span className="count-chip organizer">{myActiveMeetings.length}</span>
         </div>
 
-        {myMeetings.length === 0 ? (
+        {myActiveMeetings.length === 0 ? (
           <div className="empty-state">
             <div className="empty-icon">📅</div>
             <p>No meetings yet. Create one to get started!</p>
@@ -262,7 +392,7 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId })
           </div>
         ) : (
           <div className="cards-list">
-            {myMeetings.map(m => (
+            {myActiveMeetings.map(m => (
               <MeetingCard
                 key={m.requestId}
                 meeting={m}
@@ -271,6 +401,9 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId })
                 onToggle={() => toggle(m.requestId)}
                 onAccept={() => {}}
                 onBook={handleBook}
+                onEdit={() => setEditModal({ requestId: m.requestId, title: m.title, durationMinutes: m.durationMinutes })}
+                onCancel={() => setCancelConfirmId(m.requestId)}
+                onReschedule={m.status === 'confirmed' ? () => setRescheduleConfirmId(m.requestId) : null}
                 fmtDate={fmtDate}
                 fmtTime={fmtTime}
                 fmtFull={fmtFull}
@@ -279,6 +412,50 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId })
           </div>
         )}
       </section>
+
+      {/* ── CANCELLED section ── */}
+      {cancelledMeetings.length > 0 && (
+        <section className="md-section">
+          <div
+            className="section-head section-head-toggle"
+            onClick={() => setShowCancelled(p => !p)}
+          >
+            <span className="section-icon">🗑️</span>
+            <h3>Cancelled</h3>
+            <span className="count-chip count-chip-cancelled">{cancelledMeetings.length}</span>
+            <span className="expand-arrow" style={{ marginLeft: 'auto' }}>
+              {showCancelled ? '▲' : '▼'}
+            </span>
+          </div>
+          {showCancelled && (
+            <div className="cards-list">
+              {cancelledMeetings.map(m => (
+                <div key={m.requestId} className="mc cancelled-card">
+                  <div className="mc-head" style={{ cursor: 'default' }}>
+                    <div className="mc-left">
+                      <div className="mc-title-row">
+                        <span className="mc-title cancelled-title">{m.title}</span>
+                        <span className="mc-role-badge organizer" style={{ opacity: 0.5 }}>
+                          {m.userRole === 'organizer' ? 'Organizer' : 'Invited'}
+                        </span>
+                      </div>
+                      <div className="mc-meta">
+                        <span>⏱ {m.durationMinutes}m</span>
+                        {m.cancelledAt && (
+                          <span className="cancelled-time">
+                            Cancelled {fmtDate(m.cancelledAt)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <span className="status-chip cancelled-chip">Cancelled</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 }
@@ -286,13 +463,18 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId })
 /* ─────────────────────────────────────────────
    MeetingCard sub-component
 ───────────────────────────────────────────── */
-function MeetingCard({ meeting, currentUserId, isExpanded, onToggle, onAccept, onBook, fmtDate, fmtTime, fmtFull }) {
-  const isOrganizer = meeting.userRole === 'organizer';
-  const isConfirmed = meeting.status === 'confirmed';
-  const hasSlots    = Array.isArray(meeting.slots) && meeting.slots.length > 0;
-  const userAccepted = (meeting.acceptedBy || []).includes(currentUserId);
-  const needsAccept = !isOrganizer && isConfirmed && !userAccepted;
+function MeetingCard({
+  meeting, currentUserId, isExpanded, onToggle, onAccept, onBook,
+  onEdit, onCancel, onReschedule,
+  fmtDate, fmtTime, fmtFull,
+}) {
+  const isOrganizer    = meeting.userRole === 'organizer';
+  const isConfirmed    = meeting.status === 'confirmed';
+  const hasSlots       = Array.isArray(meeting.slots) && meeting.slots.length > 0;
+  const userAccepted   = (meeting.acceptedBy || []).includes(currentUserId);
+  const needsAccept    = !isOrganizer && isConfirmed && !userAccepted;
   const participantCount = (meeting.participantUserIds || []).length;
+  const participantNames = meeting.participantNames || {};
 
   return (
     <div className={`mc ${meeting.userRole} ${isConfirmed ? 'confirmed' : 'pending'} ${needsAccept ? 'needs-action' : ''}`}>
@@ -334,10 +516,41 @@ function MeetingCard({ meeting, currentUserId, isExpanded, onToggle, onAccept, o
           {!isOrganizer && isConfirmed && userAccepted && (
             <span className="badge-accepted">✓ Accepted</span>
           )}
+
+          {/* Organizer action buttons */}
+          {isOrganizer && onEdit && (
+            <button
+              className="btn-action-sm"
+              title="Edit meeting"
+              onClick={e => { e.stopPropagation(); onEdit(); }}
+            >
+              ✏️
+            </button>
+          )}
+          {isOrganizer && onReschedule && (
+            <button
+              className="btn-action-sm"
+              title="Reschedule (regenerate slots)"
+              onClick={e => { e.stopPropagation(); onReschedule(); }}
+            >
+              🔄
+            </button>
+          )}
+          {isOrganizer && onCancel && (
+            <button
+              className="btn-action-sm btn-action-danger"
+              title="Cancel meeting"
+              onClick={e => { e.stopPropagation(); onCancel(); }}
+            >
+              🗑️
+            </button>
+          )}
+
           <span className={`status-chip ${isConfirmed ? 'confirmed' : 'pending'}`}>
             {isConfirmed ? 'Confirmed' : 'Pending'}
           </span>
-          {/* Expand arrow — show for organizer pending OR any expanded state */}
+
+          {/* Expand arrow */}
           {(isOrganizer && !isConfirmed && hasSlots) && (
             <span className="expand-arrow">{isExpanded ? '▲' : '▼'}</span>
           )}
@@ -389,11 +602,13 @@ function MeetingCard({ meeting, currentUserId, isExpanded, onToggle, onAccept, o
               <span className="p-status confirmed">✓ Organized</span>
             </div>
             {(meeting.participantUserIds || []).map(pid => {
-              const accepted = (meeting.acceptedBy || []).includes(pid);
+              const accepted  = (meeting.acceptedBy || []).includes(pid);
+              const nameInfo  = participantNames[pid];
+              const display   = nameInfo?.name || pid;
               return (
                 <div key={pid} className="participant-row">
                   <span className={`p-dot ${accepted ? 'accepted' : 'pending'}`} />
-                  <span className="p-name">{pid}</span>
+                  <span className="p-name" title={nameInfo?.email || pid}>{display}</span>
                   <span className={`p-status ${accepted ? 'confirmed' : 'pending'}`}>
                     {accepted ? '✓ Accepted' : '⏳ Pending'}
                   </span>

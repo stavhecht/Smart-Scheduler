@@ -67,8 +67,18 @@ async function apiProxy(action, data = null, _isRetry = false) {
 /* ── Public API ─────────────────────────────────────────────────────────── */
 
 export async function apiGet(path) {
-    if (path === '/api/profile')  return apiProxy('profile');
-    if (path === '/api/meetings') return apiProxy('meetings');
+    if (path === '/api/profile')         return apiProxy('profile');
+    if (path === '/api/meetings')        return apiProxy('meetings');
+    if (path === '/api/calendar/status') return apiProxy('calendar_status');
+
+    // /api/meetings/<id>/log
+    const logMatch = path.match(/^\/api\/meetings\/([^/]+)\/log$/);
+    if (logMatch) return apiProxy(`meeting_log:${logMatch[1]}`);
+
+    // /api/calendar/oauth_url?provider=<provider>
+    const oauthUrlMatch = path.match(/^\/api\/calendar\/oauth_url\?provider=(.+)$/);
+    if (oauthUrlMatch) return apiProxy(`oauth_url:${oauthUrlMatch[1]}`);
+
     return apiProxy(path);
 }
 
@@ -79,9 +89,27 @@ export async function apiPost(path, body) {
     const acceptMatch = path.match(/^\/api\/meetings\/([^/]+)\/accept$/);
     if (acceptMatch) return apiProxy(`accept:${acceptMatch[1]}`);
 
-    // /api/meetings/<id>/book/<slot>  (slot may be URL-encoded; decode before embedding in action)
+    // /api/meetings/<id>/book/<slot>  (slot may be URL-encoded)
     const bookMatch = path.match(/^\/api\/meetings\/([^/]+)\/book\/(.+)$/);
     if (bookMatch) return apiProxy(`book:${bookMatch[1]}:${decodeURIComponent(bookMatch[2])}`);
+
+    // /api/meetings/<id>/cancel
+    const cancelMatch = path.match(/^\/api\/meetings\/([^/]+)\/cancel$/);
+    if (cancelMatch) return apiProxy(`cancel:${cancelMatch[1]}`);
+
+    // /api/meetings/<id>/edit
+    const editMatch = path.match(/^\/api\/meetings\/([^/]+)\/edit$/);
+    if (editMatch) return apiProxy(`edit:${editMatch[1]}`, body);
+
+    // /api/meetings/<id>/reschedule
+    const rescheduleMatch = path.match(/^\/api\/meetings\/([^/]+)\/reschedule$/);
+    if (rescheduleMatch) return apiProxy(`reschedule:${rescheduleMatch[1]}`);
+
+    // /api/calendar/callback — OAuth authorization code exchange
+    if (path === '/api/calendar/callback') return apiProxy(`oauth_callback:${body.provider}`, body);
+
+    // /api/calendar/disconnect
+    if (path === '/api/calendar/disconnect') return apiProxy(`calendar_disconnect:${body.provider}`);
 
     return apiProxy(path, body);
 }

@@ -616,3 +616,99 @@
 
 /* Info panel */
 .info-panel p { margin: 0; font-size: 0.84rem; color: var(--text-secondary); }
+
+/* ── Organizer action buttons (edit / reschedule / cancel) ── */
+.btn-action-sm {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 7px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 0.82rem;
+  transition: background 0.15s, border-color 0.15s, transform 0.15s;
+  flex-shrink: 0;
+  line-height: 1;
+  padding: 0;
+}
+
+.btn-action-sm:hover {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.16);
+  transform: translateY(-1px);
+}
+
+.btn-action-danger:hover {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+/* ── Danger button (confirm cancel) ── */
+.btn-danger {
+  flex: 1;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #f87171;
+  padding: 0.75rem;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+  font-family: inherit;
+}
+
+.btn-danger:hover {
+  background: rgba(239, 68, 68, 0.22);
+  transform: translateY(-1px);
+}
+
+/* ── Confirm dialog box ── */
+.confirm-box { max-width: 380px; }
+
+.confirm-body {
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.confirm-body p {
+  margin: 0;
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.75);
+  line-height: 1.6;
+}
+
+/* ── Section head toggle (cancelled) ── */
+.section-head-toggle { cursor: pointer; user-select: none; }
+.section-head-toggle:hover h3 { color: white; }
+
+.count-chip-cancelled {
+  background: rgba(239, 68, 68, 0.1);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+/* ── Cancelled meeting card ── */
+.mc.cancelled-card {
+  border-left-color: rgba(239, 68, 68, 0.35) !important;
+  opacity: 0.65;
+}
+
+.cancelled-title { opacity: 0.7; }
+
+.cancelled-time {
+  color: #f87171;
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.status-chip.cancelled-chip {
+  background: rgba(239, 68, 68, 0.08);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.18);
+}

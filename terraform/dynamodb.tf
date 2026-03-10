@@ -14,6 +14,11 @@ resource "aws_dynamodb_table" "smart_scheduler_table" {
     type = "S"
   }
 
+  ttl {
+    attribute_name = "ttlExpiry"
+    enabled        = true
+  }
+
   tags = {
     Project     = "Smart-Scheduler"
     Environment = "Dev"

@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 
 # --- 1. User Profile ---
@@ -8,15 +8,15 @@ class UserProfile(BaseModel):
     email: str
     displayName: str
     timezone: str = "Asia/Jerusalem"
-    workingHours: Dict[str, str] = {"start": "09:00", "end": "17:00"}
+    workingHours: Dict[str, str] = {"start": "09:00", "end": "18:00"}
     createdAt: datetime = Field(default_factory=datetime.now)
 
-# --- 2. Connected Calendar ---
+# --- 2. Connected Calendar (OAuth tokens stored separately in DB) ---
 class ConnectedCalendar(BaseModel):
-    provider: str  # google, microsoft
-    accountId: str
-    scopes: List[str]
+    provider: str          # "google" | "microsoft"
+    email: str             # calendar account email
     connectedAt: datetime = Field(default_factory=datetime.now)
+    scopes: List[str] = []
 
 # --- 3. Meeting Request ---
 class MeetingRequest(BaseModel):
@@ -27,18 +27,25 @@ class MeetingRequest(BaseModel):
     durationMinutes: int
     dateRangeStart: datetime
     dateRangeEnd: datetime
-    status: str = "pending"  # pending, confirmed, cancelled
-    selectedSlotStart: Optional[str] = None  # ISO string of booked slot
-    acceptedBy: List[str] = []              # user IDs who accepted
+    status: str = "pending"          # pending | confirmed | cancelled
+    selectedSlotStart: Optional[str] = None   # ISO string of booked slot
+    acceptedBy: List[str] = []               # user IDs who accepted
     createdAt: datetime = Field(default_factory=datetime.now)
+    updatedAt: Optional[datetime] = None
+    cancelledAt: Optional[datetime] = None
+    cancelledBy: Optional[str] = None
 
-# --- Input Model for Creation ---
+# --- Input Models ---
 class MeetingCreateSchema(BaseModel):
     title: str
     durationMinutes: int
     participantIds: List[str] = []
-    participantEmails: List[str] = []  # invite by email
+    participantEmails: List[str] = []   # invite by email
     daysForward: int = 7
+
+class MeetingEditSchema(BaseModel):
+    title: Optional[str] = None
+    durationMinutes: Optional[int] = None
 
 # --- 4. Suggested Time Slot ---
 class SuggestedTimeSlot(BaseModel):
@@ -54,6 +61,14 @@ class SuggestedTimeSlot(BaseModel):
 class FairnessState(BaseModel):
     userId: str
     fairnessScore: float
-    meetingLoadMetrics: Dict[str, int]  # e.g., {"weekly_hours": 5}
+    meetingLoadMetrics: Dict[str, int]   # {"meetings_this_week": 3, ...}
     inconvenientMeetingsCount: int
     lastUpdatedAt: datetime = Field(default_factory=datetime.now)
+
+# --- 6. Meeting Activity Log Entry ---
+class MeetingLogEntry(BaseModel):
+    requestId: str
+    action: str        # created | edited | cancelled | rescheduled | booked | accepted
+    by: str            # userId
+    at: datetime = Field(default_factory=datetime.now)
+    changes: Optional[Dict[str, Any]] = None   # for "edited" entries

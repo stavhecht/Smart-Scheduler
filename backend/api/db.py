@@ -1,6 +1,7 @@
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 from datetime import datetime, timedelta
 import uuid
+import json
 import os
 
 from models import UserProfile, MeetingRequest, SuggestedTimeSlot, FairnessState, MeetingCreateSchema
@@ -156,6 +157,163 @@ def get_meeting_slots(request_id: str) -> List[SuggestedTimeSlot]:
     slots = [SuggestedTimeSlot(**item) for item in items]
     slots.sort(key=lambda x: x.score, reverse=True)
     return slots
+
+
+def delete_meeting_slots(request_id: str):
+    """Delete all suggested slots for a meeting (used before rescheduling)."""
+    slots = _query_begins_with(f"MEET#{request_id}", "SLOT#")
+    with table.batch_writer() as batch:
+        for s in slots:
+            batch.delete_item(Key={'PK': s['PK'], 'SK': s['SK']})
+
+
+# ---------------------------------------------------------------------------
+# Activity log
+# ---------------------------------------------------------------------------
+
+def log_meeting_activity(request_id: str, action: str, user_id: str, changes: Optional[dict] = None):
+    """Append an activity log entry for a meeting."""
+    ts = datetime.now().isoformat()
+    item: dict = {"action": action, "by": user_id, "at": ts}
+    if changes:
+        item["changes"] = json.dumps(changes)
+    _put_item(f"MEET#{request_id}", f"LOG#{ts}", item)
+
+
+def get_meeting_activity_log(request_id: str) -> List[dict]:
+    """Returns the activity log entries for a meeting, oldest first."""
+    items = _query_begins_with(f"MEET#{request_id}", "LOG#")
+    return sorted(items, key=lambda x: x.get('at', ''))
+
+
+# ---------------------------------------------------------------------------
+# Meeting edit / cancel
+# ---------------------------------------------------------------------------
+
+def cancel_meeting(request_id: str, cancelled_by: str) -> Optional[dict]:
+    """Soft-cancel a meeting. Returns updated meeting dict or None if not found."""
+    meeting = _get_item(f"MEET#{request_id}", "META")
+    if not meeting:
+        return None
+    now = datetime.now().isoformat()
+    meeting['status']      = 'cancelled'
+    meeting['cancelledAt'] = now
+    meeting['cancelledBy'] = cancelled_by
+    meeting['updatedAt']   = now
+    _put_item(f"MEET#{request_id}", "META", meeting)
+    log_meeting_activity(request_id, 'cancelled', cancelled_by)
+    return meeting
+
+
+def edit_meeting(request_id: str, edited_by: str, title: Optional[str] = None,
+                 duration_minutes: Optional[int] = None) -> Optional[dict]:
+    """Edit mutable fields of a meeting. Returns updated meeting dict."""
+    meeting = _get_item(f"MEET#{request_id}", "META")
+    if not meeting:
+        return None
+    changes: dict = {}
+    if title is not None and title != meeting.get('title'):
+        changes['title'] = {'from': meeting.get('title'), 'to': title}
+        meeting['title'] = title
+    if duration_minutes is not None and duration_minutes != meeting.get('durationMinutes'):
+        changes['durationMinutes'] = {'from': meeting.get('durationMinutes'), 'to': duration_minutes}
+        meeting['durationMinutes'] = duration_minutes
+    if not changes:
+        return meeting   # nothing changed
+    meeting['updatedAt'] = datetime.now().isoformat()
+    _put_item(f"MEET#{request_id}", "META", meeting)
+    log_meeting_activity(request_id, 'edited', edited_by, changes)
+    return meeting
+
+
+# ---------------------------------------------------------------------------
+# Multi-user: resolve participant IDs → display names
+# ---------------------------------------------------------------------------
+
+def get_users_by_ids(user_ids: List[str]) -> Dict[str, dict]:
+    """
+    Batch-fetch display names for a list of user IDs.
+    Returns {userId: {"name": ..., "email": ...}}.
+    Uses individual get_item calls (fine for typical meeting sizes of 2-10 people).
+    """
+    result: Dict[str, dict] = {}
+    for uid in user_ids:
+        profile = _get_item(f"USER#{uid}", "PROFILE")
+        if profile:
+            result[uid] = {
+                "name":  profile.get("displayName", uid[:8] + "..."),
+                "email": profile.get("email", ""),
+            }
+        else:
+            result[uid] = {"name": uid[:8] + "...", "email": ""}
+    return result
+
+
+# ---------------------------------------------------------------------------
+# OAuth token storage (Google Calendar / Outlook)
+# ---------------------------------------------------------------------------
+
+def get_oauth_tokens(user_id: str, provider: str) -> Optional[dict]:
+    """Returns stored OAuth tokens for a provider, or None."""
+    return _get_item(f"USER#{user_id}", f"OAUTH#{provider}")
+
+
+def save_oauth_tokens(user_id: str, provider: str, tokens: dict):
+    """Persist OAuth tokens for a calendar provider."""
+    item = {
+        'provider':     provider,
+        'accessToken':  tokens.get('access_token', ''),
+        'refreshToken': tokens.get('refresh_token', ''),
+        'expiresAt':    tokens.get('expires_at', ''),
+        'scopes':       tokens.get('scope', ''),
+        'calendarEmail': tokens.get('calendar_email', ''),
+        'connectedAt':  datetime.now().isoformat(),
+    }
+    _put_item(f"USER#{user_id}", f"OAUTH#{provider}", item)
+
+
+def delete_oauth_tokens(user_id: str, provider: str):
+    """Remove OAuth tokens (disconnect calendar)."""
+    table.delete_item(Key={'PK': f"USER#{user_id}", 'SK': f"OAUTH#{provider}"})
+
+
+def get_connected_calendars(user_id: str) -> dict:
+    """Returns {provider: {connected: bool, email: str}} for both providers."""
+    result = {}
+    for provider in ('google', 'microsoft'):
+        tokens = get_oauth_tokens(user_id, provider)
+        if tokens:
+            result[provider] = {
+                'connected': True,
+                'email': tokens.get('calendarEmail', ''),
+                'connectedAt': tokens.get('connectedAt', ''),
+            }
+        else:
+            result[provider] = {'connected': False, 'email': ''}
+    return result
+
+
+def save_oauth_state(user_id: str, provider: str, state: str):
+    """Store a short-lived OAuth state nonce (10 min TTL)."""
+    import time
+    _put_item(f"USER#{user_id}", f"OAUTH_STATE#{state}", {
+        'provider': provider,
+        'state': state,
+        'ttlExpiry': int(time.time()) + 600,   # 10 min
+    })
+
+
+def validate_and_consume_oauth_state(user_id: str, state: str) -> Optional[str]:
+    """Validate a state nonce; delete it and return provider, or None if invalid."""
+    import time
+    item = _get_item(f"USER#{user_id}", f"OAUTH_STATE#{state}")
+    if not item:
+        return None
+    if item.get('ttlExpiry', 0) < int(time.time()):
+        return None   # expired
+    # consume it
+    table.delete_item(Key={'PK': f"USER#{user_id}", 'SK': f"OAUTH_STATE#{state}"})
+    return item.get('provider')
 
 
 # ---------------------------------------------------------------------------
