@@ -133,7 +133,8 @@ def get_user_meetings(user_id: str) -> List[models.MeetingRequest]:
     for item in items:
         try:
             meetings.append(models.MeetingRequest(**item))
-        except Exception:
+        except Exception as exc:
+            print(f"[db] Failed to parse meeting item {item.get('PK')}: {exc}")
             pass
     meetings.sort(key=lambda x: x.createdAt, reverse=True)
     return meetings

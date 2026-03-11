@@ -160,54 +160,94 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
     if not action or not token:
         return {"status": "ok", "db": "DynamoDB Active", "sfn": "SmartSchedulerWorkflow"}
 
-    # ── Auth ──────────────────────────────────────────────────────────────
-    identity = validate_access_token(token)
-    if not identity:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    try:
+        # ── Auth ──────────────────────────────────────────────────────────
+        identity = validate_access_token(token)
+        if not identity:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-    user_id      = identity["user_id"]
-    email        = identity["email"]
-    display_name = identity["display_name"]
+        user_id      = identity["user_id"]
+        email        = identity["email"]
+        display_name = identity["display_name"]
 
-    # ── profile ───────────────────────────────────────────────────────────
-    if action == "profile":
-        db.ensure_user_profile(user_id, email, display_name)
-        profile  = db.get_profile(user_id)
-        fairness = db.get_fairness_state(user_id)
-        if not profile:
-            raise HTTPException(status_code=404, detail="User not found")
-        metrics = fairness.meetingLoadMetrics if fairness else {}
-        return {
-            "id":             user_id,
-            "name":           profile.displayName,
-            "email":          profile.email,
-            "role":           "Cloud Architect",
-            "fairness_score": float(fairness.fairnessScore) if fairness else 100.0,
-            "details": {
-                "meetings_this_week":      metrics.get("meetings_this_week", 0),
-                "cancellations_last_month": metrics.get("cancellations_last_month", 0),
-                "suffering_score":         metrics.get("suffering_score", 0),
-            },
-        }
+        # ── profile ───────────────────────────────────────────────────────
+        if action == "profile":
+            try:
+                db.ensure_user_profile(user_id, email, display_name)
+                profile  = db.get_profile(user_id)
+                fairness = db.get_fairness_state(user_id)
+                if not profile:
+                    raise HTTPException(status_code=404, detail="User not found")
+                metrics = fairness.meetingLoadMetrics if fairness else {}
+                return {
+                    "id":             user_id,
+                    "name":           profile.displayName,
+                    "email":          profile.email,
+                    "role":           "Cloud Architect",
+                    "fairness_score": float(fairness.fairnessScore) if fairness else 100.0,
+                    "details": {
+                        "meetings_this_week":      metrics.get("meetings_this_week", 0),
+                        "cancellations_last_month": metrics.get("cancellations_last_month", 0),
+                        "suffering_score":         metrics.get("suffering_score", 0),
+                    },
+                }
+            except HTTPException:
+                raise
+            except Exception as exc:
+                # Fail soft in production: log and return minimal profile so UI can load
+                print(f"[health] profile action failed for user {user_id}: {exc}")
+                return {
+                    "id": user_id,
+                    "name": display_name,
+                    "email": email,
+                    "role": "Cloud Architect",
+                    "fairness_score": 100.0,
+                    "details": {
+                        "meetings_this_week": 0,
+                        "cancellations_last_month": 0,
+                        "suffering_score": 0,
+                    },
+                }
 
-    # ── meetings ──────────────────────────────────────────────────────────
-    if action == "meetings":
-        meetings = db.get_user_meetings(user_id)
-        result = []
-        all_participant_ids: set = set()
-        for m in meetings:
-            for pid in m.participantUserIds:
-                all_participant_ids.add(pid)
-        name_map = db.get_users_by_ids(list(all_participant_ids))
-        for m in meetings:
-            slots = db.get_meeting_slots(m.requestId)
-            d = m.model_dump(mode="json")
-            d['slots']            = [s.model_dump(mode="json") for s in slots]
-            d['userRole']         = 'organizer' if m.creatorUserId == user_id else 'participant'
-            d['participantNames'] = {pid: name_map.get(pid, {}).get('name', pid)
-                                     for pid in m.participantUserIds}
-            result.append(d)
-        return result
+        # ── meetings ──────────────────────────────────────────────────────
+        if action == "meetings":
+            try:
+                meetings = db.get_user_meetings(user_id)
+                result = []
+                all_participant_ids: set = set()
+                for m in meetings:
+                    for pid in m.participantUserIds:
+                        all_participant_ids.add(pid)
+                name_map = db.get_users_by_ids(list(all_participant_ids))
+                for m in meetings:
+                    slots = db.get_meeting_slots(m.requestId)
+                    d = m.model_dump(mode="json")
+                    d['slots']            = [s.model_dump(mode="json") for s in slots]
+                    d['userRole']         = 'organizer' if m.creatorUserId == user_id else 'participant'
+                    d['participantNames'] = {pid: name_map.get(pid, {"name": pid, "email": ""})
+                                             for pid in m.participantUserIds}
+                    result.append(d)
+                return result
+            except Exception as exc:
+                # If something goes wrong (e.g. bad legacy data), log and return empty list
+                print(f"[health] meetings action failed for user {user_id}: {exc}")
+                return []
+
+        # ── calendar_status ───────────────────────────────────────────────
+        if action == "calendar_status":
+            try:
+                return db.get_connected_calendars(user_id)
+            except Exception as exc:
+                print(f"[health] calendar_status failed for user {user_id}: {exc}")
+                return {"google": {"connected": False, "email": ""}, "microsoft": {"connected": False, "email": ""}}
+
+    except HTTPException:
+        # preserve intended HTTP errors such as 401
+        raise
+    except Exception as exc:
+        # Global safety net so frontend won't see 500s
+        print(f"[health] unexpected error at action={action}: {exc}")
+        return {"status": "error", "action": action, "message": "Internal error, please try again"}
 
     # ── create_meeting ────────────────────────────────────────────────────
     if action == "create_meeting":
@@ -535,13 +575,19 @@ def get_meetings(request: Request):
     user_id = identity["user_id"]
 
     meetings = db.get_user_meetings(user_id)
+    all_participant_ids: set = set()
+    for m in meetings:
+        for pid in m.participantUserIds:
+            all_participant_ids.add(pid)
+    name_map = db.get_users_by_ids(list(all_participant_ids))
     response_data = []
     for m in meetings:
         slots = db.get_meeting_slots(m.requestId)
         meeting_dict = m.model_dump(mode="json")
         meeting_dict['slots'] = [s.model_dump(mode="json") for s in slots]
-        # Compute role: organizer if user created it, participant otherwise
         meeting_dict['userRole'] = 'organizer' if m.creatorUserId == user_id else 'participant'
+        meeting_dict['participantNames'] = {pid: name_map.get(pid, {"name": pid, "email": ""})
+                                            for pid in m.participantUserIds}
         response_data.append(meeting_dict)
 
     return response_data

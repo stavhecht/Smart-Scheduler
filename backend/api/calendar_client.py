@@ -19,7 +19,7 @@ import time
 import urllib.request
 import urllib.parse
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 import db   # local module
 

@@ -34,6 +34,7 @@ class MeetingRequest(BaseModel):
     updatedAt: Optional[datetime] = None
     cancelledAt: Optional[datetime] = None
     cancelledBy: Optional[str] = None
+    externalEventIds: Dict[str, str] = Field(default_factory=dict)    # mapping of userId: "provider:eventId"
 
 # --- Input Models ---
 class MeetingCreateSchema(BaseModel):
