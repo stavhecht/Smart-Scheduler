@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { apiPost } from '../apiClient';
+import { apiPost, apiScoreSlot } from '../apiClient';
 import './MeetingDashboard.css';
 
 /* ─────────────────────────────────────────────
@@ -21,6 +21,8 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId })
   const [newMeeting, setNewMeeting]             = useState({
     title: '', durationMinutes: 60, participantEmails: '', daysForward: 7,
   });
+  // Custom time picker state per meeting: { [requestId]: { datetime, scoring, scored } }
+  const [customPicker, setCustomPicker]         = useState({});
 
   // Split meetings by status then role
   const activeMeetings    = meetings.filter(m => m.status !== 'cancelled');
@@ -148,6 +150,42 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId })
       onRefresh();
     } catch (err) {
       notify('Failed to reschedule', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /** Score a custom datetime for a specific meeting's participants. */
+  const handleScoreCustomTime = async (meetingId, meeting) => {
+    const picker = customPicker[meetingId] || {};
+    if (!picker.datetime) return;
+    setCustomPicker(prev => ({ ...prev, [meetingId]: { ...picker, scoring: true, scored: null } }));
+    try {
+      const result = await apiScoreSlot(
+        picker.datetime,
+        meeting.durationMinutes,
+        meeting.participantUserIds || [],
+      );
+      setCustomPicker(prev => ({ ...prev, [meetingId]: { ...picker, scoring: false, scored: result } }));
+    } catch (err) {
+      notify('Could not score that time', 'error');
+      setCustomPicker(prev => ({ ...prev, [meetingId]: { ...picker, scoring: false } }));
+    }
+  };
+
+  /** Book a custom time (not from AI-generated slots). */
+  const handleBookCustom = async (meetingId, meeting) => {
+    const picker = customPicker[meetingId];
+    if (!picker?.scored) return;
+    setLoading(true);
+    setExpandedId(null);
+    try {
+      await apiPost(`/api/meetings/${meetingId}/book_custom`, picker.scored);
+      notify('Custom time booked! Participants have been notified.');
+      setCustomPicker(prev => { const n = { ...prev }; delete n[meetingId]; return n; });
+      onRefresh();
+    } catch (err) {
+      notify('Failed to book custom time', 'error');
     } finally {
       setLoading(false);
     }
@@ -414,6 +452,10 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId })
                 fmtDate={fmtDate}
                 fmtTime={fmtTime}
                 fmtFull={fmtFull}
+                customPicker={customPicker[m.requestId] || {}}
+                onCustomPickerChange={val => setCustomPicker(prev => ({ ...prev, [m.requestId]: { ...(prev[m.requestId] || {}), ...val } }))}
+                onScoreCustom={() => handleScoreCustomTime(m.requestId, m)}
+                onBookCustom={() => handleBookCustom(m.requestId, m)}
               />
             ))}
           </div>
@@ -474,6 +516,7 @@ function MeetingCard({
   meeting, currentUserId, isExpanded, onToggle, onAccept, onBook,
   onEdit, onCancel, onReschedule,
   fmtDate, fmtTime, fmtFull,
+  customPicker = {}, onCustomPickerChange, onScoreCustom, onBookCustom,
 }) {
   const isOrganizer    = meeting.userRole === 'organizer';
   const isConfirmed    = meeting.status === 'confirmed';
@@ -558,43 +601,94 @@ function MeetingCard({
           </span>
 
           {/* Expand arrow */}
-          {(isOrganizer && !isConfirmed && hasSlots) && (
-            <span className="expand-arrow">{isExpanded ? '▲' : '▼'}</span>
-          )}
-          {isOrganizer && isConfirmed && (
+          {isOrganizer && (
             <span className="expand-arrow">{isExpanded ? '▲' : '▼'}</span>
           )}
         </div>
       </div>
 
       {/* Slot selection panel — organizer, pending, expanded */}
-      {isExpanded && isOrganizer && !isConfirmed && hasSlots && (
+      {isExpanded && isOrganizer && !isConfirmed && (
         <div className="mc-panel slots-panel">
-          <div className="panel-title">🤖 AI-Optimised Time Slots — click to confirm</div>
-          <div className="slots-grid">
-            {meeting.slots.map((slot, idx) => (
-              <div
-                key={idx}
-                className={`slot-card ${idx === 0 ? 'top-pick' : ''}`}
-                onClick={() => onBook(meeting.requestId, slot)}
-              >
-                {idx === 0 && <div className="top-badge">⭐ Best Match</div>}
-                <div className="slot-date">{fmtDate(slot.startIso)}</div>
-                <div className="slot-time">{fmtTime(slot.startIso)} – {fmtTime(slot.endIso)}</div>
-                <div className="slot-score-row">
-                  <span className="slot-score-label">Fairness</span>
-                  <div className="slot-score-track">
-                    <div
-                      className="slot-score-fill"
-                      style={{ width: `${Math.min(100, Math.round(slot.score))}%` }}
-                    />
+          {/* AI-generated slots */}
+          {hasSlots && (
+            <>
+              <div className="panel-title">🤖 AI-Optimised Time Slots — click to confirm</div>
+              <div className="slots-grid">
+                {meeting.slots.map((slot, idx) => (
+                  <div
+                    key={idx}
+                    className={`slot-card ${idx === 0 ? 'top-pick' : ''}`}
+                    onClick={() => onBook(meeting.requestId, slot)}
+                  >
+                    {idx === 0 && <div className="top-badge">⭐ Best Match</div>}
+                    <div className="slot-date">{fmtDate(slot.startIso)}</div>
+                    <div className="slot-time">{fmtTime(slot.startIso)} – {fmtTime(slot.endIso)}</div>
+                    <div className="slot-score-row">
+                      <span className="slot-score-label">Fairness</span>
+                      <div className="slot-score-track">
+                        <div
+                          className="slot-score-fill"
+                          style={{ width: `${Math.min(100, Math.round(slot.score))}%` }}
+                        />
+                      </div>
+                      <span className="slot-score-val">{Math.round(slot.score)}%</span>
+                    </div>
+                    <div className="slot-explain">"{slot.explanation}"</div>
                   </div>
-                  <span className="slot-score-val">{Math.round(slot.score)}%</span>
-                </div>
-                <div className="slot-explain">"{slot.explanation}"</div>
+                ))}
               </div>
-            ))}
-          </div>
+            </>
+          )}
+
+          {/* Custom time picker */}
+          {onCustomPickerChange && (
+            <div className="custom-picker">
+              <div className="custom-picker-title">🕐 Or pick a custom time</div>
+              <div className="custom-picker-row">
+                <input
+                  type="datetime-local"
+                  className="custom-datetime-input"
+                  value={customPicker.datetime || ''}
+                  onChange={e => onCustomPickerChange({ datetime: e.target.value, scored: null })}
+                />
+                <button
+                  className="btn-score"
+                  disabled={!customPicker.datetime || customPicker.scoring}
+                  onClick={onScoreCustom}
+                >
+                  {customPicker.scoring ? '⏳ Scoring…' : '📊 Calculate Fairness'}
+                </button>
+              </div>
+
+              {customPicker.scored && (
+                <div className="custom-scored">
+                  <div className="slot-score-row" style={{ marginBottom: '0.5rem' }}>
+                    <span className="slot-score-label">Fairness</span>
+                    <div className="slot-score-track">
+                      <div
+                        className="slot-score-fill"
+                        style={{ width: `${Math.min(100, Math.round(customPicker.scored.score))}%` }}
+                      />
+                    </div>
+                    <span className="slot-score-val">{Math.round(customPicker.scored.score)}%</span>
+                  </div>
+                  <div className="slot-explain" style={{ marginBottom: '0.75rem' }}>
+                    "{customPicker.scored.explanation}"
+                  </div>
+                  <button className="btn-book-custom" onClick={onBookCustom}>
+                    ✅ Book This Time
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {!hasSlots && !customPicker.scored && (
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
+              AI is still generating slots… pick a custom time above to proceed immediately.
+            </p>
+          )}
         </div>
       )}
 

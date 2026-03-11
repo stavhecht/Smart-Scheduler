@@ -111,5 +111,14 @@ export async function apiPost(path, body) {
     // /api/calendar/disconnect
     if (path === '/api/calendar/disconnect') return apiProxy(`calendar_disconnect:${body.provider}`);
 
+    // /api/meetings/<id>/book_custom
+    const bookCustomMatch = path.match(/^\/api\/meetings\/([^/]+)\/book_custom$/);
+    if (bookCustomMatch) return apiProxy(`book_custom:${bookCustomMatch[1]}`, body);
+
     return apiProxy(path, body);
+}
+
+/** Score a manually selected time slot for fairness (no side effects). */
+export async function apiScoreSlot(startIso, durationMinutes, participantIds = []) {
+    return apiProxy('score_slot', { startIso, durationMinutes, participantIds });
 }

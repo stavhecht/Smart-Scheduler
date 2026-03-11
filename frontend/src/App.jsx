@@ -94,10 +94,19 @@ function AppContent() {
     ])
       .then(([profileData, meetingsData, calStatus]) => {
         setProfile(profileData);
-        setMeetings(meetingsData);
+        setMeetings(Array.isArray(meetingsData) ? meetingsData : []);
         if (calStatus) setCalendarStatus(calStatus);
       })
       .catch(err => console.error('Refresh failed', err));
+
+  /** Refresh meetings whenever the calendar tab becomes active. */
+  useEffect(() => {
+    if (activeView === 'calendar' && profile) {
+      apiGet('/api/meetings')
+        .then(data => { if (Array.isArray(data)) setMeetings(data); })
+        .catch(err => console.error('Calendar refresh failed', err));
+    }
+  }, [activeView]);
 
   /** Show a toast notification. */
   const showCalendarToast = (type, msg) => {
