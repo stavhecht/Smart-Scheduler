@@ -177,11 +177,11 @@ def get_google_events(user_id: str, time_min: str, time_max: str) -> List[dict]:
 
 
 def create_google_event(user_id: str, title: str, start_iso: str, end_iso: str,
-                        attendee_emails: List[str] = None) -> bool:
-    """Create a Google Calendar event after booking. Returns True on success."""
+                        attendee_emails: List[str] = None) -> Optional[str]:
+    """Create a Google Calendar event after booking. Returns the event ID on success, None on failure."""
     token = _ensure_fresh_google_token(user_id)
     if not token:
-        return False
+        return None
     try:
         event_body = {
             'summary': title,
@@ -194,6 +194,22 @@ def create_google_event(user_id: str, title: str, start_iso: str, end_iso: str,
         req  = urllib.request.Request(url, data=data, method='POST')
         req.add_header('Authorization', f'Bearer {token}')
         req.add_header('Content-Type', 'application/json')
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp_body = json.loads(resp.read().decode())
+            return resp_body.get('id')
+    except Exception:
+        return None
+
+
+def delete_google_event(user_id: str, event_id: str) -> bool:
+    """Delete a Google Calendar event. Returns True on success."""
+    token = _ensure_fresh_google_token(user_id)
+    if not token or not event_id:
+        return False
+    try:
+        url = f"{GOOGLE_CALENDAR}/calendars/primary/events/{event_id}"
+        req = urllib.request.Request(url, method='DELETE')
+        req.add_header('Authorization', f'Bearer {token}')
         with urllib.request.urlopen(req, timeout=10):
             return True
     except Exception:
@@ -299,11 +315,11 @@ def get_microsoft_events(user_id: str, time_min: str, time_max: str) -> List[dic
 
 
 def create_microsoft_event(user_id: str, title: str, start_iso: str, end_iso: str,
-                           attendee_emails: List[str] = None) -> bool:
-    """Create an Outlook Calendar event after booking."""
+                           attendee_emails: List[str] = None) -> Optional[str]:
+    """Create an Outlook Calendar event after booking. Returns the event ID."""
     token = _ensure_fresh_microsoft_token(user_id)
     if not token:
-        return False
+        return None
     try:
         event_body = {
             'subject': title,
@@ -319,6 +335,22 @@ def create_microsoft_event(user_id: str, title: str, start_iso: str, end_iso: st
         req  = urllib.request.Request(url, data=data, method='POST')
         req.add_header('Authorization', f'Bearer {token}')
         req.add_header('Content-Type', 'application/json')
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp_body = json.loads(resp.read().decode())
+            return resp_body.get('id')
+    except Exception:
+        return None
+
+
+def delete_microsoft_event(user_id: str, event_id: str) -> bool:
+    """Delete an Outlook Calendar event."""
+    token = _ensure_fresh_microsoft_token(user_id)
+    if not token or not event_id:
+        return False
+    try:
+        url = f"{MS_GRAPH}/me/events/{event_id}"
+        req = urllib.request.Request(url, method='DELETE')
+        req.add_header('Authorization', f'Bearer {token}')
         with urllib.request.urlopen(req, timeout=10):
             return True
     except Exception:
@@ -345,13 +377,13 @@ def get_user_busy_slots(user_id: str, date_start: datetime, date_end: datetime) 
 
 
 def write_meeting_to_calendars(creator_id: str, participant_ids: List[str],
-                                title: str, start_iso: str, end_iso: str):
+                                title: str, start_iso: str, end_iso: str) -> Dict[str, str]:
     """
     Best-effort: write a confirmed meeting to every participant's connected calendar.
-    Never raises — failures are silently ignored.
+    Returns a mapping of {userId: externalEventId}.
     """
     all_ids = list({creator_id} | set(participant_ids))
-    # Collect attendee emails for invites
+    # Collect attendee emails for invites (optional, but helps if providers sync)
     attendee_emails = []
     for uid in all_ids:
         tokens_g = db.get_oauth_tokens(uid, 'google')
@@ -360,11 +392,34 @@ def write_meeting_to_calendars(creator_id: str, participant_ids: List[str],
         if email:
             attendee_emails.append(email)
 
+    event_ids = {}
     for uid in all_ids:
         try:
             if db.get_oauth_tokens(uid, 'google'):
-                create_google_event(uid, title, start_iso, end_iso, attendee_emails)
+                eid = create_google_event(uid, title, start_iso, end_iso, attendee_emails)
+                if eid: event_ids[uid] = f"google:{eid}"
             elif db.get_oauth_tokens(uid, 'microsoft'):
-                create_microsoft_event(uid, title, start_iso, end_iso, attendee_emails)
+                eid = create_microsoft_event(uid, title, start_iso, end_iso, attendee_emails)
+                if eid: event_ids[uid] = f"microsoft:{eid}"
+        except Exception:
+            pass
+    return event_ids
+
+
+def remove_meeting_from_calendars(external_ids: Dict[str, str]):
+    """
+    Remove a previously booked meeting from all connected calendars.
+    external_ids is a dict: {userId: "provider:eventId"}
+    """
+    if not external_ids:
+        return
+    for uid, composite_id in external_ids.items():
+        try:
+            if ':' not in composite_id: continue
+            provider, eid = composite_id.split(':', 1)
+            if provider == 'google':
+                delete_google_event(uid, eid)
+            elif provider == 'microsoft':
+                delete_microsoft_event(uid, eid)
         except Exception:
             pass

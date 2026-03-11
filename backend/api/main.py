@@ -270,16 +270,19 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
         meeting['selectedSlotStart'] = slot_start_iso
         db._put_item(f"MEET#{request_id}", "META", meeting)
         db.log_meeting_activity(request_id, 'booked', user_id)
-        # Best-effort: write to connected calendars
+        # Best-effort: write to connected calendars and store event IDs for later deletion
         try:
             end_slot = slot_data.get('endIso', '') if slot_data else ''
-            calendar_client.write_meeting_to_calendars(
+            event_ids = calendar_client.write_meeting_to_calendars(
                 creator_id=meeting.get('creatorUserId', ''),
                 participant_ids=meeting.get('participantUserIds', []),
                 title=meeting.get('title', 'Meeting'),
                 start_iso=slot_start_iso,
                 end_iso=end_slot,
             )
+            if event_ids:
+                meeting['externalEventIds'] = event_ids
+                db._put_item(f"MEET#{request_id}", "META", meeting)
         except Exception:
             pass
         return {"status": "success", "message": "Meeting confirmed successfully", "meeting": meeting}
@@ -309,6 +312,12 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
             raise HTTPException(status_code=404, detail="Meeting not found")
         if meeting.get('creatorUserId') != user_id:
             raise HTTPException(status_code=403, detail="Only the organizer can cancel a meeting")
+        
+        # Best-effort: remove from calendars before marking as cancelled
+        external_ids = meeting.get('externalEventIds')
+        if external_ids:
+            calendar_client.remove_meeting_from_calendars(external_ids)
+
         updated = db.cancel_meeting(request_id, user_id)
         return {"status": "success", "message": "Meeting cancelled", "meeting": updated}
 
@@ -349,7 +358,7 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
             raise HTTPException(status_code=403, detail="Only the organizer can reschedule")
         if meeting.get('status') == 'cancelled':
             raise HTTPException(status_code=400, detail="Cannot reschedule a cancelled meeting")
-        # Reset meeting to pending
+        # Reset meeting to pending and update timeframe
         from datetime import datetime, timedelta
         now = datetime.now()
         meeting['status']            = 'pending'
@@ -358,6 +367,13 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
         meeting['dateRangeStart']    = now.isoformat()
         meeting['dateRangeEnd']      = (now + timedelta(days=days_forward)).isoformat()
         meeting['updatedAt']         = now.isoformat()
+
+        # Best-effort: remove old events from calendars if already confirmed
+        external_ids = meeting.get('externalEventIds', {})
+        if external_ids:
+            calendar_client.remove_meeting_from_calendars(external_ids)
+            meeting['externalEventIds'] = {}
+
         db._put_item(f"MEET#{request_id}", "META", meeting)
         # Delete old slots
         db.delete_meeting_slots(request_id)
