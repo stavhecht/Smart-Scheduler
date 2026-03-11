@@ -369,7 +369,7 @@ def create_meeting_with_simulation(req_data: models.MeetingCreateSchema, creator
     if fairness_engine.needs_optimization(all_scored):
         best_slots = fairness_engine.reshuffle(all_scored)
     else:
-        best_slots = fairness_engine.select_best_slots(all_scored, count=3)
+        best_slots = fairness_engine.select_best_slots(all_scored, count=8)
 
     # Persist the final slots
     for slot_data in best_slots:
@@ -480,7 +480,7 @@ def sfn_store_results(payload: dict) -> dict:
     if 'final_slots' in payload:
         best_slots = payload['final_slots']
     else:
-        best_slots = fairness_engine.select_best_slots(scored_slots, count=3)
+        best_slots = fairness_engine.select_best_slots(scored_slots, count=8)
 
     for slot_data in best_slots:
         slot = models.SuggestedTimeSlot(

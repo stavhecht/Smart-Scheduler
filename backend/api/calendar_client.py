@@ -423,3 +423,69 @@ def remove_meeting_from_calendars(external_ids: Dict[str, str]):
                 delete_microsoft_event(uid, eid)
         except Exception:
             pass
+
+
+def update_google_event(user_id: str, event_id: str, title: str,
+                        start_iso: str, end_iso: str) -> bool:
+    """Update an existing Google Calendar event's title and/or time. Returns True on success."""
+    token = _ensure_fresh_google_token(user_id)
+    if not token or not event_id:
+        return False
+    try:
+        patch_body = {
+            'summary': title,
+            'start': {'dateTime': start_iso, 'timeZone': 'Asia/Jerusalem'},
+            'end':   {'dateTime': end_iso,   'timeZone': 'Asia/Jerusalem'},
+        }
+        data = json.dumps(patch_body).encode()
+        url  = f"{GOOGLE_CALENDAR}/calendars/primary/events/{event_id}"
+        req  = urllib.request.Request(url, data=data, method='PATCH')
+        req.add_header('Authorization', f'Bearer {token}')
+        req.add_header('Content-Type', 'application/json')
+        with urllib.request.urlopen(req, timeout=10):
+            return True
+    except Exception:
+        return False
+
+
+def update_microsoft_event(user_id: str, event_id: str, title: str,
+                           start_iso: str, end_iso: str) -> bool:
+    """Update an existing Outlook Calendar event. Returns True on success."""
+    token = _ensure_fresh_microsoft_token(user_id)
+    if not token or not event_id:
+        return False
+    try:
+        patch_body = {
+            'subject': title,
+            'start': {'dateTime': start_iso, 'timeZone': 'Asia/Jerusalem'},
+            'end':   {'dateTime': end_iso,   'timeZone': 'Asia/Jerusalem'},
+        }
+        data = json.dumps(patch_body).encode()
+        url  = f"{MS_GRAPH}/me/events/{event_id}"
+        req  = urllib.request.Request(url, data=data, method='PATCH')
+        req.add_header('Authorization', f'Bearer {token}')
+        req.add_header('Content-Type', 'application/json')
+        with urllib.request.urlopen(req, timeout=10):
+            return True
+    except Exception:
+        return False
+
+
+def update_meeting_in_calendars(external_ids: Dict[str, str],
+                                 title: str, start_iso: str, end_iso: str):
+    """
+    Best-effort: update a confirmed meeting in all connected calendars.
+    external_ids is a dict: {userId: "provider:eventId"}
+    """
+    if not external_ids:
+        return
+    for uid, composite_id in external_ids.items():
+        try:
+            if ':' not in composite_id: continue
+            provider, eid = composite_id.split(':', 1)
+            if provider == 'google':
+                update_google_event(uid, eid, title, start_iso, end_iso)
+            elif provider == 'microsoft':
+                update_microsoft_event(uid, eid, title, start_iso, end_iso)
+        except Exception:
+            pass

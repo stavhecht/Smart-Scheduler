@@ -380,7 +380,84 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
         updated = db.edit_meeting(request_id, user_id,
                                   title=payload.title,
                                   duration_minutes=payload.durationMinutes)
+
+        # Best-effort: update calendar events if meeting is confirmed
+        if updated and updated.get('status') == 'confirmed':
+            external_ids = updated.get('externalEventIds') or {}
+            if external_ids:
+                try:
+                    from datetime import datetime, timedelta
+                    start_iso = updated.get('selectedSlotStart', '')
+                    dur = int(updated.get('durationMinutes', 60))
+                    if start_iso:
+                        end_iso = (datetime.fromisoformat(start_iso) + timedelta(minutes=dur)).isoformat()
+                        calendar_client.update_meeting_in_calendars(
+                            external_ids=external_ids,
+                            title=updated.get('title', 'Meeting'),
+                            start_iso=start_iso,
+                            end_iso=end_iso,
+                        )
+                except Exception:
+                    pass
+
         return {"status": "success", "meeting": updated}
+
+    # ── book_custom:<request_id> ──────────────────────────────────────────
+    # Books a manually-chosen time (not from AI-generated slots).
+    # data: {"startIso": "...", "endIso": "...", "score": 75.0, "fairnessImpact": -2.0, "explanation": "..."}
+    if action.startswith("book_custom:"):
+        request_id = action.split(":", 1)[1]
+        if not data:
+            raise HTTPException(status_code=400, detail="Missing data for book_custom")
+        try:
+            slot_info = json.loads(data)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid book_custom data: {exc}")
+
+        meeting = db._get_item(f"MEET#{request_id}", "META")
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        if meeting.get('creatorUserId') != user_id:
+            raise HTTPException(status_code=403, detail="Only the organizer can book a slot")
+
+        slot_start_iso   = slot_info.get("startIso", "")
+        slot_end_iso     = slot_info.get("endIso", "")
+        fairness_impact  = float(slot_info.get("fairnessImpact", -2.0))
+
+        if not slot_start_iso:
+            raise HTTPException(status_code=400, detail="startIso is required")
+
+        from datetime import datetime, timedelta
+        slot = models.SuggestedTimeSlot(
+            requestId=request_id,
+            startIso=datetime.fromisoformat(slot_start_iso),
+            endIso=datetime.fromisoformat(slot_end_iso) if slot_end_iso else
+                   datetime.fromisoformat(slot_start_iso) + timedelta(minutes=int(meeting.get('durationMinutes', 60))),
+            score=float(slot_info.get("score", 50.0)),
+            fairnessImpact=fairness_impact,
+            conflictCount=slot_info.get("conflictCount", 0),
+            explanation=slot_info.get("explanation", "Manually selected time")
+        )
+        db._put_item(f"MEET#{request_id}", f"SLOT#{slot_start_iso}", slot.model_dump(mode="json"))
+        db.update_fairness_on_booking(user_id, fairness_impact)
+        meeting['status']            = 'confirmed'
+        meeting['selectedSlotStart'] = slot_start_iso
+        db._put_item(f"MEET#{request_id}", "META", meeting)
+        db.log_meeting_activity(request_id, 'booked', user_id, {'custom': True})
+        try:
+            event_ids = calendar_client.write_meeting_to_calendars(
+                creator_id=meeting.get('creatorUserId', ''),
+                participant_ids=meeting.get('participantUserIds', []),
+                title=meeting.get('title', 'Meeting'),
+                start_iso=slot_start_iso,
+                end_iso=slot_end_iso,
+            )
+            if event_ids:
+                meeting['externalEventIds'] = event_ids
+                db._put_item(f"MEET#{request_id}", "META", meeting)
+        except Exception:
+            pass
+        return {"status": "success", "message": "Custom time booked successfully", "meeting": meeting}
 
     # ── reschedule:<request_id> ───────────────────────────────────────────
     if action.startswith("reschedule:"):
@@ -427,6 +504,42 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
         _run_local_scheduling(mock_schema, user_id, request_id)
         db.log_meeting_activity(request_id, 'rescheduled', user_id, {'daysForward': days_forward})
         return {"status": "success", "message": "Meeting rescheduled — new slots generated"}
+
+    # ── score_slot ────────────────────────────────────────────────────────
+    if action == "score_slot":
+        if not data:
+            raise HTTPException(status_code=400, detail="Missing data for score_slot")
+        try:
+            payload_data = json.loads(data)
+            start_iso        = payload_data.get("startIso", "")
+            duration_minutes = int(payload_data.get("durationMinutes", 60))
+            participant_ids  = payload_data.get("participantIds", [])
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid score_slot data: {exc}")
+        if not start_iso:
+            raise HTTPException(status_code=400, detail="startIso is required")
+        try:
+            from datetime import datetime, timedelta
+            from fairness_engine import engine as fe
+            slot_dt = datetime.fromisoformat(start_iso)
+            end_dt  = slot_dt + timedelta(minutes=duration_minutes)
+            all_ids = list(set([user_id] + participant_ids))
+            participant_states = []
+            for uid in all_ids:
+                state = db._get_item(f"USER#{uid}", "FAIRNESS")
+                if state:
+                    participant_states.append(state)
+            result = fe.score_time_slot(slot_dt, participant_states, duration_minutes)
+            return {
+                "startIso":       start_iso,
+                "endIso":         end_dt.isoformat(),
+                "score":          result["score"],
+                "fairnessImpact": result["fairnessImpact"],
+                "explanation":    result["explanation"],
+                "conflictCount":  result.get("conflictCount", 0),
+            }
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Scoring failed: {exc}")
 
     # ── meeting_log:<request_id> ──────────────────────────────────────────
     if action.startswith("meeting_log:"):
