@@ -14,3 +14,23 @@ variable "lab_role_arn" {
   description = "ARN of the existing LabRole for Lambda execution"
   type        = string
 }
+
+variable "google_client_id" {
+  type    = string
+  default = ""
+}
+
+variable "google_client_secret" {
+  type    = string
+  default = ""
+}
+
+variable "microsoft_client_id" {
+  type    = string
+  default = ""
+}
+
+variable "microsoft_client_secret" {
+  type    = string
+  default = ""
+}

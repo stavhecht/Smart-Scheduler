@@ -15,12 +15,11 @@ resource "aws_lambda_function" "api_handler" {
     variables = {
       TABLE_NAME     = aws_dynamodb_table.smart_scheduler_table.name
       AWS_ACCOUNT_ID = data.aws_caller_identity.current.account_id
-      FRONTEND_URL   = "https://main.d2v1ecqqvohzov.amplifyapp.com"
-      # Calendar OAuth — fill these in after creating OAuth apps:
-      # GOOGLE_CLIENT_ID     = "xxxx.apps.googleusercontent.com"
-      # GOOGLE_CLIENT_SECRET = "GOCSPX-xxxx"
-      # MICROSOFT_CLIENT_ID  = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-      # MICROSOFT_CLIENT_SECRET = "xxxx"
+      FRONTEND_URL   = "https://main.dswqybh1v4bo.amplifyapp.com"
+      GOOGLE_CLIENT_ID     = var.google_client_id
+      GOOGLE_CLIENT_SECRET = var.google_client_secret
+      MICROSOFT_CLIENT_ID  = var.microsoft_client_id
+      MICROSOFT_CLIENT_SECRET = var.microsoft_client_secret
     }
   }
 

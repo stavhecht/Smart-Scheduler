@@ -33,8 +33,8 @@ GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
 MS_CLIENT_ID         = os.environ.get('MICROSOFT_CLIENT_ID', '')
 MS_CLIENT_SECRET     = os.environ.get('MICROSOFT_CLIENT_SECRET', '')
 
-# Redirect URI — must match what is registered in Google Cloud / Azure AD
-REDIRECT_URI = f"{FRONTEND_URL}/oauth/callback"
+# Redirect URI — Use the base URL directly (the React app handles query params on mount)
+REDIRECT_URI = FRONTEND_URL if FRONTEND_URL.endswith('/') else FRONTEND_URL + '/'
 
 GOOGLE_AUTH_URL   = 'https://accounts.google.com/o/oauth2/v2/auth'
 GOOGLE_TOKEN_URL  = 'https://oauth2.googleapis.com/token'
