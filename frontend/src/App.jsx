@@ -319,6 +319,14 @@ function AppContent() {
           </>
         )}
       </main>
+      
+      {/* ── Public Profile Modal (Global) ── */}
+      {targetProfile && (
+        <PublicProfile 
+          profile={targetProfile} 
+          onClose={() => setTargetProfile(null)} 
+        />
+      )}
     </div>
   );
 }
@@ -526,13 +534,7 @@ function DashboardView({ profile, meetings, onNavigate, needsAction }) {
         ))}
       </div>
 
-      {/* Public Profile Modal */}
-      {targetProfile && (
-        <PublicProfile 
-          profile={targetProfile} 
-          onClose={() => setTargetProfile(null)} 
-        />
-      )}
+      </div>
     </div>
   );
 }
