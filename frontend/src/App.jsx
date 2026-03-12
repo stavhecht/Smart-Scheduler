@@ -70,7 +70,7 @@ function AppContent() {
         apiGet('/api/calendar/status').catch(() => null), // non-fatal
       ]);
       setProfile(profileData);
-      setMeetings(meetingsData);
+      setMeetings(Array.isArray(meetingsData) ? meetingsData : []);
       if (calStatus) setCalendarStatus(calStatus);
       setLoading(false);
     };
@@ -532,8 +532,6 @@ function DashboardView({ profile, meetings, onNavigate, needsAction }) {
             <span>{ins.text}</span>
           </div>
         ))}
-      </div>
-
       </div>
     </div>
   );

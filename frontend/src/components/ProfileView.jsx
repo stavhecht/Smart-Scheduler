@@ -1,3 +1,5 @@
+import { useState, useEffect } from 'react';
+import { apiGet, apiPost } from '../apiClient';
 import './ProfileView.css';
 
 /* ─────────────────────────────────────────────
@@ -312,6 +314,35 @@ function SettingRow({ label, desc, action, toggle, defaultOn, disabled }) {
           {action}
         </button>
       )}
+    </div>
+  );
+}
+function CalendarRow({ brand, name, status, onConnect, onDisconnect }) {
+  const isConnected = !!status?.connected;
+  return (
+    <div className={`cal-row ${brand} ${isConnected ? 'connected' : ''}`}>
+      <div className="cal-icon">{brand === 'google' ? 'G' : 'O'}</div>
+      <div className="cal-body">
+        <span className="cal-name">{name}</span>
+        <span className="cal-email">{isConnected ? status.email : 'Not connected'}</span>
+      </div>
+      {isConnected ? (
+        <button className="cal-btn disconnect" onClick={() => onDisconnect(brand)}>Disconnect</button>
+      ) : (
+        <button className="cal-btn connect" onClick={() => onConnect(brand)}>Connect</button>
+      )}
+    </div>
+  );
+}
+
+function StatItem({ icon, val, label }) {
+  return (
+    <div className="stat-v-item">
+      <span className="stat-v-icon">{icon}</span>
+      <div className="stat-v-body">
+        <span className="stat-v-val">{val}</span>
+        <span className="stat-v-label">{label}</span>
+      </div>
     </div>
   );
 }
