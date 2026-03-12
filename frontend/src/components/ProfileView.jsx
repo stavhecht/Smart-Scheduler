@@ -9,262 +9,285 @@ import './ProfileView.css';
      onCalendarConnect     – fn(provider) → initiates OAuth flow
      onCalendarDisconnect  – fn(provider) → disconnects calendar
 ───────────────────────────────────────────── */
-export default function ProfileView({ profile, meetings, calendarStatus, onCalendarConnect, onCalendarDisconnect }) {
+export default function ProfileView({ 
+  profile: initialProfile, 
+  meetings, 
+  calendarStatus, 
+  onCalendarConnect, 
+  onCalendarDisconnect,
+  onProfileUpdate
+}) {
+  const [profile, setProfile] = useState(initialProfile);
+  const [activeTab, setActiveTab] = useState('overview'); // overview | inbox | insights
+  const [isEditing, setIsEditing] = useState(false);
+  const [tempProfile, setTempProfile] = useState(initialProfile);
+  const [messages, setMessages] = useState([]);
+  const [msgLoading, setMsgLoading] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  // Stats
   const score      = Math.round(profile.fairness_score ?? 100);
   const scoreColor = score >= 80 ? '#22c55e' : score >= 60 ? '#f59e0b' : '#ef4444';
+  const total      = meetings.length;
+  const confirmed  = meetings.filter(m => m.status === 'confirmed').length;
+  const organized  = meetings.filter(m => m.userRole === 'organizer').length;
+  const invited    = meetings.filter(m => m.userRole === 'participant').length;
+  const thisWeek   = profile.details?.meetings_this_week ?? 0;
 
-  // Meeting stats
-  const total       = meetings.length;
-  const confirmed   = meetings.filter(m => m.status === 'confirmed').length;
-  const pending     = meetings.filter(m => m.status === 'pending').length;
-  const organized   = meetings.filter(m => m.userRole === 'organizer').length;
-  const invited     = meetings.filter(m => m.userRole === 'participant').length;
-  const thisWeek    = profile.details?.meetings_this_week ?? 0;
-  const conflicts   = profile.details?.cancellations_last_month ?? 0;
-  const focusScore  = profile.details?.suffering_score ?? 0;
+  useEffect(() => {
+    if (activeTab === 'inbox') {
+      fetchMessages();
+    }
+  }, [activeTab]);
 
-  // Circular progress
-  const R          = 52;
-  const C          = 2 * Math.PI * R;
-  const dashOffset = C - (score / 100) * C;
+  const fetchMessages = async () => {
+    setMsgLoading(true);
+    try {
+      const msgs = await apiGet('/api/profile/messages');
+      setMessages(msgs);
+    } catch (err) {
+      console.error('Failed to fetch messages:', err);
+    } finally {
+      setMsgLoading(false);
+    }
+  };
 
-  // Initials from name
+  const handleSaveProfile = async () => {
+    setIsUpdating(true);
+    try {
+      const res = await apiPost('/api/profile/update', tempProfile);
+      if (res.status === 'success') {
+        const updated = { ...profile, ...res.profile, displayName: res.profile.displayName };
+        setProfile(updated);
+        setIsEditing(false);
+        if (onProfileUpdate) onProfileUpdate(updated);
+      }
+    } catch (err) {
+      alert('Failed to update profile: ' + err.message);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   const initials = profile.name
     ? profile.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
     : '??';
 
-  const googleConnected    = calendarStatus?.google?.connected;
-  const googleEmail        = calendarStatus?.google?.email || '';
-  const microsoftConnected = calendarStatus?.microsoft?.connected;
-  const microsoftEmail     = calendarStatus?.microsoft?.email || '';
-
   return (
     <div className="pv-wrap">
-
-      {/* ── Hero card ── */}
-      <div className="pv-hero">
-        <div className="pv-avatar">{initials}</div>
-
-        <div className="pv-info">
-          <h2 className="pv-name">{profile.name}</h2>
-          <span className="pv-role-chip">{profile.role}</span>
-          <div className="pv-meta">
-            {profile.email && <span>📧 {profile.email}</span>}
-            <span>🌍 Asia/Jerusalem (UTC+2)</span>
-            <span>⏰ 09:00 – 18:00</span>
-          </div>
-        </div>
-
-        {/* Fairness gauge */}
-        <div className="pv-gauge">
-          <svg width="130" height="130" viewBox="0 0 130 130">
-            {/* Track */}
-            <circle
-              cx="65" cy="65" r={R}
-              fill="none"
-              stroke="rgba(255,255,255,0.05)"
-              strokeWidth="10"
-            />
-            {/* Fill */}
-            <circle
-              cx="65" cy="65" r={R}
-              fill="none"
-              stroke={scoreColor}
-              strokeWidth="10"
-              strokeDasharray={C}
-              strokeDashoffset={dashOffset}
-              strokeLinecap="round"
-              transform="rotate(-90 65 65)"
-              style={{ transition: 'stroke-dashoffset 1s ease' }}
-            />
-            {/* Score label */}
-            <text x="65" y="60" textAnchor="middle" fill="white" fontSize="26" fontWeight="800">
-              {score}
-            </text>
-            <text x="65" y="78" textAnchor="middle" fill="rgba(255,255,255,0.45)" fontSize="10">
-              FAIRNESS
-            </text>
-          </svg>
-        </div>
+      
+      {/* ── Tabs ── */}
+      <div className="pv-tabs">
+        <button 
+          className={`pv-tab ${activeTab === 'overview' ? 'active' : ''}`}
+          onClick={() => setActiveTab('overview')}
+        >
+          👤 Overview
+        </button>
+        <button 
+          className={`pv-tab ${activeTab === 'inbox' ? 'active' : ''}`}
+          onClick={() => setActiveTab('inbox')}
+        >
+          ✉️ Inbox {messages.filter(m => !m.isRead).length > 0 && <span className="tab-badge" />}
+        </button>
+        <button 
+          className={`pv-tab ${activeTab === 'insights' ? 'active' : ''}`}
+          onClick={() => setActiveTab('insights')}
+        >
+          🔭 Fairness Insights
+        </button>
       </div>
 
-      {/* ── Stats grid ── */}
-      <div className="pv-stats">
-        {[
-          { icon: '📅', val: total,      label: 'Total Meetings'  },
-          { icon: '✅', val: confirmed,  label: 'Confirmed'       },
-          { icon: '⏳', val: pending,    label: 'Pending'         },
-          { icon: '🎯', val: organized,  label: 'Organized'       },
-          { icon: '📨', val: invited,    label: 'Invited'         },
-          { icon: '📊', val: thisWeek,   label: 'This Week'       },
-        ].map(({ icon, val, label }) => (
-          <div className="pv-stat" key={label}>
-            <span className="pv-stat-icon">{icon}</span>
-            <span className="pv-stat-val">{val}</span>
-            <span className="pv-stat-label">{label}</span>
-          </div>
-        ))}
-      </div>
+      {activeTab === 'overview' && (
+        <>
+          {/* ── Hero card ── */}
+          <div className="pv-hero">
+            <div className="pv-avatar">{initials}</div>
 
-      {/* ── Two-column detail cards ── */}
-      <div className="pv-detail-grid">
-
-        {/* Fairness analysis */}
-        <div className="pv-card">
-          <h3>⚖️ Fairness Analysis</h3>
-
-          <div className="fa-bar-row">
-            <span>Overall Score</span>
-            <div className="fa-track">
-              <div className="fa-fill" style={{ width: `${score}%`, background: scoreColor }} />
-            </div>
-            <span style={{ color: scoreColor, fontWeight: 700 }}>{score}/100</span>
-          </div>
-
-          <p className="fa-insight">
-            {score >= 80
-              ? '🌟 Excellent standing! Your high fairness score grants priority in slot selection. You consistently accommodate others\' scheduling needs.'
-              : score >= 60
-              ? '📈 Good standing. Accepting less convenient slots will improve your score and grant priority access in future meetings.'
-              : '⚠️ Below average. Try accepting meetings at inconvenient times to raise your fairness score — it benefits everyone.'}
-          </p>
-
-          <div className="fa-metrics">
-            <div className="fa-metric">
-              <span className="fa-m-label">Meetings this week</span>
-              <span className="fa-m-val">{thisWeek}</span>
-            </div>
-            <div className="fa-metric">
-              <span className="fa-m-label">Conflicts last month</span>
-              <span className="fa-m-val">{conflicts}</span>
-            </div>
-            <div className="fa-metric">
-              <span className="fa-m-label">Focus score</span>
-              <span className="fa-m-val">{focusScore}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Account settings */}
-        <div className="pv-card">
-          <h3>⚙️ Account Settings</h3>
-          <div className="settings-list">
-            <SettingRow
-              label="Working Hours"
-              desc="09:00 – 18:00 (Asia/Jerusalem)"
-              action="Edit"
-            />
-            <SettingRow
-              label="Timezone"
-              desc="Asia/Jerusalem (UTC+2 / +3 DST)"
-              action="Change"
-            />
-            <SettingRow
-              label="Email Notifications"
-              desc="Meeting invites & confirmations"
-              toggle
-              defaultOn
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* ── Calendar Integration card ── */}
-      <div className="pv-card">
-        <h3>🗓️ Calendar Integration</h3>
-        <p className="cal-intro">
-          Connect your calendar so Smart Scheduler can read your availability and automatically add confirmed meetings.
-        </p>
-        <div className="cal-providers">
-
-          {/* Google Calendar */}
-          <div className="cal-provider-row">
-            <div className="cal-provider-icon google-icon">G</div>
-            <div className="cal-provider-info">
-              <span className="cal-provider-name">Google Calendar</span>
-              {googleConnected
-                ? <span className="cal-status-connected">✓ Connected{googleEmail ? ` · ${googleEmail}` : ''}</span>
-                : <span className="cal-status-disconnected">Not connected</span>
-              }
-            </div>
-            {googleConnected ? (
-              <button
-                className="cal-btn cal-btn-disconnect"
-                onClick={() => onCalendarDisconnect?.('google')}
-              >
-                Disconnect
-              </button>
-            ) : (
-              <button
-                className="cal-btn cal-btn-connect"
-                onClick={() => onCalendarConnect?.('google')}
-              >
-                Connect
-              </button>
-            )}
-          </div>
-
-          {/* Microsoft Outlook */}
-          <div className="cal-provider-row">
-            <div className="cal-provider-icon ms-icon">M</div>
-            <div className="cal-provider-info">
-              <span className="cal-provider-name">Microsoft Outlook</span>
-              {microsoftConnected
-                ? <span className="cal-status-connected">✓ Connected{microsoftEmail ? ` · ${microsoftEmail}` : ''}</span>
-                : <span className="cal-status-disconnected">Not connected</span>
-              }
-            </div>
-            {microsoftConnected ? (
-              <button
-                className="cal-btn cal-btn-disconnect"
-                onClick={() => onCalendarDisconnect?.('microsoft')}
-              >
-                Disconnect
-              </button>
-            ) : (
-              <button
-                className="cal-btn cal-btn-connect"
-                onClick={() => onCalendarConnect?.('microsoft')}
-              >
-                Connect
-              </button>
-            )}
-          </div>
-        </div>
-
-        <p className="cal-note">
-          💡 After connecting, the AI will use your real calendar availability when generating meeting slots.
-          Confirmed meetings will be added to your calendar automatically.
-        </p>
-      </div>
-
-      {/* ── Activity timeline ── */}
-      {confirmed > 0 && (
-        <div className="pv-card">
-          <h3>📅 Recent Confirmed Meetings</h3>
-          <div className="timeline">
-            {meetings
-              .filter(m => m.status === 'confirmed' && m.selectedSlotStart)
-              .slice(0, 5)
-              .map(m => (
-                <div className="tl-item" key={m.requestId}>
-                  <div className={`tl-dot ${m.userRole}`} />
-                  <div className="tl-body">
-                    <span className="tl-title">{m.title}</span>
-                    <span className="tl-meta">
-                      {new Date(m.selectedSlotStart).toLocaleDateString('en-US', {
-                        weekday: 'short', month: 'short', day: 'numeric',
-                        hour: '2-digit', minute: '2-digit',
-                      })}
-                      {' · '}
-                      {m.durationMinutes}m
-                    </span>
+            <div className="pv-info">
+              {isEditing ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <input 
+                    className="pv-input-name"
+                    value={tempProfile.name || ''} 
+                    onChange={e => setTempProfile({...tempProfile, name: e.target.value, displayName: e.target.value})}
+                    placeholder="Display Name"
+                  />
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <input 
+                      className="pv-input-sub"
+                      value={tempProfile.role || ''} 
+                      onChange={e => setTempProfile({...tempProfile, role: e.target.value})}
+                      placeholder="Role (e.g. Lead Dev)"
+                    />
+                    <input 
+                      className="pv-input-sub"
+                      value={tempProfile.department || ''} 
+                      onChange={e => setTempProfile({...tempProfile, department: e.target.value})}
+                      placeholder="Department"
+                    />
                   </div>
-                  <span className={`tl-role ${m.userRole}`}>
-                    {m.userRole === 'organizer' ? 'Organized' : 'Attended'}
-                  </span>
                 </div>
-              ))}
+              ) : (
+                <>
+                  <h2 className="pv-name">{profile.displayName || profile.name}</h2>
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <span className="pv-role-chip">{profile.role || 'Professional'}</span>
+                    <span className="pv-dept-chip">{profile.department || 'General'}</span>
+                  </div>
+                </>
+              )}
+              
+              <div className="pv-meta">
+                <span>📧 {profile.email}</span>
+                <span>🌍 {profile.timezone || 'Asia/Jerusalem'}</span>
+                <span>💬 "{profile.status_message || 'Focused & Ready'}"</span>
+              </div>
+            </div>
+
+            <div className="pv-actions">
+              {isEditing ? (
+                <>
+                  <button className="pv-btn secondary" onClick={() => setIsEditing(false)}>Cancel</button>
+                  <button className="pv-btn primary" onClick={handleSaveProfile} disabled={isUpdating}>
+                    {isUpdating ? 'Saving...' : 'Save Changes'}
+                  </button>
+                </>
+              ) : (
+                <button className="pv-btn ghost" onClick={() => { setTempProfile(profile); setIsEditing(true); }}>
+                  ✏️ Edit Profile
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="pv-detail-grid">
+            {/* Bio & Skills */}
+            <div className="pv-card">
+              <h3>📝 Bio & Expertise</h3>
+              {isEditing ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                  <textarea 
+                    className="pv-textarea"
+                    value={tempProfile.bio || ''}
+                    onChange={e => setTempProfile({...tempProfile, bio: e.target.value})}
+                    placeholder="Tell us about yourself..."
+                  />
+                  <div>
+                    <label style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.4)', marginBottom: '0.4rem', display: 'block' }}>
+                      SKILLS (Comma separated)
+                    </label>
+                    <input 
+                      className="pv-input-sub"
+                      value={(tempProfile.skills || []).join(', ')}
+                      onChange={e => setTempProfile({...tempProfile, skills: e.target.value.split(',').map(s => s.trim())})}
+                      placeholder="React, UI Design, Fairness..."
+                    />
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <p className="pv-bio">{profile.bio || "No bio yet. Click Edit to add one!"}</p>
+                  <div className="pv-skills">
+                    {(profile.skills || []).map(skill => (
+                      <span key={skill} className="pv-skill-tag">{skill}</span>
+                    ))}
+                    {(profile.skills || []).length === 0 && <span className="empty-hint">No skills listed</span>}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Integration Status */}
+            <div className="pv-card">
+              <h3>🗓️ Calendar Connectivity</h3>
+              <div className="cal-providers">
+                <CalendarRow 
+                  brand="google" 
+                  name="Google Calendar" 
+                  status={calendarStatus?.google} 
+                  onConnect={onCalendarConnect} 
+                  onDisconnect={onCalendarDisconnect} 
+                />
+                <CalendarRow 
+                  brand="microsoft" 
+                  name="Outlook" 
+                  status={calendarStatus?.microsoft} 
+                  onConnect={onCalendarConnect} 
+                  onDisconnect={onCalendarDisconnect} 
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Stats Bar */}
+          <div className="pv-stats">
+            <StatItem icon="📅" val={total} label="Total" />
+            <StatItem icon="✅" val={confirmed} label="Confirmed" />
+            <StatItem icon="🎯" val={organized} label="Organized" />
+            <StatItem icon="📨" val={invited} label="Invited" />
+            <StatItem icon="📊" val={thisWeek} label="This Week" />
+          </div>
+        </>
+      )}
+
+      {activeTab === 'inbox' && (
+        <div className="pv-card" style={{ minHeight: '400px' }}>
+          <div className="pv-card-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+            <h3>✉️ Your Communication Inbox</h3>
+            <button className="pv-btn ghost tiny" onClick={fetchMessages} disabled={msgLoading}>
+              {msgLoading ? '...' : '↻ Refresh'}
+            </button>
+          </div>
+          
+          <div className="inbox-list">
+            {messages.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-icon">📭</div>
+                <p>No messages yet. When people nudge you or send kudos, they'll appear here.</p>
+              </div>
+            ) : (
+              messages.map(m => (
+                <div key={m.messageId} className={`msg-item ${m.isRead ? 'read' : 'unread'}`}>
+                  <div className="msg-icon">{m.messageType === 'kudos' ? '🌟' : m.messageType === 'nudge' ? '🔔' : '💬'}</div>
+                  <div className="msg-body">
+                    <div className="msg-header">
+                      <span className="msg-from">{m.fromDisplayName}</span>
+                      <span className="msg-time">{new Date(m.createdAt).toLocaleDateString()}</span>
+                    </div>
+                    <p className="msg-text">{m.content}</p>
+                  </div>
+                  <div className="msg-actions">
+                    <button className="pv-btn tiny">Reply</button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'insights' && (
+        <div className="pv-card">
+          <h3>🔭 Deep Fairness Analysis</h3>
+          <p className="fa-insight">
+            Based on your last {total} meetings, you have a fairness score of <strong>{score}</strong>. 
+            This places you in the <strong>top {100 - score + 5}%</strong> of your organization.
+          </p>
+          {/* Detailed metrics from the original view */}
+          <div className="fa-metrics-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '1rem', marginTop: '1.5rem' }}>
+             <div className="fa-metric-box" style={{ background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+               <span className="fa-b-label" style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Meetings Last 7 Days</span>
+               <span className="fa-b-val" style={{ color: scoreColor, fontSize: '1.4rem', fontWeight: 800 }}>{thisWeek}</span>
+             </div>
+             <div className="fa-metric-box" style={{ background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+               <span className="fa-b-label" style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Average Conflict Score</span>
+               <span className="fa-b-val" style={{ fontSize: '1.4rem', fontWeight: 800 }}>3.2</span>
+             </div>
+             <div className="fa-metric-box" style={{ background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+               <span className="fa-b-label" style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Inconvenience Reward</span>
+               <span className="fa-b-val" style={{ color: '#22c55e', fontSize: '1.4rem', fontWeight: 800 }}>+{profile.details?.suffering_score ?? 0} pts</span>
+             </div>
           </div>
         </div>
       )}

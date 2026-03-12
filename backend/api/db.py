@@ -92,28 +92,87 @@ def get_fairness_state(user_id: str) -> Optional[models.FairnessState]:
     return models.FairnessState(**data) if data else None
 
 
-def update_fairness_on_booking(user_id: str, slot_fairness_impact: float):
-    """
-    Called when a user books a meeting slot.
-    Updates their fairness score and meeting load metrics in DynamoDB.
-    """
-    fairness = get_fairness_state(user_id)
-    if not fairness:
-        return
+def update_profile(user_id: str, updates: dict):
+    profile_data = _get_item(f"USER#{user_id}", "PROFILE")
+    if not profile_data:
+        return None
+    
+    # Merge updates
+    for k, v in updates.items():
+        if k in models.UserProfile.model_fields:
+            profile_data[k] = v
+    
+    _put_item(f"USER#{user_id}", "PROFILE", profile_data)
+    return models.UserProfile(**profile_data)
 
-    current_state = {
-        'fairnessScore': float(fairness.fairnessScore),
-        'meetingLoadMetrics': fairness.meetingLoadMetrics
-    }
-    updated = fairness_engine.update_score_after_booking(current_state, slot_fairness_impact)
 
-    _put_item(f"USER#{user_id}", "FAIRNESS", {
-        'userId': user_id,
-        'fairnessScore': updated['fairnessScore'],
-        'meetingLoadMetrics': updated['meetingLoadMetrics'],
-        'inconvenientMeetingsCount': fairness.inconvenientMeetingsCount + updated['inconvenientMeetingsCount'],
-        'lastUpdatedAt': datetime.now().isoformat()
-    })
+def send_profile_message(from_uid: str, to_uid: str, content: str, msg_type: str = "general"):
+    """Sends a message from one user to another."""
+    from_profile = get_profile(from_uid)
+    from_name = from_profile.displayName if from_profile else from_uid[:8]
+    
+    msg_id = f"msg_{uuid.uuid4().hex[:8]}"
+    msg = models.ProfileMessage(
+        messageId=msg_id,
+        fromUserId=from_uid,
+        toUserId=to_uid,
+        fromDisplayName=from_name,
+        content=content,
+        messageType=msg_type
+    )
+    
+    # Store in recipient's Inbox
+    _put_item(f"USER#{to_uid}", f"MSG#{msg.createdAt.isoformat()}#{msg_id}", msg.model_dump(mode="json"))
+    return msg
+
+
+def get_profile_messages(user_id: str, limit: int = 20) -> List[models.ProfileMessage]:
+    """Fetches messages sent to a user, newest first."""
+    items = _query_begins_with(f"USER#{user_id}", "MSG#")
+    msgs = []
+    for item in items:
+        try:
+            msgs.append(models.ProfileMessage(**item))
+        except Exception:
+            pass
+    msgs.sort(key=lambda x: x.createdAt, reverse=True)
+    return msgs[:limit]
+
+
+def update_fairness_on_booking(user_ids: List[str], slot_fairness_impact: float):
+    """
+    Updates fairness scores and meeting load metrics for all participants.
+    Auto-initializes states for participants who haven't logged in yet.
+    """
+    for uid in user_ids:
+        fairness = get_fairness_state(uid)
+        
+        # Auto-initialize if missing (e.g. participant hasn't logged in yet)
+        if not fairness:
+            _put_item(f"USER#{uid}", "FAIRNESS", models.FairnessState(
+                userId=uid,
+                fairnessScore=100.0,
+                meetingLoadMetrics={"meetings_this_week": 0, "cancellations_last_month": 0, "suffering_score": 0},
+                inconvenientMeetingsCount=0
+            ).model_dump(mode="json"))
+            fairness = get_fairness_state(uid)
+
+        if not fairness:
+            continue
+
+        current_state = {
+            'fairnessScore': float(fairness.fairnessScore),
+            'meetingLoadMetrics': fairness.meetingLoadMetrics
+        }
+        updated = fairness_engine.update_score_after_booking(current_state, slot_fairness_impact)
+
+        _put_item(f"USER#{uid}", "FAIRNESS", {
+            'userId': uid,
+            'fairnessScore': updated['fairnessScore'],
+            'meetingLoadMetrics': updated['meetingLoadMetrics'],
+            'inconvenientMeetingsCount': fairness.inconvenientMeetingsCount + updated['inconvenientMeetingsCount'],
+            'lastUpdatedAt': datetime.now().isoformat()
+        })
 
 
 # ---------------------------------------------------------------------------

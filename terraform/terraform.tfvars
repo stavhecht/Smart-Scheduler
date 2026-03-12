@@ -1,1 +1,3 @@
-lab_role_arn = "arn:aws:iam::451891680911:role/LabRole"
+# Google OAuth Credentials (DO NOT COMMIT SECRETS)
+# google_client_id     = "PASTE_HERE"
+# google_client_secret = "PASTE_HERE"

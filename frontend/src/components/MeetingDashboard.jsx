@@ -9,7 +9,7 @@ import './MeetingDashboard.css';
      onRefresh     – fn to reload meetings
      currentUserId – authenticated user's ID (profile.id)
 ───────────────────────────────────────────── */
-export default function MeetingDashboard({ meetings, onRefresh, currentUserId }) {
+export default function MeetingDashboard({ meetings, onRefresh, currentUserId, onParticipantClick }) {
   const [expandedId, setExpandedId]             = useState(null);
   const [loading, setLoading]                   = useState(false);
   const [showCreate, setShowCreate]             = useState(false);
@@ -413,6 +413,7 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId })
                 fmtDate={fmtDate}
                 fmtTime={fmtTime}
                 fmtFull={fmtFull}
+                onParticipantClick={onParticipantClick}
               />
             ))}
           </div>
@@ -456,6 +457,7 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId })
                 onCustomPickerChange={val => setCustomPicker(prev => ({ ...prev, [m.requestId]: { ...(prev[m.requestId] || {}), ...val } }))}
                 onScoreCustom={() => handleScoreCustomTime(m.requestId, m)}
                 onBookCustom={() => handleBookCustom(m.requestId, m)}
+                onParticipantClick={onParticipantClick}
               />
             ))}
           </div>
@@ -517,6 +519,7 @@ function MeetingCard({
   onEdit, onCancel, onReschedule,
   fmtDate, fmtTime, fmtFull,
   customPicker = {}, onCustomPickerChange, onScoreCustom, onBookCustom,
+  onParticipantClick,
 }) {
   const isOrganizer    = meeting.userRole === 'organizer';
   const isConfirmed    = meeting.status === 'confirmed';
@@ -707,7 +710,11 @@ function MeetingCard({
               const nameInfo  = participantNames[pid];
               const display   = nameInfo?.name || pid;
               return (
-                <div key={pid} className="participant-row">
+                <div 
+                  key={pid} 
+                  className="participant-row clickable" 
+                  onClick={(e) => { e.stopPropagation(); onParticipantClick?.(pid); }}
+                >
                   <span className={`p-dot ${accepted ? 'accepted' : 'pending'}`} />
                   <span className="p-name" title={nameInfo?.email || pid}>{display}</span>
                   <span className={`p-status ${accepted ? 'confirmed' : 'pending'}`}>

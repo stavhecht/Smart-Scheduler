@@ -3,6 +3,7 @@ import './App.css'
 import MeetingDashboard from './components/MeetingDashboard';
 import CalendarView from './components/CalendarView';
 import ProfileView from './components/ProfileView';
+import PublicProfile from './components/PublicProfile';
 import { apiGet, apiPost } from './apiClient';
 
 import { Amplify } from 'aws-amplify';
@@ -22,6 +23,7 @@ function AppContent() {
   const [activeView, setActiveView]       = useState('dashboard');
   const [retryCount, setRetryCount]       = useState(0);
   const [calendarToast, setCalendarToast] = useState(null); // { type: 'success'|'error'|'info', msg } | null
+  const [targetProfile, setTargetProfile] = useState(null); // for viewing other user profiles
   const oauthProcessed = useRef(false);
 
   // Capture OAuth callback params from URL on component mount (before they disappear).
@@ -142,6 +144,20 @@ function AppContent() {
       if (updated) setCalendarStatus(updated);
     } catch (err) {
       console.error('Failed to disconnect calendar:', err);
+    }
+  };
+
+  /** Open another user's public profile. */
+  const handleParticipantClick = async (userId) => {
+    if (userId === profile?.id) {
+      setActiveView('profile');
+      return;
+    }
+    try {
+      const data = await apiGet(`/api/profile/${userId}`);
+      setTargetProfile(data);
+    } catch (err) {
+      console.error('Failed to load target profile:', err);
     }
   };
 
@@ -279,6 +295,7 @@ function AppContent() {
                   meetings={meetings}
                   onRefresh={refreshAll}
                   currentUserId={profile.id}
+                  onParticipantClick={handleParticipantClick}
                 />
               </div>
             )}
@@ -295,6 +312,7 @@ function AppContent() {
                   calendarStatus={calendarStatus}
                   onCalendarConnect={handleCalendarConnect}
                   onCalendarDisconnect={handleCalendarDisconnect}
+                  onProfileUpdate={setProfile}
                 />
               </div>
             )}
@@ -507,6 +525,14 @@ function DashboardView({ profile, meetings, onNavigate, needsAction }) {
           </div>
         ))}
       </div>
+
+      {/* Public Profile Modal */}
+      {targetProfile && (
+        <PublicProfile 
+          profile={targetProfile} 
+          onClose={() => setTargetProfile(null)} 
+        />
+      )}
     </div>
   );
 }

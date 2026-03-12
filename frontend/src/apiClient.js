@@ -79,6 +79,12 @@ export async function apiGet(path) {
     const oauthUrlMatch = path.match(/^\/api\/calendar\/oauth_url\?provider=(.+)$/);
     if (oauthUrlMatch) return apiProxy(`oauth_url:${oauthUrlMatch[1]}`);
 
+    if (path === '/api/profile/messages') return apiProxy('get_messages');
+
+    // /api/profile/<userId>
+    const publicProfileMatch = path.match(/^\/api\/profile\/([^/]+)$/);
+    if (publicProfileMatch) return apiProxy(`get_public_profile:${publicProfileMatch[1]}`);
+
     return apiProxy(path);
 }
 
@@ -114,6 +120,13 @@ export async function apiPost(path, body) {
     // /api/meetings/<id>/book_custom
     const bookCustomMatch = path.match(/^\/api\/meetings\/([^/]+)\/book_custom$/);
     if (bookCustomMatch) return apiProxy(`book_custom:${bookCustomMatch[1]}`, body);
+
+    // /api/profile/update
+    if (path === '/api/profile/update') return apiProxy('update_profile', body);
+
+    // /api/profile/<userId>/message
+    const messageMatch = path.match(/^\/api\/profile\/([^/]+)\/message$/);
+    if (messageMatch) return apiProxy(`send_message:${messageMatch[1]}`, body);
 
     return apiProxy(path, body);
 }

@@ -1,6 +1,207 @@
-/* ═══════════════════════════════════════════════
-   ProfileView.css
-   ═══════════════════════════════════════════════ */
+/* ── Tabs ── */
+.pv-tabs {
+  display: flex;
+  gap: 0.5rem;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 0.4rem;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.pv-tab {
+  flex: 1;
+  padding: 0.75rem;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  position: relative;
+}
+
+.pv-tab:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: white;
+}
+
+.pv-tab.active {
+  background: #334155;
+  color: #38bdf8;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+
+.tab-badge {
+  position: absolute;
+  top: 8px;
+  right: 15%;
+  width: 8px;
+  height: 8px;
+  background: #f87171;
+  border-radius: 50%;
+  border: 2px solid #1e293b;
+}
+
+/* ── Editable Fields ── */
+.pv-input-name {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: white;
+  font-size: 1.6rem;
+  font-weight: 800;
+  padding: 0.4rem 0.8rem;
+  border-radius: 8px;
+  width: 100%;
+}
+
+.pv-input-sub {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255,255,255,0.8);
+  font-size: 0.8rem;
+  padding: 0.4rem 0.8rem;
+  border-radius: 8px;
+  width: 100%;
+}
+
+.pv-textarea {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 0.9rem;
+  padding: 1rem;
+  border-radius: 12px;
+  min-height: 120px;
+  resize: vertical;
+  line-height: 1.6;
+}
+
+.pv-dept-chip {
+  display: inline-block;
+  background: rgba(129, 140, 248, 0.1);
+  border: 1px solid rgba(129, 140, 248, 0.25);
+  color: #818cf8;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.25rem 0.7rem;
+  border-radius: 20px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.pv-bio {
+  font-size: 0.95rem;
+  color: rgba(255, 255, 255, 0.7);
+  line-height: 1.7;
+  margin-bottom: 1.5rem;
+}
+
+.pv-skills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.pv-skill-tag {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: white;
+  padding: 0.2rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+}
+
+/* ── Inbox ── */
+.inbox-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.msg-item {
+  display: flex;
+  gap: 1rem;
+  padding: 1.25rem;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 14px;
+  border-left: 4px solid transparent;
+  transition: all 0.2s;
+}
+
+.msg-item.unread {
+  background: rgba(56, 189, 248, 0.04);
+  border-left-color: #38bdf8;
+}
+
+.msg-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.msg-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+
+.msg-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.msg-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.4rem;
+}
+
+.msg-from {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: white;
+}
+
+.msg-time {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+}
+
+.msg-text {
+  font-size: 0.85rem;
+  color: rgba(255,255,255,0.7);
+  line-height: 1.5;
+}
+
+.pv-btn {
+  padding: 0.5rem 1rem;
+  border-radius: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid transparent;
+  font-family: inherit;
+}
+
+.pv-btn.primary { background: #38bdf8; color: #000; }
+.pv-btn.secondary { background: rgba(255,255,255,0.1); color: white; }
+.pv-btn.ghost { background: transparent; border-color: rgba(255,255,255,0.1); color: var(--text-secondary); }
+.pv-btn.tiny { padding: 0.25rem 0.6rem; font-size: 0.7rem; border-radius: 6px; }
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.empty-icon { font-size: 3rem; margin-bottom: 1rem; opacity: 0.3; }
 
 .pv-wrap {
   display: flex;

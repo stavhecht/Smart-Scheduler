@@ -7,6 +7,11 @@ class UserProfile(BaseModel):
     userId: str
     email: str
     displayName: str
+    bio: Optional[str] = ""
+    role: Optional[str] = "Professional"
+    department: Optional[str] = "General"
+    skills: List[str] = []
+    statusMessage: Optional[str] = "Focused & Ready"
     timezone: str = "Asia/Jerusalem"
     workingHours: Dict[str, str] = {"start": "09:00", "end": "18:00"}
     createdAt: datetime = Field(default_factory=datetime.now)
@@ -73,3 +78,14 @@ class MeetingLogEntry(BaseModel):
     by: str            # userId
     at: datetime = Field(default_factory=datetime.now)
     changes: Optional[Dict[str, Any]] = None   # for "edited" entries
+
+# --- 7. Profile Message (Direct communication) ---
+class ProfileMessage(BaseModel):
+    messageId: str
+    fromUserId: str
+    toUserId: str
+    fromDisplayName: str = ""
+    content: str
+    messageType: str = "general"  # general | kudos | nudge
+    createdAt: datetime = Field(default_factory=datetime.now)
+    isRead: bool = False
