@@ -24,7 +24,9 @@ function AppContent() {
   const [retryCount, setRetryCount]       = useState(0);
   const [calendarToast, setCalendarToast] = useState(null); // { type: 'success'|'error'|'info', msg } | null
   const [targetProfile, setTargetProfile] = useState(null); // for viewing other user profiles
+  const [sidebarOpen, setSidebarOpen]     = useState(false);
   const oauthProcessed = useRef(false);
+  const calendarToastTimer = useRef(null);
 
   // Capture OAuth callback params from URL on component mount (before they disappear).
   // State initializer runs only once — safe to use window.location here.
@@ -56,8 +58,7 @@ function AppContent() {
           await apiPost('/api/calendar/callback', oauthPending);
           const provider = oauthPending.provider;
           const label = oauthPending.provider === 'google' ? 'Google Calendar' : 'Microsoft Outlook';
-          setCalendarToast({ type: 'success', msg: `${label} connected successfully!` });
-          setTimeout(() => setCalendarToast(null), 5000);
+          showCalendarToast('success', `${label} connected successfully!`);
           setActiveView('profile'); // navigate straight to profile to show connected calendar
         } catch (err) {
           console.error('OAuth callback exchange failed:', err);
@@ -70,7 +71,7 @@ function AppContent() {
         apiGet('/api/calendar/status').catch(() => null), // non-fatal
       ]);
       setProfile(profileData);
-      setMeetings(Array.isArray(meetingsData) ? meetingsData : []);
+      setMeetings(Array.isArray(meetingsData) ? meetingsData : (meetingsData?.meetings ?? []));
       if (calStatus) setCalendarStatus(calStatus);
       setLoading(false);
     };
@@ -96,7 +97,7 @@ function AppContent() {
     ])
       .then(([profileData, meetingsData, calStatus]) => {
         setProfile(profileData);
-        setMeetings(Array.isArray(meetingsData) ? meetingsData : []);
+        setMeetings(Array.isArray(meetingsData) ? meetingsData : (meetingsData?.meetings ?? []));
         if (calStatus) setCalendarStatus(calStatus);
       })
       .catch(err => console.error('Refresh failed', err));
@@ -105,15 +106,16 @@ function AppContent() {
   useEffect(() => {
     if (activeView === 'calendar' && profile) {
       apiGet('/api/meetings')
-        .then(data => { if (Array.isArray(data)) setMeetings(data); })
+        .then(data => setMeetings(Array.isArray(data) ? data : (data?.meetings ?? [])))
         .catch(err => console.error('Calendar refresh failed', err));
     }
   }, [activeView]);
 
-  /** Show a toast notification. */
+  /** Show a toast notification (clears any previous timer). */
   const showCalendarToast = (type, msg) => {
+    if (calendarToastTimer.current) clearTimeout(calendarToastTimer.current);
     setCalendarToast({ type, msg });
-    setTimeout(() => setCalendarToast(null), 6000);
+    calendarToastTimer.current = setTimeout(() => setCalendarToast(null), 6000);
   };
 
   /** Open Google / Microsoft OAuth flow (redirects the page). */
@@ -175,14 +177,26 @@ function AppContent() {
     { id: 'profile',   emoji: '👤', label: 'Profile'   },
   ];
 
-  const initials = profile?.name
-    ? profile.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
+  const displayName = profile?.name || profile?.displayName || '';
+  const initials = displayName
+    ? displayName.split(' ').filter(Boolean).map(n => n[0]).join('').slice(0, 2).toUpperCase()
     : '??';
 
   return (
     <div className="layout">
+      {/* ── Mobile header ── */}
+      <div className="mobile-header">
+        <button className="hamburger-btn" onClick={() => setSidebarOpen(o => !o)} aria-label="Menu">
+          <span /><span /><span />
+        </button>
+        <span className="mobile-logo">Smart Scheduler</span>
+      </div>
+
+      {/* Sidebar overlay for mobile */}
+      {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
+
       {/* ── Sidebar ── */}
-      <aside className="sidebar">
+      <aside className={`sidebar${sidebarOpen ? ' sidebar-open' : ''}`}>
         <div className="sidebar-logo">
           <div className="logo-mark">S</div>
           <div className="logo-text">Smart<br />Scheduler</div>
@@ -193,7 +207,7 @@ function AppContent() {
             <button
               key={item.id}
               className={`nav-item ${activeView === item.id ? 'active' : ''}`}
-              onClick={() => setActiveView(item.id)}
+              onClick={() => { setActiveView(item.id); setSidebarOpen(false); }}
               title={item.label}
             >
               <span className="nav-emoji">{item.emoji}</span>
@@ -251,8 +265,16 @@ function AppContent() {
 
         {loading && (
           <div className="loading-screen">
-            <div className="spinner" />
-            <span>Connecting to AWS…</span>
+            <div className="skeleton-sidebar">
+              {[1,2,3,4].map(i => <div key={i} className="skeleton-nav-item" />)}
+            </div>
+            <div className="skeleton-main">
+              <div className="skeleton-header" />
+              <div className="skeleton-cards">
+                {[1,2,3].map(i => <div key={i} className="skeleton-card" />)}
+              </div>
+              <div className="skeleton-table" />
+            </div>
           </div>
         )}
 
@@ -365,7 +387,7 @@ function DashboardView({ profile, meetings, onNavigate, needsAction }) {
       {/* Hero */}
       <div className="dash-hero">
         <div>
-          <h1 className="dash-greeting">Welcome back, {profile.name.split(' ')[0]} 👋</h1>
+          <h1 className="dash-greeting">Welcome back, {(profile.name || profile.displayName || 'there').split(' ')[0]} 👋</h1>
           <p className="dash-subtitle">Your scheduling hub — analytics, meetings & insights</p>
         </div>
         <button className="btn-primary" onClick={() => onNavigate('meetings')}>

@@ -5,7 +5,12 @@ import './PublicProfile.css';
 export default function PublicProfile({ profile, onClose }) {
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
-  const [success, setSuccess] = useState(false);
+  const [toast, setToast] = useState(null); // { msg, type: 'success'|'error' }
+
+  const showToast = (msg, type = 'success') => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3000);
+  };
 
   const handleSendMessage = async (type = 'general') => {
     if (!message.trim() && type === 'general') return;
@@ -14,13 +19,12 @@ export default function PublicProfile({ profile, onClose }) {
       const content = type === 'kudos' ? "Sent you some kudos! 🌟" : type === 'nudge' ? "Hey, just checking in on our meeting! 🔔" : message;
       await apiPost(`/api/profile/${profile.id}/message`, { content, type });
       if (type === 'general') {
-        setSuccess(true);
-        setTimeout(() => { setSuccess(false); setMessage(''); }, 3000);
-      } else {
-        alert(`${type.charAt(0).toUpperCase() + type.slice(1)} sent!`);
+        setMessage('');
       }
+      const label = type.charAt(0).toUpperCase() + type.slice(1);
+      showToast(`${label} sent!`);
     } catch (err) {
-      alert('Failed to send: ' + err.message);
+      showToast('Failed to send: ' + err.message, 'error');
     } finally {
       setSending(false);
     }
@@ -37,6 +41,18 @@ export default function PublicProfile({ profile, onClose }) {
     <div className="pp-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="pp-modal">
         <button className="pp-close" onClick={onClose}>✕</button>
+        {toast && (
+          <div style={{
+            position: 'absolute', top: '0.75rem', left: '50%', transform: 'translateX(-50%)',
+            background: toast.type === 'error' ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)',
+            border: `1px solid ${toast.type === 'error' ? 'rgba(239,68,68,0.4)' : 'rgba(34,197,94,0.4)'}`,
+            color: toast.type === 'error' ? '#f87171' : '#4ade80',
+            padding: '0.5rem 1rem', borderRadius: '8px', fontSize: '0.82rem', whiteSpace: 'nowrap',
+            zIndex: 10,
+          }}>
+            {toast.msg}
+          </div>
+        )}
         
         <div className="pp-head">
           <div className="pp-avatar">{initials}</div>
@@ -92,7 +108,7 @@ export default function PublicProfile({ profile, onClose }) {
                 onClick={() => handleSendMessage('general')}
                 disabled={sending || !message.trim()}
               >
-                {sending ? '...' : success ? '✓ Sent' : 'Send Message'}
+                {sending ? '...' : 'Send Message'}
               </button>
             </div>
           </section>

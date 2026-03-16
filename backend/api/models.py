@@ -43,11 +43,11 @@ class MeetingRequest(BaseModel):
 
 # --- Input Models ---
 class MeetingCreateSchema(BaseModel):
-    title: str
-    durationMinutes: int
+    title: str = Field(min_length=1, max_length=200)
+    durationMinutes: int = Field(ge=15, le=480)
     participantIds: List[str] = []
     participantEmails: List[str] = []   # invite by email
-    daysForward: int = 7
+    daysForward: int = Field(default=7, ge=1, le=90)
 
 class MeetingEditSchema(BaseModel):
     title: Optional[str] = None

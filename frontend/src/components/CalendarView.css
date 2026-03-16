@@ -197,6 +197,7 @@
 .cv-event {
   position: absolute;
   left: 2px; right: 2px;
+  box-sizing: border-box;
   border-radius: 6px;
   padding: 3px 6px;
   cursor: pointer;
@@ -213,6 +214,11 @@
   opacity: 0.85;
   z-index: 2;
   transform: scaleX(0.97);
+}
+
+.cv-event-pending {
+  border-left-style: dashed !important;
+  opacity: 0.82;
 }
 
 .cv-ev-title {

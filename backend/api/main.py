@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from typing import Optional
 from urllib.parse import unquote
@@ -12,14 +13,19 @@ import db
 import calendar_client
 import models
 
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
 app = FastAPI()
+
+_FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://main.dswqybh1v4bo.amplifyapp.com')
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[_FRONTEND_URL, 'http://localhost:5173'],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 # ---------------------------------------------------------------------------
@@ -102,7 +108,8 @@ def validate_access_token(access_token: str) -> Optional[dict]:
         email   = attrs.get('email', '')
         name    = attrs.get('name') or email.split('@')[0]
         return {"user_id": user_id, "email": email, "display_name": name}
-    except Exception:
+    except Exception as exc:
+        logger.debug(f"Token validation failed: {exc}")
         return None
 
 
@@ -140,7 +147,7 @@ def get_current_user(request: Request) -> dict:
         display_name = claims.get("name") or claims.get("cognito:username") or email.split("@")[0]
         return {"user_id": user_id, "email": email, "display_name": display_name}
     except (KeyError, TypeError):
-        return {"user_id": "u1", "email": "dev@localhost", "display_name": "Dev User"}
+        raise HTTPException(status_code=401, detail="Unauthorized: missing or invalid JWT claims")
 
 
 # ---------------------------------------------------------------------------
@@ -404,7 +411,10 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
             # Best-effort: remove from calendars before marking as cancelled
             external_ids = meeting.get('externalEventIds')
             if external_ids:
-                calendar_client.remove_meeting_from_calendars(external_ids)
+                try:
+                    calendar_client.remove_meeting_from_calendars(external_ids)
+                except Exception as _exc:
+                    logger.error(f"Calendar delete failed during cancel for {request_id}: {_exc}")
 
             updated = db.cancel_meeting(request_id, user_id)
             return {"status": "success", "message": "Meeting cancelled", "meeting": updated}
@@ -738,19 +748,29 @@ def get_user_profile(request: Request):
     }
 
 
+@app.get("/api/profile/stats", response_model=dict)
+def get_profile_stats(request: Request):
+    identity = get_current_user(request)
+    return db.get_user_stats(identity["user_id"])
+
+
 @app.get("/api/meetings")
-def get_meetings(request: Request):
+def get_meetings(request: Request, limit: int = 50, offset: int = 0):
     identity = get_current_user(request)
     user_id = identity["user_id"]
 
-    meetings = db.get_user_meetings(user_id)
+    all_meetings = db.get_user_meetings(user_id)
+    total = len(all_meetings)
+    # Python-side pagination (meetings already sorted by createdAt desc in db.py)
+    page = all_meetings[offset: offset + limit]
+
     all_participant_ids: set = set()
-    for m in meetings:
+    for m in page:
         for pid in m.participantUserIds:
             all_participant_ids.add(pid)
     name_map = db.get_users_by_ids(list(all_participant_ids))
     response_data = []
-    for m in meetings:
+    for m in page:
         slots = db.get_meeting_slots(m.requestId)
         meeting_dict = m.model_dump(mode="json")
         meeting_dict['slots'] = [s.model_dump(mode="json") for s in slots]
@@ -759,7 +779,7 @@ def get_meetings(request: Request):
                                             for pid in m.participantUserIds}
         response_data.append(meeting_dict)
 
-    return response_data
+    return {"meetings": response_data, "total": total, "offset": offset, "limit": limit}
 
 
 @app.post("/api/meetings/create")
@@ -812,7 +832,7 @@ def create_meeting(meeting_data: models.MeetingCreateSchema, request: Request):
             if response['status'] == 'FAILED':
                 raise Exception(response.get('error', 'Workflow failed'))
         except Exception as e:
-            # If Step Functions fails, fall back to direct computation
+            logger.warning(f"Step Functions failed for {meeting.requestId}, falling back to local scheduling: {e}")
             _run_local_scheduling(meeting_data, user_id, meeting.requestId)
 
         return meeting

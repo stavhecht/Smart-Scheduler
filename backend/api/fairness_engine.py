@@ -58,10 +58,6 @@ class FairnessEngine:
     # Slot scoring (Social Fairness Algorithm)
     # ---------------------------------------------------------------------------
 
-    # ---------------------------------------------------------------------------
-    # Slot scoring (Social Fairness Algorithm)
-    # ---------------------------------------------------------------------------
-
     def score_time_slot(
         self,
         slot_dt: datetime,
@@ -244,7 +240,7 @@ class FairnessEngine:
         # Filter: keep only viable candidates (score >= 60)
         viable = [s for s in all_scored_slots if s['score'] >= 60]
         pool = viable if viable else all_scored_slots  # Fallback to full pool
-        return self.select_best_slots(pool, count=3)
+        return self.select_best_slots(pool, count=8)
 
     # ---------------------------------------------------------------------------
     # Fairness score update on booking

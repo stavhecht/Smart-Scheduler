@@ -12,6 +12,7 @@ const ROLE_COLOR = {
   organizer:   { bg: 'rgba(56,189,248,0.78)',  border: '#38bdf8', text: '#002a3a' },
   participant: { bg: 'rgba(129,140,248,0.78)', border: '#818cf8', text: '#1a1a40' },
 };
+const PENDING_COLOR = { bg: 'rgba(251,191,36,0.18)', border: '#fbbf24', text: '#78350f' };
 
 export default function CalendarView({ meetings }) {
   const [weekOffset, setWeekOffset] = useState(0);
@@ -19,7 +20,7 @@ export default function CalendarView({ meetings }) {
   const [mousePos, setMousePos]     = useState({ x: 0, y: 0 });
   const nowRef = useRef(null);
 
-  const confirmed = meetings.filter(m => m.status === 'confirmed' && m.selectedSlotStart);
+  const confirmed = meetings.filter(m => (m.status === 'confirmed' || m.status === 'pending') && m.selectedSlotStart);
 
   /* ── Week dates ── */
   const todayBase = new Date();
@@ -42,20 +43,41 @@ export default function CalendarView({ meetings }) {
 
   const weekLabel = `${weekDays[0].date.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} – ${weekDays[4].date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`;
 
-  /* ── Events for a day ── */
-  const getEvents = (dayDate) =>
-    confirmed
+  /* ── Events for a day (with overlap detection) ── */
+  const getEvents = (dayDate) => {
+    const raw = confirmed
       .filter(m => new Date(m.selectedSlotStart).toDateString() === dayDate.toDateString())
       .map(m => {
         const start = new Date(m.selectedSlotStart);
         const h = start.getHours() + start.getMinutes() / 60;
+        const endH = h + (m.durationMinutes / 60);
         return {
           ...m,
+          _startH:   h,
+          _endH:     endH,
           topPct:    ((h - HOUR_START) / TOTAL_HOURS) * 100,
           heightPct: ((m.durationMinutes / 60) / TOTAL_HOURS) * 100,
           startStr:  start.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
         };
       });
+
+    // Assign colIndex / totalCols by clustering overlapping events
+    const overlaps = (a, b) => a._startH < b._endH && b._startH < a._endH;
+    const assigned = raw.map(() => ({ colIndex: 0, totalCols: 1 }));
+
+    for (let i = 0; i < raw.length; i++) {
+      // Find all events that overlap with event i (including i itself)
+      const cluster = raw.filter((_, j) => overlaps(raw[i], raw[j]));
+      if (cluster.length <= 1) continue;
+      const totalCols = cluster.length;
+      cluster.forEach((ev, ci) => {
+        const idx = raw.indexOf(ev);
+        assigned[idx] = { colIndex: ci, totalCols };
+      });
+    }
+
+    return raw.map((ev, i) => ({ ...ev, ...assigned[i] }));
+  };
 
   /* ── Current time ── */
   const now      = new Date();
@@ -135,14 +157,19 @@ export default function CalendarView({ meetings }) {
 
                 {/* Events */}
                 {getEvents(day.date).map(ev => {
-                  const colors = ROLE_COLOR[ev.userRole] || ROLE_COLOR.organizer;
+                  const isPending = ev.status === 'pending';
+                  const colors = isPending ? PENDING_COLOR : (ROLE_COLOR[ev.userRole] || ROLE_COLOR.organizer);
+                  const colW  = 100 / ev.totalCols;
+                  const left  = ev.colIndex * colW;
                   return (
                     <div
                       key={ev.requestId}
-                      className="cv-event"
+                      className={`cv-event${isPending ? ' cv-event-pending' : ''}`}
                       style={{
                         top:        `calc(${ev.topPct}% + 1px)`,
                         height:     `calc(${ev.heightPct}% - 2px)`,
+                        left:       `${left}%`,
+                        width:      `calc(${colW}% - 2px)`,
                         background: colors.bg,
                         borderLeft: `3px solid ${colors.border}`,
                         color:      colors.text,

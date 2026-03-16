@@ -1,3 +1,4 @@
+from decimal import Decimal
 from typing import List, Optional, Any, Dict
 from datetime import datetime, timedelta
 import uuid
@@ -26,7 +27,7 @@ def _put_item(pk: str, sk: str, data: dict):
     item['SK'] = sk
     for k, v in item.items():
         if isinstance(v, float):
-            item[k] = str(v)
+            item[k] = Decimal(str(v))
         elif isinstance(v, datetime):
             item[k] = v.isoformat()
     table.put_item(Item=item)
@@ -359,7 +360,7 @@ def save_oauth_state(user_id: str, provider: str, state: str):
     _put_item(f"USER#{user_id}", f"OAUTH_STATE#{state}", {
         'provider': provider,
         'state': state,
-        'ttlExpiry': int(time.time()) + 600,   # 10 min
+        'ttlExpiry': int(time.time()) + 1800,  # 30 min
     })
 
 
@@ -559,6 +560,39 @@ def sfn_store_results(payload: dict) -> dict:
 
     payload['stored_slots_count'] = len(best_slots)
     return payload
+
+
+# ---------------------------------------------------------------------------
+# User stats (real metrics derived from meeting records)
+# ---------------------------------------------------------------------------
+
+def get_user_stats(user_id: str) -> dict:
+    """
+    Compute real usage stats for a user from their DynamoDB meeting records.
+    Returns total_organized, total_accepted, total_cancelled, avg_fairness_score.
+    """
+    meetings = get_user_meetings(user_id)
+
+    total_organized  = sum(1 for m in meetings if m.creatorUserId == user_id)
+    total_accepted   = sum(1 for m in meetings if m.status == 'confirmed')
+    total_cancelled  = sum(1 for m in meetings if m.status == 'cancelled')
+
+    # Fairness score history from the FAIRNESS record
+    fairness_item = _get_item(f"USER#{user_id}", "FAIRNESS")
+    current_score = float(fairness_item.get('fairnessScore', 100)) if fairness_item else 100.0
+
+    return {
+        'total_organized': total_organized,
+        'total_accepted':  total_accepted,
+        'total_cancelled': total_cancelled,
+        'current_fairness_score': round(current_score, 1),
+        'meetings_this_week': int(
+            float(fairness_item.get('meetingLoadMetrics', {}).get('meetings_this_week', 0))
+        ) if fairness_item else 0,
+        'suffering_score': int(
+            float(fairness_item.get('meetingLoadMetrics', {}).get('suffering_score', 0))
+        ) if fairness_item else 0,
+    }
 
 
 # ---------------------------------------------------------------------------

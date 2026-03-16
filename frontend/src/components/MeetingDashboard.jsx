@@ -1,6 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { apiPost, apiScoreSlot } from '../apiClient';
 import './MeetingDashboard.css';
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const validateEmails = (str) => {
+  const list = str.split(',').map(s => s.trim()).filter(Boolean);
+  return { list, invalid: list.filter(e => !EMAIL_REGEX.test(e)) };
+};
 
 /* ─────────────────────────────────────────────
    MeetingDashboard
@@ -23,6 +29,8 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
   });
   // Custom time picker state per meeting: { [requestId]: { datetime, scoring, scored } }
   const [customPicker, setCustomPicker]         = useState({});
+  const [emailError, setEmailError]             = useState('');
+  const notifyTimer = useRef(null);
 
   // Split meetings by status then role
   const activeMeetings    = meetings.filter(m => m.status !== 'cancelled');
@@ -41,10 +49,24 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
     m => m.status === 'confirmed' && !(m.acceptedBy || []).includes(currentUserId)
   ).length;
 
+  /* ── Keyboard: Escape closes open modals ── */
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      if (showCreate) setShowCreate(false);
+      else if (editModal) setEditModal(null);
+      else if (cancelConfirmId) setCancelConfirmId(null);
+      else if (rescheduleConfirmId) setRescheduleConfirmId(null);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [showCreate, editModal, cancelConfirmId, rescheduleConfirmId]);
+
   /* ── Helpers ── */
   const notify = (msg, type = 'success') => {
+    if (notifyTimer.current) clearTimeout(notifyTimer.current);
     setNotification({ msg, type });
-    setTimeout(() => setNotification(null), 3500);
+    notifyTimer.current = setTimeout(() => setNotification(null), 3500);
   };
 
   const toggle = (id) => setExpandedId(prev => prev === id ? null : id);
@@ -57,11 +79,16 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
   /* ── Handlers ── */
   const handleCreate = async (e) => {
     e.preventDefault();
+    const { list: emails, invalid } = validateEmails(newMeeting.participantEmails);
+    if (invalid.length > 0) {
+      setEmailError(`Invalid email${invalid.length > 1 ? 's' : ''}: ${invalid.join(', ')}`);
+      setShowCreate(true);
+      return;
+    }
+    setEmailError('');
     setLoading(true);
     setShowCreate(false);
     try {
-      const emails = newMeeting.participantEmails
-        .split(',').map(s => s.trim()).filter(Boolean);
       await apiPost('/api/meetings/create', {
         title: newMeeting.title,
         durationMinutes: Number(newMeeting.durationMinutes),
@@ -242,9 +269,14 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
             </div>
             <form onSubmit={handleCreate} className="modal-form">
               <div className="form-group">
-                <label>Meeting Title</label>
+                <label style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Meeting Title</span>
+                  <span style={{ fontWeight: 400, color: newMeeting.title.length > 180 ? '#f87171' : 'var(--text-secondary)', fontSize: '0.75rem' }}>
+                    {newMeeting.title.length}/200
+                  </span>
+                </label>
                 <input
-                  autoFocus required
+                  autoFocus required maxLength={200}
                   placeholder="e.g. Weekly Team Sync"
                   value={newMeeting.title}
                   onChange={e => setNewMeeting({ ...newMeeting, title: e.target.value })}
@@ -287,15 +319,26 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
               </div>
 
               <div className="form-group">
-                <label>Invite Participants *</label>
+                {(() => {
+                  const count = newMeeting.participantEmails.split(',').map(s => s.trim()).filter(Boolean).length;
+                  return (
+                    <label style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span>Invite Participants *</span>
+                      {count > 0 && <span style={{ fontWeight: 400, color: 'var(--text-secondary)', fontSize: '0.75rem' }}>{count} participant{count !== 1 ? 's' : ''}</span>}
+                    </label>
+                  );
+                })()}
                 <input
                   type="text"
                   required
                   placeholder="alice@co.com, bob@co.com"
                   value={newMeeting.participantEmails}
-                  onChange={e => setNewMeeting({ ...newMeeting, participantEmails: e.target.value })}
+                  onChange={e => { setNewMeeting({ ...newMeeting, participantEmails: e.target.value }); setEmailError(''); }}
                 />
-                <span className="form-hint">Comma-separated emails. They'll see this in their dashboard.</span>
+                {emailError
+                  ? <span className="form-hint" style={{ color: '#f87171' }}>{emailError}</span>
+                  : <span className="form-hint">Comma-separated emails. They'll see this in their dashboard.</span>
+                }
               </div>
 
               <div className="modal-actions">

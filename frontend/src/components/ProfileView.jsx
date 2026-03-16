@@ -26,15 +26,25 @@ export default function ProfileView({
   const [messages, setMessages] = useState([]);
   const [msgLoading, setMsgLoading] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [replyTo, setReplyTo] = useState(null); // { messageId, fromUserId, text }
+  const [replying, setReplying] = useState(false);
+  const [disconnectConfirm, setDisconnectConfirm] = useState(null); // provider string
+  const [stats, setStats] = useState(null);
 
-  // Stats
+  // Derived stats (from meetings prop, updated by real /stats endpoint)
   const score      = Math.round(profile.fairness_score ?? 100);
   const scoreColor = score >= 80 ? '#22c55e' : score >= 60 ? '#f59e0b' : '#ef4444';
   const total      = meetings.length;
   const confirmed  = meetings.filter(m => m.status === 'confirmed').length;
-  const organized  = meetings.filter(m => m.userRole === 'organizer').length;
+  const organized  = stats?.total_organized ?? meetings.filter(m => m.userRole === 'organizer').length;
   const invited    = meetings.filter(m => m.userRole === 'participant').length;
-  const thisWeek   = profile.details?.meetings_this_week ?? 0;
+  const thisWeek   = stats?.meetings_this_week ?? profile.details?.meetings_this_week ?? 0;
+  const sufferingScore = stats?.suffering_score ?? sufferingScore;
+
+  useEffect(() => {
+    apiGet('/api/profile/stats').then(setStats).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (activeTab === 'inbox') {
@@ -55,6 +65,7 @@ export default function ProfileView({
   };
 
   const handleSaveProfile = async () => {
+    setSaveError('');
     setIsUpdating(true);
     try {
       const res = await apiPost('/api/profile/update', tempProfile);
@@ -65,18 +76,59 @@ export default function ProfileView({
         if (onProfileUpdate) onProfileUpdate(updated);
       }
     } catch (err) {
-      alert('Failed to update profile: ' + err.message);
+      setSaveError('Failed to update profile: ' + err.message);
     } finally {
       setIsUpdating(false);
     }
   };
 
-  const initials = profile.name
-    ? profile.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
+  const handleReply = async (m) => {
+    if (!replyTo?.text?.trim()) return;
+    setReplying(true);
+    try {
+      await apiPost(`/api/profile/${m.fromUserId}/message`, { content: replyTo.text, type: 'general' });
+      setReplyTo(null);
+    } catch (err) {
+      console.error('Reply failed:', err);
+    } finally {
+      setReplying(false);
+    }
+  };
+
+  const handleDisconnect = (provider) => setDisconnectConfirm(provider);
+  const confirmDisconnect = () => {
+    if (disconnectConfirm) {
+      onCalendarDisconnect(disconnectConfirm);
+      setDisconnectConfirm(null);
+    }
+  };
+
+  const pvDisplayName = profile.displayName || profile.name || '';
+  const initials = pvDisplayName
+    ? pvDisplayName.split(' ').filter(Boolean).map(n => n[0]).join('').slice(0, 2).toUpperCase()
     : '??';
 
   return (
     <div className="pv-wrap">
+
+      {/* Disconnect calendar confirmation dialog */}
+      {disconnectConfirm && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setDisconnectConfirm(null)}>
+          <div className="modal-box confirm-box" style={{ maxWidth: '380px' }}>
+            <div className="modal-head">
+              <h3>Disconnect Calendar</h3>
+              <button className="modal-close" onClick={() => setDisconnectConfirm(null)}>✕</button>
+            </div>
+            <div className="confirm-body">
+              <p>Disconnect {disconnectConfirm === 'google' ? 'Google Calendar' : 'Outlook'}? Your meetings will no longer sync.</p>
+              <div className="modal-actions">
+                <button className="btn-danger" onClick={confirmDisconnect}>Disconnect</button>
+                <button className="btn-cancel" onClick={() => setDisconnectConfirm(null)}>Keep Connected</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       
       {/* ── Tabs ── */}
       <div className="pv-tabs">
@@ -156,10 +208,11 @@ export default function ProfileView({
                   </button>
                 </>
               ) : (
-                <button className="pv-btn ghost" onClick={() => { setTempProfile(profile); setIsEditing(true); }}>
+                <button className="pv-btn ghost" onClick={() => { setTempProfile(profile); setIsEditing(true); setSaveError(''); }}>
                   ✏️ Edit Profile
                 </button>
               )}
+              {saveError && <p style={{ color: '#f87171', fontSize: '0.8rem', marginTop: '0.5rem' }}>{saveError}</p>}
             </div>
           </div>
 
@@ -209,14 +262,14 @@ export default function ProfileView({
                   name="Google Calendar" 
                   status={calendarStatus?.google} 
                   onConnect={onCalendarConnect} 
-                  onDisconnect={onCalendarDisconnect} 
+                  onDisconnect={handleDisconnect}
                 />
-                <CalendarRow 
-                  brand="microsoft" 
-                  name="Outlook" 
-                  status={calendarStatus?.microsoft} 
-                  onConnect={onCalendarConnect} 
-                  onDisconnect={onCalendarDisconnect} 
+                <CalendarRow
+                  brand="microsoft"
+                  name="Outlook"
+                  status={calendarStatus?.microsoft}
+                  onConnect={onCalendarConnect}
+                  onDisconnect={handleDisconnect}
                 />
               </div>
             </div>
@@ -252,15 +305,34 @@ export default function ProfileView({
               messages.map(m => (
                 <div key={m.messageId} className={`msg-item ${m.isRead ? 'read' : 'unread'}`}>
                   <div className="msg-icon">{m.messageType === 'kudos' ? '🌟' : m.messageType === 'nudge' ? '🔔' : '💬'}</div>
-                  <div className="msg-body">
+                  <div className="msg-body" style={{ flex: 1 }}>
                     <div className="msg-header">
                       <span className="msg-from">{m.fromDisplayName}</span>
                       <span className="msg-time">{new Date(m.createdAt).toLocaleDateString()}</span>
                     </div>
                     <p className="msg-text">{m.content}</p>
+                    {replyTo?.messageId === m.messageId && (
+                      <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.5rem' }}>
+                        <input
+                          autoFocus
+                          className="pv-input-sub"
+                          style={{ flex: 1 }}
+                          placeholder="Write a reply..."
+                          value={replyTo.text}
+                          onChange={e => setReplyTo(r => ({ ...r, text: e.target.value }))}
+                          onKeyDown={e => { if (e.key === 'Enter') handleReply(m); if (e.key === 'Escape') setReplyTo(null); }}
+                        />
+                        <button className="pv-btn primary tiny" onClick={() => handleReply(m)} disabled={replying || !replyTo.text?.trim()}>
+                          {replying ? '...' : 'Send'}
+                        </button>
+                        <button className="pv-btn tiny" onClick={() => setReplyTo(null)}>✕</button>
+                      </div>
+                    )}
                   </div>
                   <div className="msg-actions">
-                    <button className="pv-btn tiny">Reply</button>
+                    <button className="pv-btn tiny" onClick={() => setReplyTo({ messageId: m.messageId, fromUserId: m.fromUserId, text: '' })}>
+                      Reply
+                    </button>
                   </div>
                 </div>
               ))
@@ -283,12 +355,12 @@ export default function ProfileView({
                <span className="fa-b-val" style={{ color: scoreColor, fontSize: '1.4rem', fontWeight: 800 }}>{thisWeek}</span>
              </div>
              <div className="fa-metric-box" style={{ background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-               <span className="fa-b-label" style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Average Conflict Score</span>
-               <span className="fa-b-val" style={{ fontSize: '1.4rem', fontWeight: 800 }}>3.2</span>
+               <span className="fa-b-label" style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Inconvenient Meetings</span>
+               <span className="fa-b-val" style={{ fontSize: '1.4rem', fontWeight: 800 }}>{sufferingScore}</span>
              </div>
              <div className="fa-metric-box" style={{ background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                <span className="fa-b-label" style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Inconvenience Reward</span>
-               <span className="fa-b-val" style={{ color: '#22c55e', fontSize: '1.4rem', fontWeight: 800 }}>+{profile.details?.suffering_score ?? 0} pts</span>
+               <span className="fa-b-val" style={{ color: '#22c55e', fontSize: '1.4rem', fontWeight: 800 }}>+{sufferingScore} pts</span>
              </div>
           </div>
         </div>
