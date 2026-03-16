@@ -166,8 +166,8 @@ def _ensure_fresh_google_token(user_id: str) -> Optional[str]:
                 'scope':         tokens.get('scope', ''),
                 'calendar_email': tokens.get('calendarEmail', ''),
             })
-    except Exception:
-        pass   # Use existing token, let the API call fail if truly expired
+    except Exception as e:
+        print(f"[calendar] Google token refresh failed for {user_id}: {e}")
 
     return access_token
 
@@ -221,7 +221,8 @@ def create_google_event(user_id: str, title: str, start_iso: str, end_iso: str,
         with urllib.request.urlopen(req, timeout=10) as resp:
             resp_body = json.loads(resp.read().decode())
             return resp_body.get('id')
-    except Exception:
+    except Exception as e:
+        print(f"[calendar] create_google_event failed for {user_id}: {e}")
         return None
 
 
@@ -534,10 +535,10 @@ def get_user_busy_slots(user_id: str, date_start: datetime, date_end: datetime) 
 
 
 def write_meeting_to_calendars(creator_id: str, participant_ids: List[str],
-                                title: str, start_iso: str, end_iso: str) -> Dict[str, str]:
+                                title: str, start_iso: str, end_iso: str) -> dict:
     """
     Best-effort: write a confirmed meeting to every participant's connected calendar.
-    Returns a mapping of {userId: externalEventId}.
+    Returns {"event_ids": {userId: externalEventId}, "failed": [userId, ...]}.
     """
     all_ids = list({creator_id} | set(participant_ids))
     # Collect attendee emails for invites (optional, but helps if providers sync)
@@ -549,18 +550,26 @@ def write_meeting_to_calendars(creator_id: str, participant_ids: List[str],
         if email:
             attendee_emails.append(email)
 
-    event_ids = {}
+    event_ids: Dict[str, str] = {}
+    failed_ids: List[str] = []
     for uid in all_ids:
         try:
             if db.get_oauth_tokens(uid, 'google'):
                 eid = create_google_event(uid, title, start_iso, end_iso, attendee_emails)
-                if eid: event_ids[uid] = f"google:{eid}"
+                if eid:
+                    event_ids[uid] = f"google:{eid}"
+                else:
+                    failed_ids.append(uid)
             elif db.get_oauth_tokens(uid, 'microsoft'):
                 eid = create_microsoft_event(uid, title, start_iso, end_iso, attendee_emails)
-                if eid: event_ids[uid] = f"microsoft:{eid}"
-        except Exception:
-            pass
-    return event_ids
+                if eid:
+                    event_ids[uid] = f"microsoft:{eid}"
+                else:
+                    failed_ids.append(uid)
+        except Exception as e:
+            print(f"[calendar] write failed for uid={uid}: {e}")
+            failed_ids.append(uid)
+    return {"event_ids": event_ids, "failed": failed_ids}
 
 
 def remove_meeting_from_calendars(external_ids: Dict[str, str]):

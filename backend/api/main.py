@@ -392,22 +392,43 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
                     raise HTTPException(status_code=409, detail="This slot was just taken by someone else — please refresh and choose another")
                 raise
             db.log_meeting_activity(request_id, 'booked', user_id)
+            end_slot = slot_data.get('endIso', '') if slot_data else ''
+            if not end_slot:
+                end_slot = (datetime.fromisoformat(slot_start_iso) + timedelta(minutes=int(meeting.get('durationMinutes', 60)))).isoformat()
+            # Generate .ics invite (works without OAuth)
+            ics_content = calendar_client.generate_ics_content(
+                title=meeting.get('title', 'Meeting'),
+                start_iso=slot_start_iso,
+                end_iso=end_slot,
+            )
             # Best-effort: write to connected calendars and store event IDs for later deletion
+            write_result = {"event_ids": {}, "failed": []}
             try:
-                end_slot = slot_data.get('endIso', '') if slot_data else ''
-                event_ids = calendar_client.write_meeting_to_calendars(
+                write_result = calendar_client.write_meeting_to_calendars(
                     creator_id=meeting.get('creatorUserId', ''),
                     participant_ids=meeting.get('participantUserIds', []),
                     title=meeting.get('title', 'Meeting'),
                     start_iso=slot_start_iso,
                     end_iso=end_slot,
                 )
+                event_ids = write_result.get('event_ids', {})
                 if event_ids:
                     meeting['externalEventIds'] = event_ids
                     db._put_item(f"MEET#{request_id}", "META", meeting)
-            except Exception:
-                pass
-            return {"status": "success", "message": "Meeting confirmed successfully", "meeting": meeting}
+            except Exception as _ce:
+                logger.error(f"write_meeting_to_calendars failed for {request_id}: {_ce}")
+            failed_uids = write_result.get('failed', [])
+            google_tokens = db.get_oauth_tokens(user_id, 'google')
+            calendar_sync_warning = None
+            if google_tokens and user_id in failed_uids:
+                calendar_sync_warning = "Couldn't sync to Google Calendar. Your token may have expired — reconnect in Profile."
+            return {
+                "status": "success",
+                "message": "Meeting confirmed successfully",
+                "meeting": meeting,
+                "icsContent": ics_content,
+                "calendarSyncWarning": calendar_sync_warning,
+            }
 
         # ── accept:<request_id> ───────────────────────────────────────────────
         if action.startswith("accept:"):
@@ -562,20 +583,40 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
             meeting['selectedSlotStart'] = slot_start_iso
             db._put_item(f"MEET#{request_id}", "META", meeting)
             db.log_meeting_activity(request_id, 'booked', user_id, {'custom': True})
+            effective_end_iso = slot_end_iso or (datetime.fromisoformat(slot_start_iso) + timedelta(minutes=int(meeting.get('durationMinutes', 60)))).isoformat()
+            # Generate .ics invite (works without OAuth)
+            ics_content = calendar_client.generate_ics_content(
+                title=meeting.get('title', 'Meeting'),
+                start_iso=slot_start_iso,
+                end_iso=effective_end_iso,
+            )
+            write_result = {"event_ids": {}, "failed": []}
             try:
-                event_ids = calendar_client.write_meeting_to_calendars(
+                write_result = calendar_client.write_meeting_to_calendars(
                     creator_id=meeting.get('creatorUserId', ''),
                     participant_ids=meeting.get('participantUserIds', []),
                     title=meeting.get('title', 'Meeting'),
                     start_iso=slot_start_iso,
-                    end_iso=slot_end_iso,
+                    end_iso=effective_end_iso,
                 )
+                event_ids = write_result.get('event_ids', {})
                 if event_ids:
                     meeting['externalEventIds'] = event_ids
                     db._put_item(f"MEET#{request_id}", "META", meeting)
-            except Exception:
-                pass
-            return {"status": "success", "message": "Custom time booked successfully", "meeting": meeting}
+            except Exception as _ce:
+                logger.error(f"write_meeting_to_calendars failed for {request_id}: {_ce}")
+            failed_uids = write_result.get('failed', [])
+            google_tokens = db.get_oauth_tokens(user_id, 'google')
+            calendar_sync_warning = None
+            if google_tokens and user_id in failed_uids:
+                calendar_sync_warning = "Couldn't sync to Google Calendar. Your token may have expired — reconnect in Profile."
+            return {
+                "status": "success",
+                "message": "Custom time booked successfully",
+                "meeting": meeting,
+                "icsContent": ics_content,
+                "calendarSyncWarning": calendar_sync_warning,
+            }
 
         # ── reschedule:<request_id> ───────────────────────────────────────────
         if action.startswith("reschedule:"):

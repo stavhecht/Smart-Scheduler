@@ -33,6 +33,7 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
   // Custom time picker state per meeting: { [requestId]: { datetime, scoring, scored } }
   const [customPicker, setCustomPicker]         = useState({});
   const [emailError, setEmailError]             = useState('');
+  const [lastBookedIcs, setLastBookedIcs]       = useState(null); // { content, title }
   const toastCounter = useRef(0);
 
   // Search + filter
@@ -132,8 +133,15 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
     setLoading(true);
     setExpandedId(null);
     try {
-      await apiPost(`/api/meetings/${meetingId}/book/${encodeURIComponent(slot.startIso)}`);
-      notify('Slot booked! Participants have been notified.');
+      const result = await apiPost(`/api/meetings/${meetingId}/book/${encodeURIComponent(slot.startIso)}`);
+      if (result?.calendarSyncWarning) {
+        notify(result.calendarSyncWarning, 'error');
+      } else {
+        notify('Slot booked! Participants have been notified.');
+      }
+      if (result?.icsContent) {
+        setLastBookedIcs({ content: result.icsContent, title: slot.title || 'meeting' });
+      }
     } catch (err) {
       notify(err.message || 'Failed to book slot', 'error');
     } finally {
@@ -241,8 +249,15 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
     setLoading(true);
     setExpandedId(null);
     try {
-      await apiPost(`/api/meetings/${meetingId}/book_custom`, picker.scored);
-      notify('Custom time booked! Participants have been notified.');
+      const result = await apiPost(`/api/meetings/${meetingId}/book_custom`, picker.scored);
+      if (result?.calendarSyncWarning) {
+        notify(result.calendarSyncWarning, 'error');
+      } else {
+        notify('Custom time booked! Participants have been notified.');
+      }
+      if (result?.icsContent) {
+        setLastBookedIcs({ content: result.icsContent, title: meeting.title || 'meeting' });
+      }
       setCustomPicker(prev => { const n = { ...prev }; delete n[meetingId]; return n; });
       onRefresh();
     } catch (err) {
@@ -265,6 +280,20 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
           </div>
         ))}
       </div>
+
+      {/* .ics download banner */}
+      {lastBookedIcs && (
+        <div className="ics-download-banner">
+          <span>📅 Add to your calendar:</span>
+          <a
+            href={`data:text/calendar;charset=utf-8,${encodeURIComponent(lastBookedIcs.content)}`}
+            download={`${lastBookedIcs.title}.ics`}
+          >
+            Download .ics invite
+          </a>
+          <button className="ics-banner-close" onClick={() => setLastBookedIcs(null)}>✕</button>
+        </div>
+      )}
 
       {/* Page header */}
       <div className="md-header">

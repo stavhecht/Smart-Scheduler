@@ -929,6 +929,44 @@
 .p-dot.declined { background: #f87171; }
 .p-status.declined { color: #f87171; }
 
+/* ── .ics download banner ── */
+.ics-download-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: rgba(56, 189, 248, 0.08);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-radius: 12px;
+  padding: 0.75rem 1.1rem;
+  margin-bottom: 1.25rem;
+  font-size: 0.875rem;
+  color: rgba(255, 255, 255, 0.8);
+  flex-wrap: wrap;
+}
+
+.ics-download-banner a {
+  color: var(--accent-color);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.ics-download-banner a:hover { text-decoration: underline; }
+
+.ics-banner-close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+  transition: color 0.15s;
+}
+
+.ics-banner-close:hover { color: white; }
+
 /* ── Meeting description ── */
 .mc-description {
   background: rgba(255,255,255,0.04);
