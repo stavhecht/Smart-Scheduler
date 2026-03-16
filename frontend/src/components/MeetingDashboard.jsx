@@ -19,7 +19,7 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
   const [expandedId, setExpandedId]             = useState(null);
   const [loading, setLoading]                   = useState(false);
   const [showCreate, setShowCreate]             = useState(false);
-  const [notification, setNotification]         = useState(null);
+  const [toasts, setToasts]                     = useState([]);        // { id, msg, type }
   const [editModal, setEditModal]               = useState(null);       // { requestId, title, durationMinutes }
   const [cancelConfirmId, setCancelConfirmId]   = useState(null);       // requestId
   const [rescheduleConfirmId, setRescheduleConfirmId] = useState(null); // requestId
@@ -33,7 +33,7 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
   // Custom time picker state per meeting: { [requestId]: { datetime, scoring, scored } }
   const [customPicker, setCustomPicker]         = useState({});
   const [emailError, setEmailError]             = useState('');
-  const notifyTimer = useRef(null);
+  const toastCounter = useRef(0);
 
   // Search + filter
   const filteredMeetings = useMemo(() => {
@@ -82,9 +82,11 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
 
   /* ── Helpers ── */
   const notify = (msg, type = 'success') => {
-    if (notifyTimer.current) clearTimeout(notifyTimer.current);
-    setNotification({ msg, type });
-    notifyTimer.current = setTimeout(() => setNotification(null), 3500);
+    const id = ++toastCounter.current;
+    setToasts(prev => [...prev.slice(-2), { id, msg, type }]); // max 3
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 3500);
   };
 
   const toggle = (id) => setExpandedId(prev => prev === id ? null : id);
@@ -254,12 +256,15 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
   return (
     <div className="md-wrap">
 
-      {/* Toast notification */}
-      {notification && (
-        <div className={`md-toast md-toast-${notification.type}`}>
-          {notification.type === 'success' ? '✅' : '❌'} {notification.msg}
-        </div>
-      )}
+      {/* Toast notifications (stacked) */}
+      <div className="md-toast-stack">
+        {toasts.map((t, i) => (
+          <div key={t.id} className={`md-toast md-toast-${t.type}`} style={{ bottom: `${i * 68}px` }}>
+            {t.type === 'success' ? '✅' : '❌'} {t.msg}
+            <button className="md-toast-close" onClick={() => setToasts(prev => prev.filter(x => x.id !== t.id))}>×</button>
+          </div>
+        ))}
+      </div>
 
       {/* Page header */}
       <div className="md-header">

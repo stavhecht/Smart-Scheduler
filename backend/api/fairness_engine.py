@@ -62,18 +62,25 @@ class FairnessEngine:
         self,
         slot_dt: datetime,
         participant_states: List[dict],
-        duration_minutes: int
+        duration_minutes: int,
+        tz_offset_hours: float = 0.0
     ) -> Dict[str, Any]:
         """
         Score a candidate time slot using the Social Fairness AI Engine.
         Combines:
-        - Time-of-day/Day-of-week heuristics
+        - Time-of-day/Day-of-week heuristics (adjusted for user's timezone)
         - Participant Load Index (Real-time meeting pressure)
         - Social Momentum (Rewards flexibility history)
         - Recipient Fatigue (Penalizes clustering meetings)
+
+        tz_offset_hours: UTC offset for the organizer's timezone (e.g. +2 for Jerusalem,
+                         -5 for EST). Slot times on Lambda are UTC; this converts to local
+                         time before hour/day scoring so HOUR_WEIGHTS apply correctly.
         """
-        hour = slot_dt.hour
-        day = slot_dt.weekday()
+        # Convert UTC slot to organizer's local time for scoring
+        local_dt = slot_dt + timedelta(hours=tz_offset_hours)
+        hour = local_dt.hour
+        day = local_dt.weekday()
 
         # 1. Base Time Score (0-100)
         hour_weight = self.HOUR_WEIGHTS.get(hour, 0.3)
@@ -167,20 +174,33 @@ class FairnessEngine:
     def generate_candidate_slots(
         self,
         date_start: datetime,
-        date_end: datetime
+        date_end: datetime,
+        tz_offset_hours: float = 0.0
     ) -> List[datetime]:
         """
         Generate candidate time slots within the given date range.
-        Respects working hours and skips weekends.
+        Respects working hours (in the organizer's local timezone) and skips weekends.
+
+        tz_offset_hours: UTC offset for the organizer. WORKING_HOURS are treated as
+                         local hours; they are converted back to UTC for storage so that
+                         calendar clients receive the correct absolute time.
         """
         slots: List[datetime] = []
+        now_utc = datetime.utcnow()
         current = date_start.replace(hour=9, minute=0, second=0, microsecond=0)
 
         while current <= date_end and len(slots) < 12:
             if current.weekday() < 5:  # Mon–Fri only
-                for hour in self.WORKING_HOURS:
-                    candidate = current.replace(hour=hour, minute=0)
-                    if candidate > datetime.now():
+                for local_hour in self.WORKING_HOURS:
+                    # Convert local hour → UTC hour for the stored slot
+                    utc_hour = local_hour - int(tz_offset_hours)
+                    candidate = current.replace(hour=utc_hour % 24, minute=0)
+                    # If UTC hour wraps to next day, adjust date accordingly
+                    if utc_hour < 0:
+                        candidate -= timedelta(days=1)
+                    elif utc_hour >= 24:
+                        candidate += timedelta(days=1)
+                    if candidate > now_utc:
                         slots.append(candidate)
             current += timedelta(days=1)
 

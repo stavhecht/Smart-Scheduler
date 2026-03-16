@@ -325,6 +325,8 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
             account_id = os.environ.get('AWS_ACCOUNT_ID', '')
             if account_id:
                 meeting = db.create_meeting_record(meeting_data, user_id)
+                creator_profile = db._get_item(f"USER#{user_id}", "PROFILE")
+                creator_tz = (creator_profile or {}).get("timezone", "UTC")
                 sfn_input = {
                     "request_id":       meeting.requestId,
                     "creator_id":       user_id,
@@ -332,6 +334,7 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
                     "date_range_start": meeting.dateRangeStart.isoformat(),
                     "date_range_end":   meeting.dateRangeEnd.isoformat(),
                     "duration_minutes": meeting.durationMinutes,
+                    "tz_offset_hours":  db.get_tz_offset_hours(creator_tz),
                 }
                 try:
                     sfn  = get_sfn_client()
@@ -642,7 +645,10 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
                     state = db._get_item(f"USER#{uid}", "FAIRNESS")
                     if state:
                         participant_states.append(state)
-                result = fe.score_time_slot(slot_dt, participant_states, duration_minutes)
+                user_profile = db._get_item(f"USER#{user_id}", "PROFILE")
+                user_tz = (user_profile or {}).get("timezone", "UTC")
+                tz_offset = db.get_tz_offset_hours(user_tz)
+                result = fe.score_time_slot(slot_dt, participant_states, duration_minutes, tz_offset_hours=tz_offset)
                 return {
                     "startIso":       start_iso,
                     "endIso":         end_dt.isoformat(),
@@ -867,13 +873,16 @@ def create_meeting(meeting_data: models.MeetingCreateSchema, request: Request):
         meeting = db.create_meeting_record(meeting_data, user_id)
 
         # 2. Trigger the Step Functions workflow synchronously
+        creator_profile = db._get_item(f"USER#{user_id}", "PROFILE")
+        creator_tz = (creator_profile or {}).get("timezone", "UTC")
         sfn_input = {
             "request_id": meeting.requestId,
             "creator_id": user_id,
             "participant_ids": meeting_data.participantIds,
             "date_range_start": meeting.dateRangeStart.isoformat(),
             "date_range_end": meeting.dateRangeEnd.isoformat(),
-            "duration_minutes": meeting.durationMinutes
+            "duration_minutes": meeting.durationMinutes,
+            "tz_offset_hours": db.get_tz_offset_hours(creator_tz),
         }
 
         try:
@@ -898,13 +907,16 @@ def create_meeting(meeting_data: models.MeetingCreateSchema, request: Request):
 def _run_local_scheduling(meeting_data, user_id: str, request_id: str):
     """Direct in-process fallback when Step Functions is not available."""
     from datetime import datetime, timedelta
+    creator_profile = db._get_item(f"USER#{user_id}", "PROFILE")
+    creator_tz = (creator_profile or {}).get("timezone", "UTC")
     payload = {
         "request_id": request_id,
         "creator_id": user_id,
         "participant_ids": meeting_data.participantIds,
         "date_range_start": datetime.now().isoformat(),
         "date_range_end": (datetime.now() + timedelta(days=meeting_data.daysForward)).isoformat(),
-        "duration_minutes": meeting_data.durationMinutes
+        "duration_minutes": meeting_data.durationMinutes,
+        "tz_offset_hours": db.get_tz_offset_hours(creator_tz),
     }
     payload = db.sfn_fetch_participants(payload)
     payload = db.sfn_generate_slots(payload)

@@ -12,20 +12,48 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* ── Toast notification ── */
-.md-toast {
+/* ── Toast notifications (stacked) ── */
+.md-toast-stack {
   position: fixed;
-  top: 1.5rem;
+  bottom: 1.5rem;
   right: 1.5rem;
   z-index: 9999;
-  padding: 0.8rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  pointer-events: none;
+}
+
+.md-toast {
+  position: absolute;
+  right: 0;
+  padding: 0.75rem 1rem 0.75rem 1.2rem;
   border-radius: 12px;
   font-size: 0.875rem;
   font-weight: 500;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   animation: slideInRight 0.3s ease;
   max-width: 360px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  pointer-events: all;
+  transition: bottom 0.25s ease;
+  white-space: nowrap;
 }
+
+.md-toast-close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 1.1rem;
+  line-height: 1;
+  opacity: 0.7;
+  padding: 0 0 0 0.4rem;
+}
+.md-toast-close:hover { opacity: 1; }
 
 .md-toast-success {
   background: rgba(34, 197, 94, 0.12);

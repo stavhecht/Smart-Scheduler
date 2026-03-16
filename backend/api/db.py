@@ -1,15 +1,40 @@
 from decimal import Decimal
 from typing import List, Optional, Any, Dict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import uuid
 import json
 import os
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    ZoneInfo = None  # Python < 3.9 fallback
 
 import models
 from fairness_engine import engine as fairness_engine
 
 import boto3
 from boto3.dynamodb.conditions import Key, Attr
+
+# ---------------------------------------------------------------------------
+# Timezone helpers
+# ---------------------------------------------------------------------------
+
+def get_tz_offset_hours(tz_name: str) -> float:
+    """
+    Return the current UTC offset in hours for a given IANA timezone name.
+    Uses stdlib zoneinfo (Python 3.9+). Falls back to 0.0 on error.
+    Example: "Asia/Jerusalem" → 3.0 (during summer), 2.0 (winter)
+    """
+    if not tz_name or not ZoneInfo:
+        return 0.0
+    try:
+        tz = ZoneInfo(tz_name)
+        now_local = datetime.now(tz)
+        offset = now_local.utcoffset()
+        return offset.total_seconds() / 3600.0 if offset else 0.0
+    except Exception:
+        return 0.0
+
 
 # --- DynamoDB connection ---
 DYNAMODB_TABLE_NAME = os.environ.get("TABLE_NAME", "SmartScheduler_V1")
@@ -457,15 +482,20 @@ def create_meeting_with_simulation(req_data: models.MeetingCreateSchema, creator
     creator_state_data = _get_item(f"USER#{creator_id}", "FAIRNESS")
     participant_states = [creator_state_data] if creator_state_data else []
 
-    # Generate candidate slots
+    # Resolve creator's timezone offset for accurate slot scoring
+    creator_profile = _get_item(f"USER#{creator_id}", "PROFILE")
+    creator_tz = (creator_profile or {}).get("timezone", "UTC")
+    tz_offset = get_tz_offset_hours(creator_tz)
+
+    # Generate candidate slots aligned to creator's local working hours
     candidates = fairness_engine.generate_candidate_slots(
-        meeting.dateRangeStart, meeting.dateRangeEnd
+        meeting.dateRangeStart, meeting.dateRangeEnd, tz_offset_hours=tz_offset
     )
 
     # Score each candidate
     all_scored = []
     for slot_dt in candidates:
-        result = fairness_engine.score_time_slot(slot_dt, participant_states, meeting.durationMinutes)
+        result = fairness_engine.score_time_slot(slot_dt, participant_states, meeting.durationMinutes, tz_offset_hours=tz_offset)
         end_dt = slot_dt + timedelta(minutes=meeting.durationMinutes)
         all_scored.append({
             "startIso": slot_dt.isoformat(),
@@ -532,7 +562,8 @@ def sfn_generate_slots(payload: dict) -> dict:
     date_end = datetime.fromisoformat(payload['date_range_end'])
     duration_minutes = payload.get('duration_minutes', 60)
 
-    candidates = fairness_engine.generate_candidate_slots(date_start, date_end)
+    tz_offset = float(payload.get('tz_offset_hours', 0.0))
+    candidates = fairness_engine.generate_candidate_slots(date_start, date_end, tz_offset_hours=tz_offset)
     end_delta = timedelta(minutes=duration_minutes)
 
     payload['candidate_slots'] = [
@@ -555,10 +586,11 @@ def sfn_calculate_fairness(payload: dict) -> dict:
     candidate_slots = payload.get('candidate_slots', [])
     duration_minutes = payload.get('duration_minutes', 60)
 
+    tz_offset = float(payload.get('tz_offset_hours', 0.0))
     scored = []
     for slot in candidate_slots:
         dt = datetime.fromisoformat(slot['startIso'])
-        result = fairness_engine.score_time_slot(dt, participant_states, duration_minutes)
+        result = fairness_engine.score_time_slot(dt, participant_states, duration_minutes, tz_offset_hours=tz_offset)
         scored.append({**slot, **result})
 
     payload['scored_slots'] = scored
