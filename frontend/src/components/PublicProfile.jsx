@@ -1,11 +1,20 @@
-import { useState } from 'react';
-import { apiPost } from '../apiClient';
+import { useState, useEffect } from 'react';
+import { apiGet, apiPost } from '../apiClient';
 import './PublicProfile.css';
 
-export default function PublicProfile({ profile, onClose }) {
+export default function PublicProfile({ profile, onClose, onScheduleWith, currentUserId }) {
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
   const [toast, setToast] = useState(null); // { msg, type: 'success'|'error' }
+  const [sharedMeetings, setSharedMeetings] = useState(null);
+
+  useEffect(() => {
+    if (profile?.id && currentUserId && profile.id !== currentUserId) {
+      apiGet(`/api/users/${profile.id}/shared_meetings`)
+        .then(setSharedMeetings)
+        .catch(() => {});
+    }
+  }, [profile?.id, currentUserId]);
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
@@ -63,6 +72,16 @@ export default function PublicProfile({ profile, onClose }) {
               <span className="pp-role">{profile.role || 'Teammate'}</span>
               <span className="pp-dept">{profile.department || 'Smart Co.'}</span>
             </div>
+            {(profile.status || profile.statusMessage) && (
+              <div style={{ fontSize: '0.78rem', color: 'rgba(255,255,255,0.5)', marginTop: '0.4rem' }}>
+                {profile.status || profile.statusMessage}
+              </div>
+            )}
+            {sharedMeetings?.count > 0 && (
+              <div style={{ fontSize: '0.74rem', color: 'var(--accent-color)', marginTop: '0.3rem' }}>
+                🤝 {sharedMeetings.count} meeting{sharedMeetings.count !== 1 ? 's' : ''} together
+              </div>
+            )}
           </div>
           <div className="pp-gauge">
              <div className="pp-gauge-val" style={{ color: scoreColor }}>{score}</div>
@@ -93,6 +112,14 @@ export default function PublicProfile({ profile, onClose }) {
               <button className="pp-action-btn" onClick={() => handleSendMessage('nudge')} disabled={sending}>
                 🔔 Nudge
               </button>
+              {onScheduleWith && (
+                <button
+                  className="pp-action-btn pp-schedule-btn"
+                  onClick={() => { onClose(); onScheduleWith(profile.email); }}
+                >
+                  📅 Schedule Meeting
+                </button>
+              )}
             </div>
           </section>
 

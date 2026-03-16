@@ -87,6 +87,14 @@ export async function apiGet(path) {
 
     if (path === '/api/profile/messages') return apiProxy('get_messages');
 
+    if (path === '/api/profile/stats') return apiProxy('profile_stats');
+
+    if (path === '/api/users') return apiProxy('list_users');
+
+    // /api/users/<userId>/shared_meetings
+    const sharedMatch = path.match(/^\/api\/users\/([^/]+)\/shared_meetings$/);
+    if (sharedMatch) return apiProxy(`shared_meetings:${sharedMatch[1]}`);
+
     // /api/profile/<userId>
     const publicProfileMatch = path.match(/^\/api\/profile\/([^/]+)$/);
     if (publicProfileMatch) return apiProxy(`get_public_profile:${publicProfileMatch[1]}`);

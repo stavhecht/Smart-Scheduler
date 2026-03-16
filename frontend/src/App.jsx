@@ -4,6 +4,7 @@ import './App.css'
 import MeetingDashboard from './components/MeetingDashboard';
 import CalendarView from './components/CalendarView';
 import ProfileView from './components/ProfileView';
+import PeopleView from './components/PeopleView';
 import PublicProfile from './components/PublicProfile';
 import { apiGet, apiPost } from './apiClient';
 
@@ -26,6 +27,8 @@ function AppContent() {
   const [calendarToast, setCalendarToast] = useState(null); // { type: 'success'|'error'|'info', msg } | null
   const [targetProfile, setTargetProfile] = useState(null); // for viewing other user profiles
   const [sidebarOpen, setSidebarOpen]     = useState(false);
+  const [unreadCount, setUnreadCount]     = useState(0);
+  const [meetingPrefill, setMeetingPrefill] = useState(null); // email string to prefill
   // helper so child components can still call setActiveView('meetings') etc.
   const setActiveView = (view) => navigate(`/${view === 'dashboard' ? '' : view}`);
   const oauthProcessed = useRef(false);
@@ -34,9 +37,15 @@ function AppContent() {
   // Capture OAuth callback params from URL on component mount (before they disappear).
   // State initializer runs only once — safe to use window.location here.
   const [oauthPending] = useState(() => {
-    const params = new URLSearchParams(window.location.search);
-    const code   = params.get('code');
-    const state  = params.get('state');
+    const params       = new URLSearchParams(window.location.search);
+    const oauthError   = params.get('error');
+    const oauthErrDesc = params.get('error_description');
+    if (oauthError) {
+      window.history.replaceState({}, '', window.location.pathname);
+      return { oauthError, oauthErrDesc };
+    }
+    const code  = params.get('code');
+    const state = params.get('state');
     if (code && state) {
       const provider = state.split(':')[0];
       if (provider === 'google' || provider === 'microsoft') {
@@ -55,7 +64,12 @@ function AppContent() {
 
     const run = async () => {
       // Process OAuth callback first (if the user just came back from Google/Microsoft)
-      if (oauthPending && !oauthProcessed.current) {
+      if (oauthPending?.oauthError && !oauthProcessed.current) {
+        oauthProcessed.current = true;
+        const desc = oauthPending.oauthErrDesc?.replace(/\+/g, ' ') || oauthPending.oauthError;
+        showCalendarToast('error', `Calendar connection failed: ${desc}`);
+      }
+      if (oauthPending && !oauthPending.oauthError && !oauthProcessed.current) {
         oauthProcessed.current = true;
         try {
           await apiPost('/api/calendar/callback', oauthPending);
@@ -171,6 +185,12 @@ function AppContent() {
     }
   };
 
+  /** Navigate to /meetings with a pre-filled participant email. */
+  const handleScheduleWith = (email) => {
+    setMeetingPrefill(email);
+    navigate('/meetings');
+  };
+
   /** Open another user's public profile. */
   const handleParticipantClick = async (userId) => {
     if (userId === profile?.id) {
@@ -196,7 +216,8 @@ function AppContent() {
     { id: 'dashboard', path: '/',          emoji: '🏠', label: 'Dashboard' },
     { id: 'calendar',  path: '/calendar',  emoji: '🗓️', label: 'Calendar'  },
     { id: 'meetings',  path: '/meetings',  emoji: '📋', label: 'Meetings', badge: meetingsBadge },
-    { id: 'profile',   path: '/profile',   emoji: '👤', label: 'Profile'   },
+    { id: 'people',    path: '/people',    emoji: '👥', label: 'People'    },
+    { id: 'profile',   path: '/profile',   emoji: '👤', label: 'Profile',  badge: unreadCount || null },
   ];
 
   const displayName = profile?.name || profile?.displayName || '';
@@ -343,6 +364,18 @@ function AppContent() {
                   currentUserId={profile.id}
                   onParticipantClick={handleParticipantClick}
                   lastRefreshed={lastRefreshed}
+                  prefillEmail={meetingPrefill}
+                  onPrefillConsumed={() => setMeetingPrefill(null)}
+                />
+              </div>
+            } />
+
+            <Route path="/people" element={
+              <div className="view-wrap">
+                <PeopleView
+                  meetings={meetings}
+                  onScheduleWith={handleScheduleWith}
+                  onViewProfile={(userId) => handleParticipantClick(userId)}
                 />
               </div>
             } />
@@ -360,6 +393,7 @@ function AppContent() {
                   onCalendarConnect={handleCalendarConnect}
                   onCalendarDisconnect={handleCalendarDisconnect}
                   onProfileUpdate={setProfile}
+                  onUnreadCountChange={setUnreadCount}
                 />
               </div>
             } />
@@ -372,9 +406,11 @@ function AppContent() {
       
       {/* ── Public Profile Modal (Global) ── */}
       {targetProfile && (
-        <PublicProfile 
-          profile={targetProfile} 
-          onClose={() => setTargetProfile(null)} 
+        <PublicProfile
+          profile={targetProfile}
+          onClose={() => setTargetProfile(null)}
+          onScheduleWith={handleScheduleWith}
+          currentUserId={profile?.id}
         />
       )}
     </div>

@@ -93,6 +93,11 @@
   background: rgba(56, 189, 248, 0.12);
   color: var(--accent-color);
   font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--accent-color);
+}
+
+.nav-item.active .nav-emoji {
+  filter: drop-shadow(0 0 4px rgba(56, 189, 248, 0.6));
 }
 
 .nav-item.nav-disabled {

@@ -1,6 +1,35 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { apiGet, apiPost, apiUpdateIcsUrl } from '../apiClient';
 import './ProfileView.css';
+
+const STATUS_PRESETS = [
+  "🎯 Focused", "🤝 Open to connect", "🔴 Busy",
+  "✈️ Travelling", "🌱 Learning", "💡 Thinking", "🎉 Available",
+];
+
+function getStatusDotColor(msg) {
+  if (!msg) return '#6b7280';
+  const m = msg.toLowerCase();
+  if (m.includes('available') || m.includes('open') || m.includes('learning') || m.includes('thinking')) return '#22c55e';
+  if (m.includes('busy') || m.includes('travelling') || m.includes('focused')) return '#f59e0b';
+  return '#6b7280';
+}
+
+function computeCompleteness(p) {
+  let score = 0;
+  if (p.name || p.displayName) score += 20;
+  if (p.bio) score += 20;
+  if (p.role) score += 15;
+  if (p.department) score += 15;
+  if ((p.skills || []).length > 0) score += 15;
+  if (p.statusMessage || p.status_message) score += 15;
+  return score;
+}
+
+function parseHour(timeStr) {
+  if (!timeStr) return 0;
+  return parseInt(timeStr.split(':')[0], 10) || 0;
+}
 
 /* ─────────────────────────────────────────────
    ProfileView
@@ -11,18 +40,20 @@ import './ProfileView.css';
      onCalendarConnect     – fn(provider) → initiates OAuth flow
      onCalendarDisconnect  – fn(provider) → disconnects calendar
 ───────────────────────────────────────────── */
-export default function ProfileView({ 
-  profile: initialProfile, 
-  meetings, 
-  calendarStatus, 
-  onCalendarConnect, 
+export default function ProfileView({
+  profile: initialProfile,
+  meetings,
+  calendarStatus,
+  onCalendarConnect,
   onCalendarDisconnect,
-  onProfileUpdate
+  onProfileUpdate,
+  onUnreadCountChange,
 }) {
   const [profile, setProfile] = useState(initialProfile);
   const [activeTab, setActiveTab] = useState('overview'); // overview | inbox | insights
   const [isEditing, setIsEditing] = useState(false);
   const [tempProfile, setTempProfile] = useState(initialProfile);
+  const [skillInput, setSkillInput] = useState('');
   const [messages, setMessages] = useState([]);
   const [msgLoading, setMsgLoading] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
@@ -60,6 +91,8 @@ export default function ProfileView({
     try {
       const msgs = await apiGet('/api/profile/messages');
       setMessages(msgs);
+      const unread = (msgs || []).filter(m => !m.isRead).length;
+      if (onUnreadCountChange) onUnreadCountChange(unread);
     } catch (err) {
       console.error('Failed to fetch messages:', err);
     } finally {
@@ -124,6 +157,30 @@ export default function ProfileView({
     ? pvDisplayName.split(' ').filter(Boolean).map(n => n[0]).join('').slice(0, 2).toUpperCase()
     : '??';
 
+  const completeness = computeCompleteness(profile);
+  const statusMsg = profile.statusMessage || profile.status_message || '';
+  const statusDotColor = getStatusDotColor(statusMsg);
+  const workingHours = profile.workingHours || { start: '09:00', end: '18:00' };
+  const whStartPct = (parseHour(workingHours.start) / 24) * 100;
+  const whEndPct   = (parseHour(workingHours.end)   / 24) * 100;
+
+  const handleSkillKeyDown = (e) => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      const val = skillInput.trim().replace(/,$/, '');
+      if (val && !(tempProfile.skills || []).includes(val)) {
+        setTempProfile(p => ({ ...p, skills: [...(p.skills || []), val] }));
+      }
+      setSkillInput('');
+    }
+    if (e.key === 'Backspace' && !skillInput && (tempProfile.skills || []).length > 0) {
+      setTempProfile(p => ({ ...p, skills: (p.skills || []).slice(0, -1) }));
+    }
+  };
+
+  const removeSkill = (skill) =>
+    setTempProfile(p => ({ ...p, skills: (p.skills || []).filter(s => s !== skill) }));
+
   return (
     <div className="pv-wrap">
 
@@ -172,64 +229,104 @@ export default function ProfileView({
         <>
           {/* ── Hero card ── */}
           <div className="pv-hero">
-            <div className="pv-avatar">{initials}</div>
+            <div className="pv-avatar-wrap">
+              <div className="pv-avatar">{initials}</div>
+              <span className="pv-status-dot" style={{ background: statusDotColor }} title={statusMsg || 'No status'} />
+            </div>
 
             <div className="pv-info">
               {isEditing ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  <input 
+                  <input
                     className="pv-input-name"
-                    value={tempProfile.name || ''} 
-                    onChange={e => setTempProfile({...tempProfile, name: e.target.value, displayName: e.target.value})}
+                    value={tempProfile.name || tempProfile.displayName || ''}
+                    onChange={e => setTempProfile({ ...tempProfile, name: e.target.value, displayName: e.target.value })}
                     placeholder="Display Name"
                   />
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <input 
+                    <input
                       className="pv-input-sub"
-                      value={tempProfile.role || ''} 
-                      onChange={e => setTempProfile({...tempProfile, role: e.target.value})}
+                      value={tempProfile.role || ''}
+                      onChange={e => setTempProfile({ ...tempProfile, role: e.target.value })}
                       placeholder="Role (e.g. Lead Dev)"
                     />
-                    <input 
+                    <input
                       className="pv-input-sub"
-                      value={tempProfile.department || ''} 
-                      onChange={e => setTempProfile({...tempProfile, department: e.target.value})}
+                      value={tempProfile.department || ''}
+                      onChange={e => setTempProfile({ ...tempProfile, department: e.target.value })}
                       placeholder="Department"
+                    />
+                  </div>
+                  {/* Status message with presets */}
+                  <div>
+                    <div className="pv-status-presets">
+                      {STATUS_PRESETS.map(p => (
+                        <button
+                          key={p}
+                          type="button"
+                          className={`pv-preset-chip ${(tempProfile.statusMessage || tempProfile.status_message) === p ? 'active' : ''}`}
+                          onClick={() => setTempProfile(t => ({ ...t, statusMessage: p, status_message: p }))}
+                        >{p}</button>
+                      ))}
+                    </div>
+                    <input
+                      className="pv-input-sub"
+                      style={{ marginTop: '0.4rem' }}
+                      value={tempProfile.statusMessage || tempProfile.status_message || ''}
+                      onChange={e => setTempProfile(t => ({ ...t, statusMessage: e.target.value, status_message: e.target.value }))}
+                      placeholder="Or type a custom status…"
                     />
                   </div>
                 </div>
               ) : (
                 <>
                   <h2 className="pv-name">{profile.displayName || profile.name}</h2>
-                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.4rem' }}>
                     <span className="pv-role-chip">{profile.role || 'Professional'}</span>
                     <span className="pv-dept-chip">{profile.department || 'General'}</span>
                   </div>
+                  {statusMsg && (
+                    <div style={{ fontSize: '0.82rem', color: 'rgba(255,255,255,0.55)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: statusDotColor, display: 'inline-block', flexShrink: 0 }} />
+                      {statusMsg}
+                    </div>
+                  )}
                 </>
               )}
-              
-              <div className="pv-meta">
-                <span>📧 {profile.email}</span>
-                <span>🌍 {profile.timezone || 'Asia/Jerusalem'}</span>
-                <span>💬 "{profile.status_message || 'Focused & Ready'}"</span>
-              </div>
+
+              {!isEditing && (
+                <div className="pv-meta">
+                  <span>📧 {profile.email}</span>
+                  <span>🌍 {profile.timezone || 'Asia/Jerusalem'}</span>
+                </div>
+              )}
             </div>
 
             <div className="pv-actions">
               {isEditing ? (
                 <>
-                  <button className="pv-btn secondary" onClick={() => setIsEditing(false)}>Cancel</button>
+                  <button className="pv-btn secondary" onClick={() => { setIsEditing(false); setSkillInput(''); }}>Cancel</button>
                   <button className="pv-btn primary" onClick={handleSaveProfile} disabled={isUpdating}>
                     {isUpdating ? 'Saving...' : 'Save Changes'}
                   </button>
                 </>
               ) : (
-                <button className="pv-btn ghost" onClick={() => { setTempProfile(profile); setIsEditing(true); setSaveError(''); }}>
+                <button className="pv-btn ghost" onClick={() => { setTempProfile(profile); setIsEditing(true); setSaveError(''); setSkillInput(''); }}>
                   ✏️ Edit Profile
                 </button>
               )}
               {saveError && <p style={{ color: '#f87171', fontSize: '0.8rem', marginTop: '0.5rem' }}>{saveError}</p>}
             </div>
+          </div>
+
+          {/* ── Profile Completeness Bar ── */}
+          <div className="pv-completeness">
+            <div className="pv-completeness-track">
+              <div className="pv-completeness-fill" style={{ width: `${completeness}%` }} />
+            </div>
+            <span className="pv-completeness-label">
+              {completeness >= 100 ? 'Profile complete ✓' : `Profile ${completeness}% complete`}
+            </span>
           </div>
 
           <div className="pv-detail-grid">
@@ -238,32 +335,76 @@ export default function ProfileView({
               <h3>📝 Bio & Expertise</h3>
               {isEditing ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                  <textarea 
+                  <textarea
                     className="pv-textarea"
                     value={tempProfile.bio || ''}
-                    onChange={e => setTempProfile({...tempProfile, bio: e.target.value})}
+                    onChange={e => setTempProfile({ ...tempProfile, bio: e.target.value })}
                     placeholder="Tell us about yourself..."
                   />
                   <div>
                     <label style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.4)', marginBottom: '0.4rem', display: 'block' }}>
-                      SKILLS (Comma separated)
+                      SKILLS — press Enter or comma to add
                     </label>
-                    <input 
-                      className="pv-input-sub"
-                      value={(tempProfile.skills || []).join(', ')}
-                      onChange={e => setTempProfile({...tempProfile, skills: e.target.value.split(',').map(s => s.trim())})}
-                      placeholder="React, UI Design, Fairness..."
-                    />
+                    <div className="skill-chips-wrap">
+                      {(tempProfile.skills || []).filter(Boolean).map(s => (
+                        <span key={s} className="skill-chip">
+                          {s}
+                          <button type="button" className="skill-chip-x" onClick={() => removeSkill(s)}>×</button>
+                        </span>
+                      ))}
+                      <input
+                        className="skill-chip-input"
+                        value={skillInput}
+                        onChange={e => setSkillInput(e.target.value)}
+                        onKeyDown={handleSkillKeyDown}
+                        placeholder={!(tempProfile.skills || []).length ? 'React, Design…' : ''}
+                      />
+                    </div>
+                  </div>
+                  {/* Working hours */}
+                  <div>
+                    <label style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.4)', marginBottom: '0.4rem', display: 'block' }}>WORKING HOURS</label>
+                    <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                      <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Start</label>
+                      <input
+                        type="time"
+                        className="pv-input-sub"
+                        style={{ width: 'auto' }}
+                        value={(tempProfile.workingHours || workingHours).start}
+                        onChange={e => setTempProfile(p => ({ ...p, workingHours: { ...(p.workingHours || workingHours), start: e.target.value } }))}
+                      />
+                      <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>End</label>
+                      <input
+                        type="time"
+                        className="pv-input-sub"
+                        style={{ width: 'auto' }}
+                        value={(tempProfile.workingHours || workingHours).end}
+                        onChange={e => setTempProfile(p => ({ ...p, workingHours: { ...(p.workingHours || workingHours), end: e.target.value } }))}
+                      />
+                    </div>
                   </div>
                 </div>
               ) : (
                 <>
                   <p className="pv-bio">{profile.bio || "No bio yet. Click Edit to add one!"}</p>
                   <div className="pv-skills">
-                    {(profile.skills || []).map(skill => (
+                    {(profile.skills || []).filter(Boolean).map(skill => (
                       <span key={skill} className="pv-skill-tag">{skill}</span>
                     ))}
                     {(profile.skills || []).length === 0 && <span className="empty-hint">No skills listed</span>}
+                  </div>
+                  {/* Working hours bar */}
+                  <div style={{ marginTop: '1.25rem' }}>
+                    <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.35)', marginBottom: '0.4rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Working Hours</div>
+                    <div className="wh-track">
+                      <div
+                        className="wh-fill"
+                        style={{ left: `${whStartPct}%`, width: `${whEndPct - whStartPct}%` }}
+                      />
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.3rem' }}>
+                      {workingHours.start} – {workingHours.end}
+                    </div>
                   </div>
                 </>
               )}
@@ -330,11 +471,11 @@ export default function ProfileView({
 
           {/* Stats Bar */}
           <div className="pv-stats">
-            <StatItem icon="📅" val={total} label="Total" />
-            <StatItem icon="✅" val={confirmed} label="Confirmed" />
-            <StatItem icon="🎯" val={organized} label="Organized" />
-            <StatItem icon="📨" val={invited} label="Invited" />
-            <StatItem icon="📊" val={thisWeek} label="This Week" />
+            <StatItem icon="📅" val={total}     label="Total"     color="var(--accent-color)" />
+            <StatItem icon="✅" val={confirmed}  label="Confirmed" color="#22c55e" />
+            <StatItem icon="🎯" val={organized}  label="Organized" color="#818cf8" />
+            <StatItem icon="📨" val={invited}    label="Invited"   color="#f59e0b" />
+            <StatItem icon="📊" val={thisWeek}   label="This Week" color="var(--accent-color)" />
           </div>
         </>
       )}
@@ -464,11 +605,11 @@ function CalendarRow({ brand, name, status, onConnect, onDisconnect }) {
   );
 }
 
-function StatItem({ icon, val, label }) {
+function StatItem({ icon, val, label, color }) {
   return (
     <div className="pv-stat">
       <span className="pv-stat-icon">{icon}</span>
-      <span className="pv-stat-val">{val}</span>
+      <span className="pv-stat-val" style={{ color: color || 'white' }}>{val}</span>
       <span className="pv-stat-label">{label}</span>
     </div>
   );

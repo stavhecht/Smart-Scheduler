@@ -227,19 +227,169 @@
   flex-wrap: wrap;
 }
 
+.pv-avatar-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
 .pv-avatar {
-  width: 80px;
-  height: 80px;
+  width: 96px;
+  height: 96px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #38bdf8, #818cf8);
+  background: linear-gradient(135deg, #1e40af, #7e22ce);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.8rem;
+  font-size: 2rem;
   font-weight: 800;
-  color: #000;
+  color: #fff;
   flex-shrink: 0;
-  box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.15), 0 8px 24px rgba(56, 189, 248, 0.2);
+  box-shadow:
+    0 0 0 3px rgba(56, 189, 248, 0.4),
+    0 0 0 6px rgba(56, 189, 248, 0.1),
+    0 8px 24px rgba(56, 189, 248, 0.2);
+}
+
+.pv-status-dot {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #1e293b;
+}
+
+/* ── Completeness bar ── */
+.pv-completeness {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.pv-completeness-track {
+  flex: 1;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.pv-completeness-fill {
+  height: 100%;
+  background: linear-gradient(to right, #38bdf8, #22c55e);
+  border-radius: 2px;
+  transition: width 0.8s ease;
+}
+
+.pv-completeness-label {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* ── Status presets ── */
+.pv-status-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.4rem;
+}
+
+.pv-preset-chip {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.6);
+  padding: 0.22rem 0.6rem;
+  border-radius: 20px;
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+
+.pv-preset-chip:hover,
+.pv-preset-chip.active {
+  background: rgba(56, 189, 248, 0.12);
+  border-color: rgba(56, 189, 248, 0.3);
+  color: var(--accent-color);
+}
+
+/* ── Skill chips ── */
+.skill-chips-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 0.45rem 0.6rem;
+  min-height: 40px;
+  align-items: center;
+  cursor: text;
+}
+
+.skill-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  color: var(--accent-color);
+  padding: 0.18rem 0.55rem;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.skill-chip-x {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 0;
+  opacity: 0.6;
+  transition: opacity 0.15s, color 0.15s;
+  font-family: inherit;
+}
+
+.skill-chip-x:hover {
+  opacity: 1;
+  color: #f87171;
+}
+
+.skill-chip-input {
+  background: none;
+  border: none;
+  outline: none;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.8rem;
+  min-width: 80px;
+  font-family: inherit;
+  flex: 1;
+}
+
+.skill-chip-input::placeholder {
+  color: rgba(255, 255, 255, 0.2);
+}
+
+/* ── Working hours bar ── */
+.wh-track {
+  position: relative;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.wh-fill {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  background: linear-gradient(to right, rgba(56, 189, 248, 0.6), rgba(129, 140, 248, 0.6));
+  border-radius: 4px;
 }
 
 .pv-info {

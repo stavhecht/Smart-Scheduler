@@ -15,7 +15,11 @@ const validateEmails = (str) => {
      onRefresh     – fn to reload meetings
      currentUserId – authenticated user's ID (profile.id)
 ───────────────────────────────────────────── */
-export default function MeetingDashboard({ meetings, onRefresh, currentUserId, onParticipantClick, lastRefreshed }) {
+const getInitials = (name) => name
+  ? name.split(' ').filter(Boolean).map(n => n[0]).join('').slice(0, 2).toUpperCase()
+  : '?';
+
+export default function MeetingDashboard({ meetings, onRefresh, currentUserId, onParticipantClick, lastRefreshed, prefillEmail, onPrefillConsumed }) {
   const [expandedId, setExpandedId]             = useState(null);
   const [loading, setLoading]                   = useState(false);
   const [showCreate, setShowCreate]             = useState(false);
@@ -66,6 +70,15 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
   const needsAction = invitations.filter(
     m => m.status === 'confirmed' && !(m.acceptedBy || []).includes(currentUserId)
   ).length;
+
+  /* ── Pre-fill from People / PublicProfile "Schedule with them" ── */
+  useEffect(() => {
+    if (prefillEmail) {
+      setNewMeeting(prev => ({ ...prev, participantEmails: prefillEmail }));
+      setShowCreate(true);
+      if (onPrefillConsumed) onPrefillConsumed();
+    }
+  }, [prefillEmail]);
 
   /* ── Keyboard: Escape closes open modals ── */
   useEffect(() => {
@@ -587,7 +600,10 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
         {invitations.length === 0 ? (
           <div className="empty-state empty-state-sm">
             <span className="empty-icon">✅</span>
-            <p>You're all caught up! No pending invitations.</p>
+            <div>
+              <p>You're all caught up!</p>
+              <p style={{ fontSize: '0.74rem', marginTop: '0.2rem', opacity: 0.6 }}>No pending invitations right now.</p>
+            </div>
           </div>
         ) : (
           <div className="cards-list">
@@ -621,9 +637,10 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
 
         {myActiveMeetings.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-icon">📅</div>
+            <div className="empty-icon" style={{ fontSize: '3.5rem' }}>📅</div>
             <p>No meetings yet. Create one to get started!</p>
-            <button className="btn-new-sm" onClick={() => setShowCreate(true)}>
+            <p style={{ fontSize: '0.78rem', opacity: 0.5, marginTop: '-0.75rem' }}>The AI will optimise slots based on everyone's fairness score.</p>
+            <button className="btn-new-sm btn-new-sm-pulse" onClick={() => setShowCreate(true)}>
               + Schedule a Meeting
             </button>
           </div>
@@ -721,6 +738,10 @@ function MeetingCard({
   const participantCount = (meeting.participantUserIds || []).length;
   const participantNames = meeting.participantNames || {};
 
+  // Avatar stack for header
+  const topParticipants = (meeting.participantUserIds || []).slice(0, 3);
+  const overflowCount   = Math.max(0, (meeting.participantUserIds || []).length - 3);
+
   return (
     <div className={`mc ${meeting.userRole} ${isConfirmed ? 'confirmed' : 'pending'} ${needsAccept ? 'needs-action' : ''}`}>
 
@@ -736,7 +757,19 @@ function MeetingCard({
           </div>
           <div className="mc-meta">
             <span>⏱ {meeting.durationMinutes}m</span>
-            {participantCount > 0 && <span>👥 {participantCount + 1} people</span>}
+            {participantCount > 0 && (
+              <div className="participant-avatars">
+                {topParticipants.map(pid => {
+                  const nameInfo = participantNames[pid];
+                  return (
+                    <div key={pid} className="p-avatar-chip" title={nameInfo?.name || pid}>
+                      {getInitials(nameInfo?.name || '')}
+                    </div>
+                  );
+                })}
+                {overflowCount > 0 && <div className="p-avatar-overflow">+{overflowCount}</div>}
+              </div>
+            )}
             {isConfirmed && meeting.selectedSlotStart && (
               <span className="mc-confirmed-time">
                 📅 {fmtFull(meeting.selectedSlotStart)}
@@ -819,36 +852,53 @@ function MeetingCard({
       {/* Slot selection panel — organizer, pending, expanded */}
       {isExpanded && isOrganizer && !isConfirmed && (
         <div className="mc-panel slots-panel">
-          {/* AI-generated slots */}
-          {hasSlots && (
-            <>
-              <div className="panel-title">🤖 AI-Optimised Time Slots — click to confirm</div>
-              <div className="slots-grid">
-                {meeting.slots.map((slot, idx) => (
-                  <div
-                    key={idx}
-                    className={`slot-card ${idx === 0 ? 'top-pick' : ''}`}
-                    onClick={() => onBook(meeting.requestId, slot)}
-                  >
-                    {idx === 0 && <div className="top-badge">⭐ Best Match</div>}
-                    <div className="slot-date">{fmtDate(slot.startIso)}</div>
-                    <div className="slot-time">{fmtTime(slot.startIso)} – {fmtTime(slot.endIso)}</div>
-                    <div className="slot-score-row">
-                      <span className="slot-score-label">Fairness</span>
-                      <div className="slot-score-track">
-                        <div
-                          className="slot-score-fill"
-                          style={{ width: `${Math.min(100, Math.round(slot.score))}%` }}
-                        />
-                      </div>
-                      <span className="slot-score-val">{Math.round(slot.score)}%</span>
+          {/* AI-generated slots — grouped by day */}
+          {hasSlots && (() => {
+            const allSlots = meeting.slots;
+            // Group by day label
+            const dayGroups = allSlots.reduce((acc, slot, idx) => {
+              const day = fmtDate(slot.startIso);
+              if (!acc[day]) acc[day] = [];
+              acc[day].push({ slot, idx });
+              return acc;
+            }, {});
+            return (
+              <>
+                <div className="panel-title">🤖 AI-Optimised Time Slots — click to confirm</div>
+                {Object.entries(dayGroups).map(([day, items]) => (
+                  <div key={day}>
+                    <div className="slot-day-heading">{day}</div>
+                    <div className="slots-grid">
+                      {items.map(({ slot, idx }) => {
+                        const sc = Math.round(slot.score);
+                        const borderColor = sc >= 80 ? '#22c55e' : sc >= 60 ? '#f59e0b' : '#ef4444';
+                        const isTop = idx === 0;
+                        return (
+                          <div
+                            key={idx}
+                            className={`slot-card ${isTop ? 'top-pick' : ''}`}
+                            style={{ borderLeft: `3px solid ${borderColor}` }}
+                            onClick={() => onBook(meeting.requestId, slot)}
+                            title={slot.explanation}
+                          >
+                            {isTop && <div className="top-badge">⭐ Best Match</div>}
+                            <div className="slot-time">{fmtTime(slot.startIso)} – {fmtTime(slot.endIso)}</div>
+                            <div className="slot-score-row">
+                              <span className="slot-score-label">Fairness</span>
+                              <div className="slot-score-track">
+                                <div className="slot-score-fill" style={{ width: `${Math.min(100, sc)}%`, background: borderColor }} />
+                              </div>
+                              <span className="slot-score-val" style={{ color: borderColor }}>{sc}%</span>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                    <div className="slot-explain">"{slot.explanation}"</div>
                   </div>
                 ))}
-              </div>
-            </>
-          )}
+              </>
+            );
+          })()}
 
           {/* Custom time picker */}
           {onCustomPickerChange && (
@@ -921,7 +971,6 @@ function MeetingCard({
               const declined  = (meeting.declinedBy || []).includes(pid);
               const nameInfo  = participantNames[pid];
               const display   = nameInfo?.name || pid;
-              const dotClass  = accepted ? 'accepted' : declined ? 'declined' : 'pending';
               const statusClass = accepted ? 'confirmed' : declined ? 'declined' : 'pending';
               const statusLabel = accepted ? '✓ Accepted' : declined ? '✗ Declined' : '⏳ Pending';
               return (
@@ -930,7 +979,9 @@ function MeetingCard({
                   className="participant-row clickable"
                   onClick={(e) => { e.stopPropagation(); onParticipantClick?.(pid); }}
                 >
-                  <span className={`p-dot ${dotClass}`} />
+                  <div className="p-avatar-sm" title={nameInfo?.email || pid}>
+                    {getInitials(display)}
+                  </div>
                   <span className="p-name" title={nameInfo?.email || pid}>{display}</span>
                   <span className={`p-status ${statusClass}`}>{statusLabel}</span>
                 </div>

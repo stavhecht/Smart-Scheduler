@@ -749,5 +749,37 @@ def init_db():
     })
 
 
+# ---------------------------------------------------------------------------
+# People / Team directory
+# ---------------------------------------------------------------------------
+
+def get_all_users(exclude_user_id: str) -> list:
+    """Fetch all user profiles excluding the calling user. Cap at 50."""
+    all_profiles = _paginate_scan(FilterExpression=Attr('SK').eq('PROFILE'))
+    result = []
+    for p in all_profiles:
+        uid = p.get('userId', '')
+        if uid and uid != exclude_user_id:
+            fairness = _get_item(f"USER#{uid}", "FAIRNESS")
+            p['fairness_score'] = float(fairness.get('fairnessScore', 100)) if fairness else 100.0
+            result.append(p)
+        if len(result) >= 50:
+            break
+    return result
+
+
+def get_shared_meetings(user_a_id: str, user_b_id: str) -> dict:
+    """Find meetings shared between two users via participation index."""
+    a_parts = {item.get('meetingId') for item in _query_begins_with(f"USER#{user_a_id}", "PART#") if item.get('meetingId')}
+    b_parts = {item.get('meetingId') for item in _query_begins_with(f"USER#{user_b_id}", "PART#") if item.get('meetingId')}
+    shared_ids = a_parts & b_parts
+    recent_titles = []
+    for mid in list(shared_ids)[:5]:
+        m = _get_item(f"MEET#{mid}", "META")
+        if m and m.get('status') == 'confirmed':
+            recent_titles.append(m.get('title', ''))
+    return {'count': len(shared_ids), 'recentTitles': recent_titles[:3]}
+
+
 if os.environ.get("SEED_DEMO_DATA") == "true":
     init_db()

@@ -196,6 +196,8 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
                     "department":     profile.department,
                     "skills":         profile.skills,
                     "status_message": profile.statusMessage,
+                    "statusMessage":  profile.statusMessage,
+                    "workingHours":   profile.workingHours,
                     "fairness_score": float(fairness.fairnessScore) if fairness else 100.0,
                     "details": {
                         "meetings_this_week":      metrics.get("meetings_this_week", 0),
@@ -816,6 +818,42 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
             provider = action.split(":", 1)[1]
             db.delete_oauth_tokens(user_id, provider)
             return {"status": "success", "provider": provider, "connected": False}
+
+        # ── profile_stats ─────────────────────────────────────────────────────
+        if action == "profile_stats":
+            try:
+                return db.get_user_stats(user_id)
+            except Exception as exc:
+                return {}
+
+        # ── list_users ────────────────────────────────────────────────────────
+        if action == "list_users":
+            try:
+                users = db.get_all_users(user_id)
+                return [
+                    {
+                        "id":            u.get('userId', ''),
+                        "name":          u.get('displayName', ''),
+                        "email":         u.get('email', ''),
+                        "role":          u.get('role', ''),
+                        "department":    u.get('department', ''),
+                        "fairness_score": u.get('fairness_score', 100.0),
+                        "skills":        u.get('skills', []),
+                        "statusMessage": u.get('statusMessage', ''),
+                    }
+                    for u in users
+                ]
+            except Exception as exc:
+                return []
+
+        # ── shared_meetings:<target_id> ───────────────────────────────────────
+        if action.startswith("shared_meetings:"):
+            target_id = action.split(":", 1)[1]
+            try:
+                result = db.get_shared_meetings(user_id, target_id)
+                return result
+            except Exception:
+                return {"count": 0, "recentTitles": []}
 
         raise HTTPException(status_code=400, detail=f"Unknown action: '{action}'")
 
