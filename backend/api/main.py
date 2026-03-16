@@ -299,10 +299,13 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
         # ── calendar_status ───────────────────────────────────────────────
         if action == "calendar_status":
             try:
-                return db.get_connected_calendars(user_id)
+                result = db.get_connected_calendars(user_id)
+                ics_url = db.get_user_ics_url(user_id)
+                result['ics'] = {'connected': bool(ics_url), 'url': ics_url}
+                return result
             except Exception as exc:
                 print(f"[health] calendar_status failed for user {user_id}: {exc}")
-                return {"google": {"connected": False, "email": ""}, "microsoft": {"connected": False, "email": ""}}
+                return {"google": {"connected": False, "email": ""}, "microsoft": {"connected": False, "email": ""}, "ics": {"connected": False, "url": ""}}
 
         # ── create_meeting ────────────────────────────────────────────────────
         if action == "create_meeting":
@@ -754,6 +757,18 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
                 return {"status": "success", "provider": "microsoft", "email": calendar_email}
 
             raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
+
+        # ── update_ics_url ────────────────────────────────────────────────────
+        if action == "update_ics_url":
+            if not data:
+                raise HTTPException(status_code=400, detail="Missing data")
+            try:
+                payload_data = json.loads(data)
+                ics_url = payload_data.get("icsUrl", "").strip()
+                db.save_user_ics_url(user_id, ics_url)
+                return {"status": "success"}
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=str(exc))
 
         # ── calendar_disconnect:google | calendar_disconnect:microsoft ─────────
         if action.startswith("calendar_disconnect:"):

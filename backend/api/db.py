@@ -424,6 +424,21 @@ def get_connected_calendars(user_id: str) -> dict:
     return result
 
 
+def get_user_ics_url(user_id: str) -> str:
+    """Returns the user's public .ics calendar feed URL, or empty string if not set."""
+    profile = _get_item(f"USER#{user_id}", "PROFILE")
+    return (profile or {}).get('icsUrl', '')
+
+
+def save_user_ics_url(user_id: str, ics_url: str):
+    """Saves the user's .ics feed URL to their profile item."""
+    profile_data = _get_item(f"USER#{user_id}", "PROFILE")
+    if not profile_data:
+        return
+    profile_data['icsUrl'] = ics_url
+    _put_item(f"USER#{user_id}", "PROFILE", profile_data)
+
+
 def save_oauth_state(user_id: str, provider: str, state: str):
     """Store a short-lived OAuth state nonce (10 min TTL)."""
     import time
@@ -492,14 +507,34 @@ def create_meeting_with_simulation(req_data: models.MeetingCreateSchema, creator
         meeting.dateRangeStart, meeting.dateRangeEnd, tz_offset_hours=tz_offset
     )
 
+    # Filter out slots that overlap with the creator's actual calendar busy times
+    try:
+        import calendar_client as _cc
+        busy_slots = _cc.get_user_busy_slots(creator_id, meeting.dateRangeStart, meeting.dateRangeEnd)
+        if busy_slots:
+            def _slot_overlaps(slot_dt):
+                slot_end = slot_dt + timedelta(minutes=meeting.durationMinutes)
+                for b in busy_slots:
+                    try:
+                        b_start = datetime.fromisoformat(b['start'].rstrip('Z'))
+                        b_end   = datetime.fromisoformat(b['end'].rstrip('Z'))
+                        if slot_dt < b_end and slot_end > b_start:
+                            return True
+                    except Exception:
+                        pass
+                return False
+            candidates = [c for c in candidates if not _slot_overlaps(c)]
+    except Exception:
+        pass  # Calendar unavailable — proceed with all candidates
+
     # Score each candidate
     all_scored = []
     for slot_dt in candidates:
         result = fairness_engine.score_time_slot(slot_dt, participant_states, meeting.durationMinutes, tz_offset_hours=tz_offset)
         end_dt = slot_dt + timedelta(minutes=meeting.durationMinutes)
         all_scored.append({
-            "startIso": slot_dt.isoformat(),
-            "endIso": end_dt.isoformat(),
+            "startIso": slot_dt.isoformat() + 'Z',
+            "endIso": end_dt.isoformat() + 'Z',
             **result
         })
 
@@ -568,8 +603,8 @@ def sfn_generate_slots(payload: dict) -> dict:
 
     payload['candidate_slots'] = [
         {
-            "startIso": dt.isoformat(),
-            "endIso": (dt + end_delta).isoformat()
+            "startIso": dt.isoformat() + 'Z',
+            "endIso": (dt + end_delta).isoformat() + 'Z',
         }
         for dt in candidates
     ]

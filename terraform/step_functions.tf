@@ -112,7 +112,7 @@ resource "aws_sfn_state_machine" "scheduler" {
   })
 
   logging_configuration {
-    level                  = "ERROR"
+    level                  = "OFF"
     include_execution_data = false
   }
 

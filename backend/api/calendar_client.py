@@ -52,6 +52,30 @@ MS_GRAPH        = 'https://graph.microsoft.com/v1.0'
 # Generic HTTP helpers
 # ---------------------------------------------------------------------------
 
+def _to_event_time(iso: str) -> dict:
+    """
+    Build the {dateTime, timeZone} dict for a calendar event body.
+    - Strings with explicit UTC info (Z suffix or +offset) are normalised to
+      'YYYY-MM-DDTHH:MM:SSZ' and paired with timeZone='UTC'.
+    - Naive strings (no timezone suffix) are assumed to be Israel local time
+      (from the frontend datetime-local input) and paired with
+      timeZone='Asia/Jerusalem'.
+    """
+    s = iso.strip()
+    has_tz = s.endswith('Z') or (len(s) > 10 and ('+' in s[10:] or s[10:].count('-') >= 1 and 'T' in s))
+    if has_tz:
+        # Normalise to Z format
+        if not s.endswith('Z'):
+            try:
+                dt = datetime.fromisoformat(s)
+                dt_utc = dt.astimezone(timezone.utc)
+                s = dt_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
+            except Exception:
+                pass
+        return {'dateTime': s, 'timeZone': 'UTC'}
+    return {'dateTime': s, 'timeZone': 'Asia/Jerusalem'}
+
+
 def _http_get(url: str, headers: dict = None) -> dict:
     req = urllib.request.Request(url, headers=headers or {})
     with urllib.request.urlopen(req, timeout=10) as resp:
@@ -185,8 +209,8 @@ def create_google_event(user_id: str, title: str, start_iso: str, end_iso: str,
     try:
         event_body = {
             'summary': title,
-            'start':   {'dateTime': start_iso, 'timeZone': 'Asia/Jerusalem'},
-            'end':     {'dateTime': end_iso,   'timeZone': 'Asia/Jerusalem'},
+            'start':   _to_event_time(start_iso),
+            'end':     _to_event_time(end_iso),
             'attendees': [{'email': e} for e in (attendee_emails or [])],
         }
         data = json.dumps(event_body).encode()
@@ -323,8 +347,8 @@ def create_microsoft_event(user_id: str, title: str, start_iso: str, end_iso: st
     try:
         event_body = {
             'subject': title,
-            'start':   {'dateTime': start_iso, 'timeZone': 'Asia/Jerusalem'},
-            'end':     {'dateTime': end_iso,   'timeZone': 'Asia/Jerusalem'},
+            'start':   _to_event_time(start_iso),
+            'end':     _to_event_time(end_iso),
             'attendees': [
                 {'emailAddress': {'address': e}, 'type': 'required'}
                 for e in (attendee_emails or [])
@@ -358,22 +382,155 @@ def delete_microsoft_event(user_id: str, event_id: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# .ics calendar feed support (no Azure/OAuth registration needed)
+# ---------------------------------------------------------------------------
+
+def _ics_prop(vevent: str, prop: str) -> str:
+    """Extract a simple property value from a VEVENT block string."""
+    for line in vevent.splitlines():
+        if line.startswith(prop + ':') or line.startswith(prop + ';'):
+            colon_idx = line.index(':')
+            return line[colon_idx + 1:].strip()
+    return ''
+
+
+def _ics_parse_dt(vevent: str, prop: str) -> Optional[datetime]:
+    """Parse a DTSTART or DTEND value from a VEVENT block into a naive UTC datetime."""
+    raw = ''
+    for line in vevent.splitlines():
+        if line.startswith(prop + ':') or line.startswith(prop + ';'):
+            colon_idx = line.index(':')
+            raw = line[colon_idx + 1:].strip()
+            break
+    if not raw:
+        return None
+    try:
+        raw = raw.rstrip('Z')
+        # DATE-only: YYYYMMDD
+        if len(raw) == 8:
+            return datetime(int(raw[:4]), int(raw[4:6]), int(raw[6:8]))
+        # DATETIME: YYYYMMDDTHHMMSS
+        clean = raw.replace('-', '').replace(':', '')
+        if 'T' in clean:
+            d, t = clean.split('T', 1)
+            return datetime(int(d[:4]), int(d[4:6]), int(d[6:8]),
+                            int(t[:2]), int(t[2:4]), int(t[4:6]) if len(t) >= 6 else 0)
+        return datetime.fromisoformat(raw)
+    except Exception:
+        return None
+
+
+def get_ics_events(ics_url: str, time_min_iso: str, time_max_iso: str) -> List[dict]:
+    """
+    Fetch and parse a public .ics calendar feed URL (e.g. Outlook shared calendar link).
+    Returns events in the same format as get_google_events.
+    Pure stdlib — no external libraries required.
+    """
+    try:
+        req = urllib.request.Request(ics_url, headers={'User-Agent': 'SmartScheduler/1.0'})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            raw = resp.read().decode('utf-8', errors='replace')
+    except Exception:
+        return []
+
+    events = []
+    try:
+        t_min = datetime.fromisoformat(time_min_iso.rstrip('Z'))
+        t_max = datetime.fromisoformat(time_max_iso.rstrip('Z'))
+    except Exception:
+        t_min = t_max = None
+
+    try:
+        for block in raw.split('BEGIN:VEVENT')[1:]:
+            end_idx = block.find('END:VEVENT')
+            if end_idx == -1:
+                continue
+            vevent = block[:end_idx]
+
+            if _ics_prop(vevent, 'STATUS').upper() == 'CANCELLED':
+                continue
+
+            dtstart = _ics_parse_dt(vevent, 'DTSTART')
+            dtend   = _ics_parse_dt(vevent, 'DTEND')
+            if not dtstart:
+                continue
+
+            ev_end = dtend or (dtstart + timedelta(hours=1))
+
+            # Filter to requested time range
+            if t_min and t_max:
+                if dtstart >= t_max or ev_end <= t_min:
+                    continue
+
+            events.append({
+                'summary': _ics_prop(vevent, 'SUMMARY') or 'Busy',
+                'start':   dtstart.isoformat() + 'Z',
+                'end':     ev_end.isoformat() + 'Z',
+            })
+    except Exception:
+        pass
+
+    return events
+
+
+def generate_ics_content(title: str, start_iso: str, end_iso: str,
+                          attendee_emails: List[str] = None) -> str:
+    """Generate a valid .ics file string suitable for a meeting invite download."""
+    import uuid as _uuid
+
+    def _to_ics_dt(iso: str) -> str:
+        s = iso.strip().rstrip('Z').replace('-', '').replace(':', '')
+        s = s[:15] if 'T' in s else s + 'T000000'
+        return s + 'Z'
+
+    uid     = str(_uuid.uuid4())
+    now     = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+    dtstart = _to_ics_dt(start_iso)
+    dtend   = _to_ics_dt(end_iso)
+
+    lines = [
+        'BEGIN:VCALENDAR',
+        'VERSION:2.0',
+        'PRODID:-//SmartScheduler//EN',
+        'METHOD:REQUEST',
+        'BEGIN:VEVENT',
+        f'UID:{uid}',
+        f'DTSTAMP:{now}',
+        f'DTSTART:{dtstart}',
+        f'DTEND:{dtend}',
+        f'SUMMARY:{title}',
+    ]
+    for email in (attendee_emails or []):
+        lines.append(f'ATTENDEE;RSVP=TRUE:mailto:{email}')
+    lines += ['END:VEVENT', 'END:VCALENDAR', '']
+
+    return '\r\n'.join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Unified helpers (used by fairness engine + booking flow)
 # ---------------------------------------------------------------------------
 
 def get_user_busy_slots(user_id: str, date_start: datetime, date_end: datetime) -> List[dict]:
     """
     Returns a unified list of busy time windows from the user's connected calendars.
-    Tries Google first, then Microsoft. Returns [] if no calendar connected.
+    Tries Google first, then Microsoft, then .ics feed URL.
+    Returns [] if no calendar connected.
     Each entry: {"start": ISO string, "end": ISO string, "summary": string}
     """
     time_min = date_start.isoformat() + 'Z'
     time_max = date_end.isoformat() + 'Z'
 
     events = get_google_events(user_id, time_min, time_max)
-    if not events:
-        events = get_microsoft_events(user_id, time_min, time_max)
-    return events
+    if events:
+        return events
+    events = get_microsoft_events(user_id, time_min, time_max)
+    if events:
+        return events
+    ics_url = db.get_user_ics_url(user_id)
+    if ics_url:
+        return get_ics_events(ics_url, time_min, time_max)
+    return []
 
 
 def write_meeting_to_calendars(creator_id: str, participant_ids: List[str],
@@ -434,8 +591,8 @@ def update_google_event(user_id: str, event_id: str, title: str,
     try:
         patch_body = {
             'summary': title,
-            'start': {'dateTime': start_iso, 'timeZone': 'Asia/Jerusalem'},
-            'end':   {'dateTime': end_iso,   'timeZone': 'Asia/Jerusalem'},
+            'start': _to_event_time(start_iso),
+            'end':   _to_event_time(end_iso),
         }
         data = json.dumps(patch_body).encode()
         url  = f"{GOOGLE_CALENDAR}/calendars/primary/events/{event_id}"
@@ -457,8 +614,8 @@ def update_microsoft_event(user_id: str, event_id: str, title: str,
     try:
         patch_body = {
             'subject': title,
-            'start': {'dateTime': start_iso, 'timeZone': 'Asia/Jerusalem'},
-            'end':   {'dateTime': end_iso,   'timeZone': 'Asia/Jerusalem'},
+            'start': _to_event_time(start_iso),
+            'end':   _to_event_time(end_iso),
         }
         data = json.dumps(patch_body).encode()
         url  = f"{MS_GRAPH}/me/events/{event_id}"

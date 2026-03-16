@@ -141,3 +141,8 @@ export async function apiPost(path, body) {
 export async function apiScoreSlot(startIso, durationMinutes, participantIds = []) {
     return apiProxy('score_slot', { startIso, durationMinutes, participantIds });
 }
+
+/** Save (or clear) the user's Outlook .ics calendar feed URL. */
+export async function apiUpdateIcsUrl(icsUrl) {
+    return apiProxy('update_ics_url', { icsUrl });
+}

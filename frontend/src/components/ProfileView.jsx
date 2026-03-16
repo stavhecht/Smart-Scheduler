@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { apiGet, apiPost } from '../apiClient';
+import { apiGet, apiPost, apiUpdateIcsUrl } from '../apiClient';
 import './ProfileView.css';
 
 /* ─────────────────────────────────────────────
@@ -31,6 +31,9 @@ export default function ProfileView({
   const [replying, setReplying] = useState(false);
   const [disconnectConfirm, setDisconnectConfirm] = useState(null); // provider string
   const [stats, setStats] = useState(null);
+  const [icsUrl, setIcsUrl] = useState(calendarStatus?.ics?.url || '');
+  const [icsSaving, setIcsSaving] = useState(false);
+  const [icsSaveMsg, setIcsSaveMsg] = useState('');
 
   // Derived stats (from meetings prop, updated by real /stats endpoint)
   const score      = Math.round(profile.fairness_score ?? 100);
@@ -100,6 +103,19 @@ export default function ProfileView({
     if (disconnectConfirm) {
       onCalendarDisconnect(disconnectConfirm);
       setDisconnectConfirm(null);
+    }
+  };
+
+  const handleSaveIcsUrl = async () => {
+    setIcsSaving(true);
+    setIcsSaveMsg('');
+    try {
+      await apiUpdateIcsUrl(icsUrl);
+      setIcsSaveMsg(icsUrl ? 'Connected' : 'Cleared');
+    } catch (err) {
+      setIcsSaveMsg('Save failed: ' + err.message);
+    } finally {
+      setIcsSaving(false);
     }
   };
 
@@ -257,11 +273,11 @@ export default function ProfileView({
             <div className="pv-card">
               <h3>🗓️ Calendar Connectivity</h3>
               <div className="cal-providers">
-                <CalendarRow 
-                  brand="google" 
-                  name="Google Calendar" 
-                  status={calendarStatus?.google} 
-                  onConnect={onCalendarConnect} 
+                <CalendarRow
+                  brand="google"
+                  name="Google Calendar"
+                  status={calendarStatus?.google}
+                  onConnect={onCalendarConnect}
                   onDisconnect={handleDisconnect}
                 />
                 <CalendarRow
@@ -271,6 +287,43 @@ export default function ProfileView({
                   onConnect={onCalendarConnect}
                   onDisconnect={handleDisconnect}
                 />
+                <div className="cal-provider-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '0.5rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', width: '100%' }}>
+                    <div className="cal-provider-icon ms-icon" style={{ background: '#0078d4' }}>📅</div>
+                    <div className="cal-provider-info" style={{ flex: 1 }}>
+                      <span className="cal-provider-name">Outlook via Calendar Feed</span>
+                      <span className={icsUrl ? 'cal-status-connected' : 'cal-status-disconnected'}>
+                        {icsUrl ? 'Feed URL saved' : 'Paste your Outlook .ics URL below'}
+                      </span>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem', width: '100%' }}>
+                    <input
+                      className="pv-input-sub"
+                      style={{ flex: 1, fontSize: '0.75rem' }}
+                      placeholder="https://outlook.live.com/owa/calendar/…/calendar.ics"
+                      value={icsUrl}
+                      onChange={e => { setIcsUrl(e.target.value); setIcsSaveMsg(''); }}
+                    />
+                    <button className="cal-btn cal-btn-connect" onClick={handleSaveIcsUrl} disabled={icsSaving}>
+                      {icsSaving ? '...' : 'Save'}
+                    </button>
+                  </div>
+                  {icsSaveMsg && (
+                    <span style={{ fontSize: '0.72rem', color: icsSaveMsg.startsWith('Save failed') ? '#f87171' : '#22c55e', paddingLeft: '0.25rem' }}>
+                      {icsSaveMsg}
+                    </span>
+                  )}
+                  <details style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.4)', paddingLeft: '0.25rem' }}>
+                    <summary style={{ cursor: 'pointer' }}>How to get your Outlook .ics URL</summary>
+                    <ol style={{ marginTop: '0.4rem', paddingLeft: '1.2rem', lineHeight: '1.6' }}>
+                      <li>Open Outlook → Settings (gear icon) → View all Outlook settings</li>
+                      <li>Go to Calendar → Shared calendars</li>
+                      <li>Under "Publish a calendar", select your calendar and set permissions to "Can view all details"</li>
+                      <li>Click Publish, then copy the ICS link</li>
+                    </ol>
+                  </details>
+                </div>
               </div>
             </div>
           </div>
