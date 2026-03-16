@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { Routes, Route, NavLink, useNavigate, Navigate } from 'react-router-dom'
 import './App.css'
 import MeetingDashboard from './components/MeetingDashboard';
 import CalendarView from './components/CalendarView';
@@ -15,16 +16,18 @@ Amplify.configure(awsConfig);
 
 function AppContent() {
   const { user, signOut } = useAuthenticator((context) => [context.user]);
+  const navigate = useNavigate();
   const [profile, setProfile]             = useState(null);
   const [meetings, setMeetings]           = useState([]);
   const [calendarStatus, setCalendarStatus] = useState({ google: { connected: false, email: '' }, microsoft: { connected: false, email: '' } });
   const [loading, setLoading]             = useState(true);
   const [error, setError]                 = useState(null);
-  const [activeView, setActiveView]       = useState('dashboard');
   const [retryCount, setRetryCount]       = useState(0);
   const [calendarToast, setCalendarToast] = useState(null); // { type: 'success'|'error'|'info', msg } | null
   const [targetProfile, setTargetProfile] = useState(null); // for viewing other user profiles
   const [sidebarOpen, setSidebarOpen]     = useState(false);
+  // helper so child components can still call setActiveView('meetings') etc.
+  const setActiveView = (view) => navigate(`/${view === 'dashboard' ? '' : view}`);
   const oauthProcessed = useRef(false);
   const calendarToastTimer = useRef(null);
 
@@ -102,14 +105,14 @@ function AppContent() {
       })
       .catch(err => console.error('Refresh failed', err));
 
-  /** Refresh meetings whenever the calendar tab becomes active. */
+  /** Refresh meetings whenever the calendar route becomes active. */
   useEffect(() => {
-    if (activeView === 'calendar' && profile) {
+    if (window.location.pathname === '/calendar' && profile) {
       apiGet('/api/meetings')
         .then(data => setMeetings(Array.isArray(data) ? data : (data?.meetings ?? [])))
         .catch(err => console.error('Calendar refresh failed', err));
     }
-  }, [activeView]);
+  }, [window.location.pathname]);
 
   /** Show a toast notification (clears any previous timer). */
   const showCalendarToast = (type, msg) => {
@@ -171,10 +174,10 @@ function AppContent() {
   const meetingsBadge = (meetings.filter(m => m.status === 'pending' && m.userRole === 'organizer').length + needsAction) || null;
 
   const navItems = [
-    { id: 'dashboard', emoji: '🏠', label: 'Dashboard' },
-    { id: 'calendar',  emoji: '🗓️', label: 'Calendar'  },
-    { id: 'meetings',  emoji: '📋', label: 'Meetings', badge: meetingsBadge },
-    { id: 'profile',   emoji: '👤', label: 'Profile'   },
+    { id: 'dashboard', path: '/',          emoji: '🏠', label: 'Dashboard' },
+    { id: 'calendar',  path: '/calendar',  emoji: '🗓️', label: 'Calendar'  },
+    { id: 'meetings',  path: '/meetings',  emoji: '📋', label: 'Meetings', badge: meetingsBadge },
+    { id: 'profile',   path: '/profile',   emoji: '👤', label: 'Profile'   },
   ];
 
   const displayName = profile?.name || profile?.displayName || '';
@@ -204,10 +207,12 @@ function AppContent() {
 
         <nav className="sidebar-nav">
           {navItems.map(item => (
-            <button
+            <NavLink
               key={item.id}
-              className={`nav-item ${activeView === item.id ? 'active' : ''}`}
-              onClick={() => { setActiveView(item.id); setSidebarOpen(false); }}
+              to={item.path}
+              end={item.path === '/'}
+              className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
+              onClick={() => setSidebarOpen(false)}
               title={item.label}
             >
               <span className="nav-emoji">{item.emoji}</span>
@@ -215,7 +220,7 @@ function AppContent() {
               {item.badge > 0 && (
                 <span className="nav-badge">{item.badge}</span>
               )}
-            </button>
+            </NavLink>
           ))}
         </nav>
 
@@ -223,7 +228,7 @@ function AppContent() {
           {profile && (
             <div
               className="sidebar-user"
-              onClick={() => setActiveView('profile')}
+              onClick={() => { navigate('/profile'); setSidebarOpen(false); }}
               style={{ cursor: 'pointer' }}
               title="View profile"
             >
@@ -291,17 +296,17 @@ function AppContent() {
         )}
 
         {!loading && profile && (
-          <>
-            {activeView === 'dashboard' && (
+          <Routes>
+            <Route path="/" element={
               <DashboardView
                 profile={profile}
                 meetings={meetings}
                 onNavigate={setActiveView}
                 needsAction={needsAction}
               />
-            )}
+            } />
 
-            {activeView === 'calendar' && (
+            <Route path="/calendar" element={
               <div className="view-wrap">
                 <div className="view-header">
                   <h2>Calendar</h2>
@@ -309,9 +314,9 @@ function AppContent() {
                 </div>
                 <CalendarView meetings={meetings} />
               </div>
-            )}
+            } />
 
-            {activeView === 'meetings' && (
+            <Route path="/meetings" element={
               <div className="view-wrap">
                 <MeetingDashboard
                   meetings={meetings}
@@ -320,9 +325,9 @@ function AppContent() {
                   onParticipantClick={handleParticipantClick}
                 />
               </div>
-            )}
+            } />
 
-            {activeView === 'profile' && (
+            <Route path="/profile" element={
               <div className="view-wrap">
                 <div className="view-header">
                   <h2>Profile & Settings</h2>
@@ -337,8 +342,11 @@ function AppContent() {
                   onProfileUpdate={setProfile}
                 />
               </div>
-            )}
-          </>
+            } />
+
+            {/* Fallback → dashboard */}
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
         )}
       </main>
       

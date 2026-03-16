@@ -8,10 +8,12 @@ export default defineConfig({
     // הגדרה שמפנה בקשות API לשרת ה-Backend המקומי
     proxy: {
       '/api': {
-        target: 'http://localhost:8000', // הכתובת של השרת שלנו
+        target: 'http://localhost:8000',
         changeOrigin: true,
         secure: false,
       }
-    }
+    },
+    // SPA fallback: כל path שלא קיים יפנה ל-index.html
+    historyApiFallback: true,
   }
 })

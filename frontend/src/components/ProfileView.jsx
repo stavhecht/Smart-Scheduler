@@ -40,7 +40,7 @@ export default function ProfileView({
   const organized  = stats?.total_organized ?? meetings.filter(m => m.userRole === 'organizer').length;
   const invited    = meetings.filter(m => m.userRole === 'participant').length;
   const thisWeek   = stats?.meetings_this_week ?? profile.details?.meetings_this_week ?? 0;
-  const sufferingScore = stats?.suffering_score ?? sufferingScore;
+  const sufferingScore = stats?.suffering_score ?? profile.details?.suffering_score ?? 0;
 
   useEffect(() => {
     apiGet('/api/profile/stats').then(setStats).catch(() => {});
@@ -392,16 +392,20 @@ function SettingRow({ label, desc, action, toggle, defaultOn, disabled }) {
 function CalendarRow({ brand, name, status, onConnect, onDisconnect }) {
   const isConnected = !!status?.connected;
   return (
-    <div className={`cal-row ${brand} ${isConnected ? 'connected' : ''}`}>
-      <div className="cal-icon">{brand === 'google' ? 'G' : 'O'}</div>
-      <div className="cal-body">
-        <span className="cal-name">{name}</span>
-        <span className="cal-email">{isConnected ? status.email : 'Not connected'}</span>
+    <div className={`cal-provider-row ${isConnected ? 'connected' : ''}`}>
+      <div className={`cal-provider-icon ${brand === 'google' ? 'google-icon' : 'ms-icon'}`}>
+        {brand === 'google' ? 'G' : 'M'}
+      </div>
+      <div className="cal-provider-info">
+        <span className="cal-provider-name">{name}</span>
+        <span className={isConnected ? 'cal-status-connected' : 'cal-status-disconnected'}>
+          {isConnected ? status.email : 'Not connected'}
+        </span>
       </div>
       {isConnected ? (
-        <button className="cal-btn disconnect" onClick={() => onDisconnect(brand)}>Disconnect</button>
+        <button className="cal-btn cal-btn-disconnect" onClick={() => onDisconnect(brand)}>Disconnect</button>
       ) : (
-        <button className="cal-btn connect" onClick={() => onConnect(brand)}>Connect</button>
+        <button className="cal-btn cal-btn-connect" onClick={() => onConnect(brand)}>Connect</button>
       )}
     </div>
   );
@@ -409,12 +413,10 @@ function CalendarRow({ brand, name, status, onConnect, onDisconnect }) {
 
 function StatItem({ icon, val, label }) {
   return (
-    <div className="stat-v-item">
-      <span className="stat-v-icon">{icon}</span>
-      <div className="stat-v-body">
-        <span className="stat-v-val">{val}</span>
-        <span className="stat-v-label">{label}</span>
-      </div>
+    <div className="pv-stat">
+      <span className="pv-stat-icon">{icon}</span>
+      <span className="pv-stat-val">{val}</span>
+      <span className="pv-stat-label">{label}</span>
     </div>
   );
 }
