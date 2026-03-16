@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { apiPost, apiScoreSlot } from '../apiClient';
 import './MeetingDashboard.css';
 
@@ -15,7 +15,7 @@ const validateEmails = (str) => {
      onRefresh     – fn to reload meetings
      currentUserId – authenticated user's ID (profile.id)
 ───────────────────────────────────────────── */
-export default function MeetingDashboard({ meetings, onRefresh, currentUserId, onParticipantClick }) {
+export default function MeetingDashboard({ meetings, onRefresh, currentUserId, onParticipantClick, lastRefreshed }) {
   const [expandedId, setExpandedId]             = useState(null);
   const [loading, setLoading]                   = useState(false);
   const [showCreate, setShowCreate]             = useState(false);
@@ -24,16 +24,33 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
   const [cancelConfirmId, setCancelConfirmId]   = useState(null);       // requestId
   const [rescheduleConfirmId, setRescheduleConfirmId] = useState(null); // requestId
   const [showCancelled, setShowCancelled]       = useState(false);
+  const [declineConfirmId, setDeclineConfirmId] = useState(null);   // requestId
+  const [searchQuery, setSearchQuery]           = useState('');
+  const [filterStatus, setFilterStatus]         = useState('all');
   const [newMeeting, setNewMeeting]             = useState({
-    title: '', durationMinutes: 60, participantEmails: '', daysForward: 7,
+    title: '', durationMinutes: 60, participantEmails: '', daysForward: 7, description: '',
   });
   // Custom time picker state per meeting: { [requestId]: { datetime, scoring, scored } }
   const [customPicker, setCustomPicker]         = useState({});
   const [emailError, setEmailError]             = useState('');
   const notifyTimer = useRef(null);
 
+  // Search + filter
+  const filteredMeetings = useMemo(() => {
+    let list = meetings;
+    if (filterStatus !== 'all') list = list.filter(m => m.status === filterStatus);
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      list = list.filter(m =>
+        m.title?.toLowerCase().includes(q) ||
+        m.description?.toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [meetings, searchQuery, filterStatus]);
+
   // Split meetings by status then role
-  const activeMeetings    = meetings.filter(m => m.status !== 'cancelled');
+  const activeMeetings    = filteredMeetings.filter(m => m.status !== 'cancelled');
   const cancelledMeetings = meetings.filter(m => m.status === 'cancelled');
   const myActiveMeetings  = activeMeetings.filter(m => m.userRole === 'organizer');
 
@@ -57,10 +74,11 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
       else if (editModal) setEditModal(null);
       else if (cancelConfirmId) setCancelConfirmId(null);
       else if (rescheduleConfirmId) setRescheduleConfirmId(null);
+      else if (declineConfirmId) setDeclineConfirmId(null);
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [showCreate, editModal, cancelConfirmId, rescheduleConfirmId]);
+  }, [showCreate, editModal, cancelConfirmId, rescheduleConfirmId, declineConfirmId]);
 
   /* ── Helpers ── */
   const notify = (msg, type = 'success') => {
@@ -91,12 +109,13 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
     try {
       await apiPost('/api/meetings/create', {
         title: newMeeting.title,
+        description: newMeeting.description || '',
         durationMinutes: Number(newMeeting.durationMinutes),
         participantEmails: emails,
         participantIds: [],
         daysForward: newMeeting.daysForward,
       });
-      setNewMeeting({ title: '', durationMinutes: 60, participantEmails: '', daysForward: 7 });
+      setNewMeeting({ title: '', durationMinutes: 60, participantEmails: '', daysForward: 7, description: '' });
       notify('Meeting created! AI is optimizing slots…');
       onRefresh();
     } catch (err) {
@@ -131,6 +150,18 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
     }
   };
 
+  const handleDecline = async () => {
+    if (!declineConfirmId) return;
+    try {
+      await apiPost(`/api/meetings/${declineConfirmId}/decline`);
+      notify('Meeting declined.');
+      setDeclineConfirmId(null);
+      onRefresh();
+    } catch (err) {
+      notify('Failed to decline meeting', 'error');
+    }
+  };
+
   const handleEdit = async (e) => {
     e.preventDefault();
     if (!editModal) return;
@@ -138,6 +169,7 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
     try {
       await apiPost(`/api/meetings/${editModal.requestId}/edit`, {
         title: editModal.title,
+        description: editModal.description ?? '',
         durationMinutes: Number(editModal.durationMinutes),
       });
       notify('Meeting updated!');
@@ -233,11 +265,40 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
       <div className="md-header">
         <div>
           <h2 className="md-title">Meetings</h2>
-          <p className="md-sub">AI-optimised scheduling · Social Fairness Algorithm</p>
+          <p className="md-sub">
+            AI-optimised scheduling · Social Fairness Algorithm
+            {lastRefreshed && (
+              <span className="last-refreshed"> · Updated {lastRefreshed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+            )}
+          </p>
         </div>
-        <button className="btn-new" onClick={() => setShowCreate(true)}>
-          + New Meeting
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <button className="btn-refresh" onClick={onRefresh} title="Refresh meetings">⟳</button>
+          <button className="btn-new" onClick={() => setShowCreate(true)}>
+            + New Meeting
+          </button>
+        </div>
+      </div>
+
+      {/* Search + filter bar */}
+      <div className="md-search-bar">
+        <input
+          type="text"
+          className="md-search-input"
+          placeholder="🔍 Search meetings…"
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+        />
+        <select
+          className="md-filter-select"
+          value={filterStatus}
+          onChange={e => setFilterStatus(e.target.value)}
+        >
+          <option value="all">All statuses</option>
+          <option value="pending">Pending</option>
+          <option value="confirmed">Confirmed</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
       </div>
 
       {/* Action-needed banner */}
@@ -341,6 +402,23 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
                 }
               </div>
 
+              <div className="form-group">
+                <label style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Agenda / Notes <span style={{ fontWeight: 400, color: 'var(--text-secondary)' }}>(optional)</span></span>
+                  <span style={{ fontWeight: 400, color: (newMeeting.description?.length || 0) > 1800 ? '#f87171' : 'var(--text-secondary)', fontSize: '0.75rem' }}>
+                    {newMeeting.description?.length || 0}/2000
+                  </span>
+                </label>
+                <textarea
+                  rows={3}
+                  maxLength={2000}
+                  placeholder="What will you discuss? Any context or links…"
+                  value={newMeeting.description}
+                  onChange={e => setNewMeeting({ ...newMeeting, description: e.target.value })}
+                  style={{ resize: 'vertical', minHeight: '70px' }}
+                />
+              </div>
+
               <div className="modal-actions">
                 <button
                   type="submit"
@@ -386,6 +464,17 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
                     </button>
                   ))}
                 </div>
+              </div>
+              <div className="form-group">
+                <label>Agenda / Notes</label>
+                <textarea
+                  rows={3}
+                  maxLength={2000}
+                  placeholder="Agenda, links, context…"
+                  value={editModal.description ?? ''}
+                  onChange={e => setEditModal({ ...editModal, description: e.target.value })}
+                  style={{ resize: 'vertical', minHeight: '70px' }}
+                />
               </div>
               <div className="modal-actions">
                 <button type="submit" className="btn-submit">💾 Save Changes</button>
@@ -434,6 +523,25 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
         </div>
       )}
 
+      {/* ── Decline Confirmation ── */}
+      {declineConfirmId && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setDeclineConfirmId(null)}>
+          <div className="modal-box confirm-box">
+            <div className="modal-head">
+              <h3>🚫 Decline Meeting</h3>
+              <button className="modal-close" onClick={() => setDeclineConfirmId(null)}>✕</button>
+            </div>
+            <div className="confirm-body">
+              <p>Are you sure you want to decline this meeting? The organizer will be notified.</p>
+              <div className="modal-actions">
+                <button className="btn-danger" onClick={handleDecline}>Yes, Decline</button>
+                <button className="btn-cancel" onClick={() => setDeclineConfirmId(null)}>Keep It</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── INVITATIONS section ── */}
       {invitations.length > 0 && (
         <section className="md-section">
@@ -452,6 +560,7 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
                 isExpanded={expandedId === m.requestId}
                 onToggle={() => toggle(m.requestId)}
                 onAccept={() => handleAccept(m.requestId)}
+                onDecline={() => setDeclineConfirmId(m.requestId)}
                 onBook={handleBook}
                 fmtDate={fmtDate}
                 fmtTime={fmtTime}
@@ -490,7 +599,7 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
                 onToggle={() => toggle(m.requestId)}
                 onAccept={() => {}}
                 onBook={handleBook}
-                onEdit={() => setEditModal({ requestId: m.requestId, title: m.title, durationMinutes: m.durationMinutes })}
+                onEdit={() => setEditModal({ requestId: m.requestId, title: m.title, durationMinutes: m.durationMinutes, description: m.description || '' })}
                 onCancel={() => setCancelConfirmId(m.requestId)}
                 onReschedule={m.status === 'confirmed' ? () => setRescheduleConfirmId(m.requestId) : null}
                 fmtDate={fmtDate}
@@ -558,7 +667,7 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
    MeetingCard sub-component
 ───────────────────────────────────────────── */
 function MeetingCard({
-  meeting, currentUserId, isExpanded, onToggle, onAccept, onBook,
+  meeting, currentUserId, isExpanded, onToggle, onAccept, onDecline, onBook,
   onEdit, onCancel, onReschedule,
   fmtDate, fmtTime, fmtFull,
   customPicker = {}, onCustomPickerChange, onScoreCustom, onBookCustom,
@@ -568,7 +677,8 @@ function MeetingCard({
   const isConfirmed    = meeting.status === 'confirmed';
   const hasSlots       = Array.isArray(meeting.slots) && meeting.slots.length > 0;
   const userAccepted   = (meeting.acceptedBy || []).includes(currentUserId);
-  const needsAccept    = !isOrganizer && isConfirmed && !userAccepted;
+  const userDeclined   = (meeting.declinedBy || []).includes(currentUserId);
+  const needsAccept    = !isOrganizer && isConfirmed && !userAccepted && !userDeclined;
   const participantCount = (meeting.participantUserIds || []).length;
   const participantNames = meeting.participantNames || {};
 
@@ -600,17 +710,31 @@ function MeetingCard({
         </div>
 
         <div className="mc-right">
-          {/* Accept button for participant */}
+          {/* Accept / Decline buttons for participant */}
           {needsAccept && (
-            <button
-              className="btn-accept"
-              onClick={e => { e.stopPropagation(); onAccept(); }}
-            >
-              ✓ Accept
-            </button>
+            <>
+              <button
+                className="btn-accept"
+                onClick={e => { e.stopPropagation(); onAccept(); }}
+              >
+                ✓ Accept
+              </button>
+              {onDecline && (
+                <button
+                  className="btn-action-sm btn-action-danger"
+                  title="Decline meeting"
+                  onClick={e => { e.stopPropagation(); onDecline(); }}
+                >
+                  🚫
+                </button>
+              )}
+            </>
           )}
           {!isOrganizer && isConfirmed && userAccepted && (
             <span className="badge-accepted">✓ Accepted</span>
+          )}
+          {!isOrganizer && userDeclined && (
+            <span className="badge-declined">✗ Declined</span>
           )}
 
           {/* Organizer action buttons */}
@@ -741,6 +865,11 @@ function MeetingCard({
       {/* Participant acceptance panel — organizer, confirmed, expanded */}
       {isExpanded && isOrganizer && isConfirmed && (
         <div className="mc-panel accept-panel">
+          {meeting.description && (
+            <div className="mc-description">
+              <strong>📋 Agenda:</strong> {meeting.description}
+            </div>
+          )}
           <div className="panel-title">👥 Participant Status</div>
           <div className="participant-list">
             <div className="participant-row">
@@ -750,19 +879,21 @@ function MeetingCard({
             </div>
             {(meeting.participantUserIds || []).map(pid => {
               const accepted  = (meeting.acceptedBy || []).includes(pid);
+              const declined  = (meeting.declinedBy || []).includes(pid);
               const nameInfo  = participantNames[pid];
               const display   = nameInfo?.name || pid;
+              const dotClass  = accepted ? 'accepted' : declined ? 'declined' : 'pending';
+              const statusClass = accepted ? 'confirmed' : declined ? 'declined' : 'pending';
+              const statusLabel = accepted ? '✓ Accepted' : declined ? '✗ Declined' : '⏳ Pending';
               return (
-                <div 
-                  key={pid} 
-                  className="participant-row clickable" 
+                <div
+                  key={pid}
+                  className="participant-row clickable"
                   onClick={(e) => { e.stopPropagation(); onParticipantClick?.(pid); }}
                 >
-                  <span className={`p-dot ${accepted ? 'accepted' : 'pending'}`} />
+                  <span className={`p-dot ${dotClass}`} />
                   <span className="p-name" title={nameInfo?.email || pid}>{display}</span>
-                  <span className={`p-status ${accepted ? 'confirmed' : 'pending'}`}>
-                    {accepted ? '✓ Accepted' : '⏳ Pending'}
-                  </span>
+                  <span className={`p-status ${statusClass}`}>{statusLabel}</span>
                 </div>
               );
             })}
@@ -773,7 +904,26 @@ function MeetingCard({
       {/* Info panel — participant, pending (meeting not yet booked) */}
       {isExpanded && !isOrganizer && !isConfirmed && (
         <div className="mc-panel info-panel">
+          {meeting.description && (
+            <div className="mc-description">
+              <strong>📋 Agenda:</strong> {meeting.description}
+            </div>
+          )}
           <p>The organizer is still selecting a time slot. You'll be notified once a time is confirmed.</p>
+        </div>
+      )}
+
+      {/* Info panel — participant, confirmed */}
+      {isExpanded && !isOrganizer && isConfirmed && (
+        <div className="mc-panel info-panel">
+          {meeting.description && (
+            <div className="mc-description">
+              <strong>📋 Agenda:</strong> {meeting.description}
+            </div>
+          )}
+          {meeting.selectedSlotStart && (
+            <p>📅 Scheduled for: <strong>{fmtFull(meeting.selectedSlotStart)}</strong></p>
+          )}
         </div>
       )}
     </div>

@@ -29,12 +29,14 @@ class MeetingRequest(BaseModel):
     creatorUserId: str
     participantUserIds: List[str]
     title: str
+    description: Optional[str] = ""   # agenda / notes
     durationMinutes: int
     dateRangeStart: datetime
     dateRangeEnd: datetime
     status: str = "pending"          # pending | confirmed | cancelled
     selectedSlotStart: Optional[str] = None   # ISO string of booked slot
     acceptedBy: List[str] = []               # user IDs who accepted
+    declinedBy: List[str] = []               # user IDs who declined
     createdAt: datetime = Field(default_factory=datetime.now)
     updatedAt: Optional[datetime] = None
     cancelledAt: Optional[datetime] = None
@@ -44,6 +46,7 @@ class MeetingRequest(BaseModel):
 # --- Input Models ---
 class MeetingCreateSchema(BaseModel):
     title: str = Field(min_length=1, max_length=200)
+    description: Optional[str] = Field(default="", max_length=2000)
     durationMinutes: int = Field(ge=15, le=480)
     participantIds: List[str] = []
     participantEmails: List[str] = []   # invite by email
@@ -51,6 +54,7 @@ class MeetingCreateSchema(BaseModel):
 
 class MeetingEditSchema(BaseModel):
     title: Optional[str] = None
+    description: Optional[str] = None
     durationMinutes: Optional[int] = None
 
 # --- 4. Suggested Time Slot ---

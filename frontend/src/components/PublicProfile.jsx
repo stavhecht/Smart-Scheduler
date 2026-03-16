@@ -30,11 +30,12 @@ export default function PublicProfile({ profile, onClose }) {
     }
   };
 
-  const initials = profile.name
-    ? profile.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
+  const displayName = profile.name || profile.displayName || '';
+  const initials = displayName
+    ? displayName.split(' ').filter(Boolean).map(n => n[0]).join('').slice(0, 2).toUpperCase()
     : '??';
 
-  const score = Math.round(profile.score ?? 100);
+  const score = Math.round(profile.fairness_score ?? profile.score ?? 100);
   const scoreColor = score >= 80 ? '#22c55e' : score >= 60 ? '#f59e0b' : '#ef4444';
 
   return (
@@ -57,7 +58,7 @@ export default function PublicProfile({ profile, onClose }) {
         <div className="pp-head">
           <div className="pp-avatar">{initials}</div>
           <div className="pp-info">
-            <h2 className="pp-name">{profile.name}</h2>
+            <h2 className="pp-name">{displayName || 'Unknown'}</h2>
             <div className="pp-badges">
               <span className="pp-role">{profile.role || 'Teammate'}</span>
               <span className="pp-dept">{profile.department || 'Smart Co.'}</span>

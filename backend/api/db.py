@@ -180,22 +180,63 @@ def update_fairness_on_booking(user_ids: List[str], slot_fairness_impact: float)
 # Meetings
 # ---------------------------------------------------------------------------
 
+def _write_participation_records(meeting: models.MeetingRequest):
+    """
+    Write USER#{userId}/PART#{meetingId} index records for all meeting participants.
+    This allows O(1) lookup of a user's meetings instead of full-table scan.
+    """
+    all_ids = list(set([meeting.creatorUserId] + (meeting.participantUserIds or [])))
+    for uid in all_ids:
+        if uid:
+            _put_item(f"USER#{uid}", f"PART#{meeting.requestId}", {
+                'meetingId': meeting.requestId,
+                'role': 'creator' if uid == meeting.creatorUserId else 'participant',
+                'addedAt': datetime.now().isoformat(),
+            })
+
+
 def get_user_meetings(user_id: str) -> List[models.MeetingRequest]:
-    """Returns meetings where user is creator OR a participant (paginated scan)."""
-    items = _paginate_scan(
+    """
+    Returns meetings where user is creator OR a participant.
+    Uses participation index records (USER#{id}/PART#*) for O(1) lookup.
+    Falls back to scan for legacy meetings without index records.
+    """
+    # 1. Query the participation index for this user
+    part_items = _query_begins_with(f"USER#{user_id}", "PART#")
+    meeting_ids_from_index = {item.get('meetingId') for item in part_items if item.get('meetingId')}
+
+    meetings = []
+    fetched_ids = set()
+
+    # Batch-fetch meetings found in index
+    for mid in meeting_ids_from_index:
+        meeting_item = _get_item(f"MEET#{mid}", "META")
+        if meeting_item:
+            try:
+                meetings.append(models.MeetingRequest(**meeting_item))
+                fetched_ids.add(mid)
+            except Exception as exc:
+                print(f"[db] Failed to parse meeting {mid}: {exc}")
+
+    # 2. Legacy fallback: scan for meetings not yet indexed (one-time migration cost)
+    legacy_items = _paginate_scan(
         FilterExpression=(
             Attr('PK').begins_with('MEET#') &
             Attr('SK').eq('META') &
             (Attr('creatorUserId').eq(user_id) | Attr('participantUserIds').contains(user_id))
         )
     )
-    meetings = []
-    for item in items:
-        try:
-            meetings.append(models.MeetingRequest(**item))
-        except Exception as exc:
-            print(f"[db] Failed to parse meeting item {item.get('PK')}: {exc}")
-            pass
+    for item in legacy_items:
+        mid = item.get('requestId', '')
+        if mid and mid not in fetched_ids:
+            try:
+                m = models.MeetingRequest(**item)
+                meetings.append(m)
+                # Auto-backfill participation index records for this legacy meeting
+                _write_participation_records(m)
+            except Exception as exc:
+                print(f"[db] Failed to parse legacy meeting {item.get('PK')}: {exc}")
+
     meetings.sort(key=lambda x: x.createdAt, reverse=True)
     return meetings
 
@@ -267,7 +308,8 @@ def cancel_meeting(request_id: str, cancelled_by: str) -> Optional[dict]:
 
 
 def edit_meeting(request_id: str, edited_by: str, title: Optional[str] = None,
-                 duration_minutes: Optional[int] = None) -> Optional[dict]:
+                 duration_minutes: Optional[int] = None,
+                 description: Optional[str] = None) -> Optional[dict]:
     """Edit mutable fields of a meeting. Returns updated meeting dict."""
     meeting = _get_item(f"MEET#{request_id}", "META")
     if not meeting:
@@ -279,6 +321,9 @@ def edit_meeting(request_id: str, edited_by: str, title: Optional[str] = None,
     if duration_minutes is not None and duration_minutes != meeting.get('durationMinutes'):
         changes['durationMinutes'] = {'from': meeting.get('durationMinutes'), 'to': duration_minutes}
         meeting['durationMinutes'] = duration_minutes
+    if description is not None and description != meeting.get('description', ''):
+        changes['description'] = {'from': meeting.get('description', ''), 'to': description}
+        meeting['description'] = description
     if not changes:
         return meeting   # nothing changed
     meeting['updatedAt'] = datetime.now().isoformat()
@@ -389,12 +434,15 @@ def create_meeting_record(req_data: models.MeetingCreateSchema, creator_id: str)
         creatorUserId=creator_id,
         participantUserIds=req_data.participantIds,
         title=req_data.title,
+        description=getattr(req_data, 'description', '') or '',
         durationMinutes=req_data.durationMinutes,
         dateRangeStart=datetime.now(),
         dateRangeEnd=datetime.now() + timedelta(days=req_data.daysForward),
         status="pending"
     )
     _put_item(f"MEET#{req_id}", "META", new_meeting.model_dump(mode="json"))
+    # Write participation index records for fast user→meetings lookup
+    _write_participation_records(new_meeting)
     return new_meeting
 
 

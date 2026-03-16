@@ -91,6 +91,8 @@ function AppContent() {
     });
   }, [user, retryCount]);
 
+  const [lastRefreshed, setLastRefreshed] = useState(null);
+
   /** Refreshes profile (fairness score), meetings list, and calendar status. */
   const refreshAll = () =>
     Promise.all([
@@ -102,8 +104,25 @@ function AppContent() {
         setProfile(profileData);
         setMeetings(Array.isArray(meetingsData) ? meetingsData : (meetingsData?.meetings ?? []));
         if (calStatus) setCalendarStatus(calStatus);
+        setLastRefreshed(new Date());
       })
       .catch(err => console.error('Refresh failed', err));
+
+  /** Refresh meetings only (lightweight polling interval). */
+  const refreshMeetings = () =>
+    apiGet('/api/meetings')
+      .then(data => {
+        setMeetings(Array.isArray(data) ? data : (data?.meetings ?? []));
+        setLastRefreshed(new Date());
+      })
+      .catch(() => {}); // silent failure during background polling
+
+  /** Auto-poll meetings every 30 seconds when logged in. */
+  useEffect(() => {
+    if (!profile) return;
+    const id = setInterval(refreshMeetings, 30_000);
+    return () => clearInterval(id);
+  }, [profile?.id]);
 
   /** Refresh meetings whenever the calendar route becomes active. */
   useEffect(() => {
@@ -323,6 +342,7 @@ function AppContent() {
                   onRefresh={refreshAll}
                   currentUserId={profile.id}
                   onParticipantClick={handleParticipantClick}
+                  lastRefreshed={lastRefreshed}
                 />
               </div>
             } />

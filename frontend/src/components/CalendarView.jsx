@@ -18,7 +18,16 @@ export default function CalendarView({ meetings }) {
   const [weekOffset, setWeekOffset] = useState(0);
   const [hovered, setHovered]       = useState(null);
   const [mousePos, setMousePos]     = useState({ x: 0, y: 0 });
+  const [dayOffset, setDayOffset]   = useState(0);   // mobile day offset from today
+  const [isMobile, setIsMobile]     = useState(() => window.innerWidth < 600);
   const nowRef = useRef(null);
+
+  /* Detect mobile viewport */
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 600);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   const confirmed = meetings.filter(m => (m.status === 'confirmed' || m.status === 'pending') && m.selectedSlotStart);
 
@@ -42,6 +51,13 @@ export default function CalendarView({ meetings }) {
   });
 
   const weekLabel = `${weekDays[0].date.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} – ${weekDays[4].date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`;
+
+  /* ── Mobile single-day ── */
+  const mobileDay = new Date();
+  mobileDay.setHours(0, 0, 0, 0);
+  mobileDay.setDate(mobileDay.getDate() + dayOffset);
+  const mobileDayLabel = mobileDay.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  const mobileDayIsToday = mobileDay.toDateString() === new Date().toDateString();
 
   /* ── Events for a day (with overlap detection) ── */
   const getEvents = (dayDate) => {
@@ -106,12 +122,22 @@ export default function CalendarView({ meetings }) {
       {/* ── Toolbar ── */}
       <div className="cv-header">
         <div className="cv-nav">
-          <button className="cv-btn" onClick={() => setWeekOffset(w => w - 1)}>‹ Prev</button>
-          <button className="cv-today-btn" onClick={() => setWeekOffset(0)}>Today</button>
-          <button className="cv-btn" onClick={() => setWeekOffset(w => w + 1)}>Next ›</button>
+          {isMobile ? (
+            <>
+              <button className="cv-btn" onClick={() => setDayOffset(d => d - 1)}>‹ Prev</button>
+              <button className="cv-today-btn" onClick={() => setDayOffset(0)}>Today</button>
+              <button className="cv-btn" onClick={() => setDayOffset(d => d + 1)}>Next ›</button>
+            </>
+          ) : (
+            <>
+              <button className="cv-btn" onClick={() => setWeekOffset(w => w - 1)}>‹ Prev</button>
+              <button className="cv-today-btn" onClick={() => setWeekOffset(0)}>Today</button>
+              <button className="cv-btn" onClick={() => setWeekOffset(w => w + 1)}>Next ›</button>
+            </>
+          )}
         </div>
 
-        <span className="cv-week-label">{weekLabel}</span>
+        <span className="cv-week-label">{isMobile ? mobileDayLabel : weekLabel}</span>
 
         <div className="cv-legend">
           <span className="cv-legend-item organizer">Organized</span>
@@ -131,8 +157,8 @@ export default function CalendarView({ meetings }) {
             ))}
           </div>
 
-          {/* Day columns */}
-          {weekDays.map(day => (
+          {/* Day columns — 5-day week on desktop, single day on mobile */}
+          {(isMobile ? [{ date: mobileDay, name: 'Today', label: mobileDayLabel, isToday: mobileDayIsToday }] : weekDays).map(day => (
             <div key={day.name} className="cv-day-col">
 
               {/* Day header */}

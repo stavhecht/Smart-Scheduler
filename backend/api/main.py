@@ -357,13 +357,33 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
             meeting = db._get_item(f"MEET#{request_id}", "META")
             if not meeting:
                 raise HTTPException(status_code=404, detail="Meeting not found")
+            if meeting.get('status') == 'confirmed':
+                raise HTTPException(status_code=409, detail="This meeting has already been booked — please refresh and try another slot")
             slot_data      = db._get_item(f"MEET#{request_id}", f"SLOT#{slot_start_iso}")
             fairness_impact = float(slot_data.get('fairnessImpact', -2.0)) if slot_data else -2.0
             all_pids        = list(set([meeting.get('creatorUserId', '')] + meeting.get('participantUserIds', [])))
             db.update_fairness_on_booking(all_pids, fairness_impact)
             meeting['status']            = 'confirmed'
             meeting['selectedSlotStart'] = slot_start_iso
-            db._put_item(f"MEET#{request_id}", "META", meeting)
+            # Use conditional write to prevent double-booking race condition
+            from botocore.exceptions import ClientError as _BotoClientError
+            try:
+                db.table.update_item(
+                    Key={'PK': f"MEET#{request_id}", 'SK': 'META'},
+                    UpdateExpression="SET #st = :confirmed, selectedSlotStart = :slot, updatedAt = :now",
+                    ConditionExpression="attribute_not_exists(selectedSlotStart) OR #st = :pending",
+                    ExpressionAttributeNames={'#st': 'status'},
+                    ExpressionAttributeValues={
+                        ':confirmed': 'confirmed',
+                        ':slot':      slot_start_iso,
+                        ':now':       datetime.now().isoformat(),
+                        ':pending':   'pending',
+                    },
+                )
+            except _BotoClientError as ce:
+                if ce.response['Error']['Code'] == 'ConditionalCheckFailedException':
+                    raise HTTPException(status_code=409, detail="This slot was just taken by someone else — please refresh and choose another")
+                raise
             db.log_meeting_activity(request_id, 'booked', user_id)
             # Best-effort: write to connected calendars and store event IDs for later deletion
             try:
@@ -398,6 +418,39 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
             db._put_item(f"MEET#{request_id}", "META", meeting)
             db.log_meeting_activity(request_id, 'accepted', user_id)
             return {"status": "success", "message": "Meeting accepted", "acceptedBy": accepted}
+
+        # ── decline:<request_id> ─────────────────────────────────────────────
+        if action.startswith("decline:"):
+            request_id  = action.split(":", 1)[1]
+            meeting     = db._get_item(f"MEET#{request_id}", "META")
+            if not meeting:
+                raise HTTPException(status_code=404, detail="Meeting not found")
+            participants = meeting.get('participantUserIds', [])
+            if user_id not in participants:
+                raise HTTPException(status_code=403, detail="You are not a participant in this meeting")
+            declined = meeting.get('declinedBy', [])
+            if user_id not in declined:
+                declined.append(user_id)
+            # Remove from acceptedBy if they previously accepted
+            accepted = [u for u in meeting.get('acceptedBy', []) if u != user_id]
+            meeting['declinedBy'] = declined
+            meeting['acceptedBy'] = accepted
+            meeting['updatedAt']  = datetime.now().isoformat()
+            db._put_item(f"MEET#{request_id}", "META", meeting)
+            db.log_meeting_activity(request_id, 'declined', user_id)
+            # Notify the organizer
+            try:
+                decliner_profile = db.get_profile(user_id)
+                decliner_name = decliner_profile.displayName if decliner_profile else 'A participant'
+                db.send_profile_message(
+                    from_uid=user_id,
+                    to_uid=meeting.get('creatorUserId', ''),
+                    content=f"{decliner_name} declined your meeting: \"{meeting.get('title', 'Meeting')}\"",
+                    msg_type="general"
+                )
+            except Exception as _e:
+                logger.warning(f"Failed to send decline notification: {_e}")
+            return {"status": "success", "message": "Meeting declined", "declinedBy": declined}
 
         # ── cancel:<request_id> ───────────────────────────────────────────────
         if action.startswith("cancel:"):
@@ -437,7 +490,8 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
                 raise HTTPException(status_code=400, detail="Cannot edit a cancelled meeting")
             updated = db.edit_meeting(request_id, user_id,
                                       title=payload.title,
-                                      duration_minutes=payload.durationMinutes)
+                                      duration_minutes=payload.durationMinutes,
+                                      description=payload.description)
 
             # Best-effort: update calendar events if meeting is confirmed
             if updated and updated.get('status') == 'confirmed':
