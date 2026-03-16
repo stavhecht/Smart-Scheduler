@@ -548,14 +548,19 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
       )}
 
       {/* ── INVITATIONS section ── */}
-      {invitations.length > 0 && (
-        <section className="md-section">
-          <div className="section-head">
-            <span className="section-icon">📨</span>
-            <h3>Invitations</h3>
-            <span className="count-chip participant">{invitations.length}</span>
-            {needsAction > 0 && <span className="count-chip warning">{needsAction} need action</span>}
+      <section className="md-section">
+        <div className="section-head">
+          <span className="section-icon">📨</span>
+          <h3>Invitations</h3>
+          {invitations.length > 0 && <span className="count-chip participant">{invitations.length}</span>}
+          {needsAction > 0 && <span className="count-chip warning">{needsAction} need action</span>}
+        </div>
+        {invitations.length === 0 ? (
+          <div className="empty-state empty-state-sm">
+            <span className="empty-icon">✅</span>
+            <p>You're all caught up! No pending invitations.</p>
           </div>
+        ) : (
           <div className="cards-list">
             {invitations.map(m => (
               <MeetingCard
@@ -574,8 +579,8 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
               />
             ))}
           </div>
-        </section>
-      )}
+        )}
+      </section>
 
       {/* ── MY MEETINGS section ── */}
       <section className="md-section">

@@ -362,6 +362,16 @@
 .empty-icon { font-size: 2.5rem; margin-bottom: 0.75rem; }
 .empty-state p { margin: 0 0 1.25rem; font-size: 0.875rem; }
 
+.empty-state-sm {
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  text-align: left;
+}
+.empty-state-sm .empty-icon { font-size: 1.4rem; margin: 0; }
+.empty-state-sm p { margin: 0; font-size: 0.8rem; }
+
 .btn-new-sm {
   background: rgba(56, 189, 248, 0.08);
   border: 1px solid rgba(56, 189, 248, 0.22);
