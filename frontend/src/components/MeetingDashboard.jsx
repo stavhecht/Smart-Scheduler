@@ -134,11 +134,11 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
     try {
       await apiPost(`/api/meetings/${meetingId}/book/${encodeURIComponent(slot.startIso)}`);
       notify('Slot booked! Participants have been notified.');
-      onRefresh();
     } catch (err) {
-      notify('Failed to book slot', 'error');
+      notify(err.message || 'Failed to book slot', 'error');
     } finally {
       setLoading(false);
+      onRefresh();
     }
   };
 

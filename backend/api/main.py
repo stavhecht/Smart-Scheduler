@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from datetime import datetime, timedelta
 from typing import Optional
 from urllib.parse import unquote
 
@@ -501,7 +502,6 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
                 external_ids = updated.get('externalEventIds') or {}
                 if external_ids:
                     try:
-                        from datetime import datetime, timedelta
                         start_iso = updated.get('selectedSlotStart', '')
                         dur = int(updated.get('durationMinutes', 60))
                         if start_iso:
@@ -542,7 +542,6 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
             if not slot_start_iso:
                 raise HTTPException(status_code=400, detail="startIso is required")
 
-            from datetime import datetime, timedelta
             slot = models.SuggestedTimeSlot(
                 requestId=request_id,
                 startIso=datetime.fromisoformat(slot_start_iso),
@@ -592,7 +591,6 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
             if meeting.get('status') == 'cancelled':
                 raise HTTPException(status_code=400, detail="Cannot reschedule a cancelled meeting")
             # Reset meeting to pending and update timeframe
-            from datetime import datetime, timedelta
             now = datetime.now()
             meeting['status']            = 'pending'
             meeting['selectedSlotStart'] = None
@@ -635,7 +633,6 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
             if not start_iso:
                 raise HTTPException(status_code=400, detail="startIso is required")
             try:
-                from datetime import datetime, timedelta
                 from fairness_engine import engine as fe
                 slot_dt = datetime.fromisoformat(start_iso)
                 end_dt  = slot_dt + timedelta(minutes=duration_minutes)
@@ -720,7 +717,6 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
                 except Exception as exc:
                     raise HTTPException(status_code=400, detail=f"Token exchange failed: {exc}")
                 calendar_email = calendar_client.get_google_user_email(tokens.get('access_token', ''))
-                from datetime import datetime, timedelta
                 expires_at = datetime.now() + timedelta(seconds=tokens.get('expires_in', 3600))
                 db.save_oauth_tokens(user_id, 'google', {
                     'access_token':   tokens.get('access_token', ''),
@@ -747,7 +743,6 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
                     calendar_email = claims.get('email') or claims.get('preferred_username', '')
                 except Exception:
                     pass
-                from datetime import datetime, timedelta
                 expires_at = datetime.now() + timedelta(seconds=tokens.get('expires_in', 3600))
                 db.save_oauth_tokens(user_id, 'microsoft', {
                     'access_token':   tokens.get('access_token', ''),
@@ -869,7 +864,6 @@ def create_meeting(meeting_data: models.MeetingCreateSchema, request: Request):
 
     if use_step_functions:
         # 1. Create the meeting record first (so we have a request_id)
-        from datetime import datetime, timedelta
         meeting = db.create_meeting_record(meeting_data, user_id)
 
         # 2. Trigger the Step Functions workflow synchronously
@@ -906,7 +900,6 @@ def create_meeting(meeting_data: models.MeetingCreateSchema, request: Request):
 
 def _run_local_scheduling(meeting_data, user_id: str, request_id: str):
     """Direct in-process fallback when Step Functions is not available."""
-    from datetime import datetime, timedelta
     creator_profile = db._get_item(f"USER#{user_id}", "PROFILE")
     creator_tz = (creator_profile or {}).get("timezone", "UTC")
     payload = {

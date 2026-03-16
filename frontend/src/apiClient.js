@@ -61,7 +61,13 @@ async function apiProxy(action, data = null, _isRetry = false) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.detail || `HTTP ${res.status} at action=${action}`);
     }
-    return res.json();
+    // The health endpoint always returns HTTP 200 (to avoid CORS-blocked 5xx).
+    // Check the body's status field to detect backend errors.
+    const body = await res.json();
+    if (body?.status === 'error') {
+        throw new Error(body.message || `Server error at action=${action}`);
+    }
+    return body;
 }
 
 /* ── Public API ─────────────────────────────────────────────────────────── */
