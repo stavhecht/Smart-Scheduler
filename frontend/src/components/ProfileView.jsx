@@ -97,9 +97,10 @@ export default function ProfileView({
   onCalendarDisconnect,
   onProfileUpdate,
   onUnreadCountChange,
+  initialTab,
 }) {
   const [profile, setProfile]         = useState(initialProfile);
-  const [activeTab, setActiveTab]     = useState('profile');
+  const [activeTab, setActiveTab]     = useState(initialTab || 'profile');
   const [isEditing, setIsEditing]     = useState(false);
   const [tempProfile, setTempProfile] = useState(initialProfile);
   const [skillInput, setSkillInput]   = useState('');
@@ -112,6 +113,7 @@ export default function ProfileView({
   const [disconnectConfirm, setDisconnectConfirm] = useState(null);
   const [stats, setStats]             = useState(null);
   const [icsUrl, setIcsUrl]           = useState(calendarStatus?.ics?.url || '');
+  const [icsEditing, setIcsEditing]   = useState(false);
   const [icsSaving, setIcsSaving]     = useState(false);
   const [icsSaveMsg, setIcsSaveMsg]   = useState('');
   const [showFairnessExplainer, setShowFairnessExplainer] = useState(false);
@@ -203,6 +205,22 @@ export default function ProfileView({
     try {
       await apiUpdateIcsUrl(icsUrl);
       setIcsSaveMsg(icsUrl ? 'Connected' : 'Cleared');
+      setIcsEditing(false);
+    } catch (err) {
+      setIcsSaveMsg('Save failed: ' + err.message);
+    } finally {
+      setIcsSaving(false);
+    }
+  };
+
+  const handleDisconnectIcs = async () => {
+    setIcsSaving(true);
+    setIcsSaveMsg('');
+    try {
+      await apiUpdateIcsUrl('');
+      setIcsUrl('');
+      setIcsEditing(false);
+      setIcsSaveMsg('');
     } catch (err) {
       setIcsSaveMsg('Save failed: ' + err.message);
     } finally {
@@ -297,12 +315,45 @@ export default function ProfileView({
             <div className="pv-info">
               {isEditing ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  <input
-                    className="pv-input-name"
-                    value={tempProfile.name || tempProfile.displayName || ''}
-                    onChange={e => setTempProfile({ ...tempProfile, name: e.target.value, displayName: e.target.value })}
-                    placeholder="Display Name"
-                  />
+                  {/* First / Last name inputs */}
+                  {(() => {
+                    const parts = (tempProfile.name || tempProfile.displayName || '').split(' ');
+                    const firstName = parts[0] || '';
+                    const lastName = parts.slice(1).join(' ');
+                    const savedName = profile.name || profile.displayName || '';
+                    const looksLikeUsername = !savedName.includes(' ') && /[\d.]/.test(savedName);
+                    return (
+                      <>
+                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                          <input
+                            className="pv-input-name"
+                            style={{ flex: 1 }}
+                            value={firstName}
+                            onChange={e => {
+                              const full = `${e.target.value} ${lastName}`.trim();
+                              setTempProfile({ ...tempProfile, name: full, displayName: full });
+                            }}
+                            placeholder="First Name"
+                          />
+                          <input
+                            className="pv-input-name"
+                            style={{ flex: 1 }}
+                            value={lastName}
+                            onChange={e => {
+                              const full = `${firstName} ${e.target.value}`.trim();
+                              setTempProfile({ ...tempProfile, name: full, displayName: full });
+                            }}
+                            placeholder="Last Name"
+                          />
+                        </div>
+                        {looksLikeUsername && (
+                          <div style={{ fontSize: '0.72rem', color: '#fbbf24', background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.25)', borderRadius: '6px', padding: '0.4rem 0.6rem' }}>
+                            Your name looks like a username — set your real name for a better experience
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
                     <input
                       className="pv-input-sub"
@@ -574,18 +625,42 @@ export default function ProfileView({
             <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0 0 1rem', lineHeight: 1.6 }}>
               No Azure app registration needed — paste your Outlook .ics feed URL to sync availability.
             </p>
-            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-              <input
-                className="pv-input-sub"
-                style={{ flex: 1 }}
-                placeholder="https://outlook.live.com/owa/calendar/…/calendar.ics"
-                value={icsUrl}
-                onChange={e => { setIcsUrl(e.target.value); setIcsSaveMsg(''); }}
-              />
-              <button className="cal-btn cal-btn-connect" onClick={handleSaveIcsUrl} disabled={icsSaving}>
-                {icsSaving ? '...' : 'Save'}
-              </button>
-            </div>
+            {icsUrl && !icsEditing ? (
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+                  <span style={{ color: 'var(--success)', fontWeight: 600, fontSize: '0.84rem' }}>✅ Outlook Calendar Connected</span>
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                    {icsUrl.length > 40 ? icsUrl.slice(0, 40) + '…' : icsUrl}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button className="cal-btn cal-btn-disconnect" onClick={() => { setIcsEditing(true); setIcsSaveMsg(''); }} disabled={icsSaving}>
+                    Change
+                  </button>
+                  <button className="cal-btn cal-btn-disconnect" onClick={handleDisconnectIcs} disabled={icsSaving}>
+                    {icsSaving ? '...' : 'Disconnect'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                <input
+                  className="pv-input-sub"
+                  style={{ flex: 1 }}
+                  placeholder="https://outlook.live.com/owa/calendar/…/calendar.ics"
+                  value={icsUrl}
+                  onChange={e => { setIcsUrl(e.target.value); setIcsSaveMsg(''); }}
+                />
+                <button className="cal-btn cal-btn-connect" onClick={handleSaveIcsUrl} disabled={icsSaving}>
+                  {icsSaving ? '...' : 'Save'}
+                </button>
+                {icsEditing && (
+                  <button className="cal-btn cal-btn-disconnect" onClick={() => { setIcsEditing(false); setIcsSaveMsg(''); }} disabled={icsSaving}>
+                    Cancel
+                  </button>
+                )}
+              </div>
+            )}
             {icsSaveMsg && (
               <span style={{ fontSize: '0.72rem', color: icsSaveMsg.startsWith('Save failed') ? 'var(--danger)' : 'var(--success)' }}>
                 {icsSaveMsg}

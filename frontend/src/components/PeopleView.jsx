@@ -8,12 +8,15 @@ const getInitials = (name) =>
 const getScoreColor = (score) =>
   score >= 80 ? '#22c55e' : score >= 60 ? '#f59e0b' : '#ef4444';
 
+const APP_URL = 'https://main.d1omo55pxwqk6g.amplifyapp.com';
+
 export default function PeopleView({ meetings, onScheduleWith, onViewProfile }) {
   const [users, setUsers]           = useState([]);
   const [loading, setLoading]       = useState(true);
   const [search, setSearch]         = useState('');
   const [deptFilter, setDeptFilter] = useState('all');
   const [toast, setToast]           = useState(null);
+  const [inviteCopied, setInviteCopied] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -135,10 +138,40 @@ export default function PeopleView({ meetings, onScheduleWith, onViewProfile }) 
           <span>Loading members…</span>
         </div>
       ) : filtered.length === 0 ? (
-        <div className="people-empty">
-          <div style={{ fontSize: '3rem', opacity: 0.3 }}>👥</div>
-          <p>{users.length === 0 ? 'No other members yet.' : 'No results match your search.'}</p>
-        </div>
+        users.length === 0 ? (
+          <div className="people-empty" style={{ padding: '3rem 1rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem' }}>
+            <div style={{ fontSize: '3.5rem', opacity: 0.25 }}>👥</div>
+            <div style={{ fontWeight: 600, fontSize: '1rem', color: 'var(--text-primary)' }}>No colleagues yet</div>
+            <p style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', textAlign: 'center', maxWidth: '340px', margin: 0, lineHeight: 1.6 }}>
+              People appear here when colleagues sign up to Smart Scheduler.
+              Share the app link to get started.
+            </p>
+            <button
+              style={{
+                marginTop: '0.5rem', padding: '0.55rem 1.1rem', borderRadius: '8px',
+                background: 'var(--bg-raised)', border: '1px solid var(--border)',
+                color: inviteCopied ? 'var(--success)' : 'var(--text-primary)',
+                fontSize: '0.84rem', fontWeight: 500, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: '0.4rem',
+                transition: 'color 0.2s',
+              }}
+              onClick={() => {
+                const msg = `I'm using Smart Scheduler to organise fair meeting scheduling — join me at ${APP_URL}`;
+                navigator.clipboard.writeText(msg).then(() => {
+                  setInviteCopied(true);
+                  setTimeout(() => setInviteCopied(false), 2000);
+                });
+              }}
+            >
+              {inviteCopied ? '✓ Copied!' : '📋 Copy invite message'}
+            </button>
+          </div>
+        ) : (
+          <div className="people-empty">
+            <div style={{ fontSize: '3rem', opacity: 0.3 }}>👥</div>
+            <p>No results match your search.</p>
+          </div>
+        )
       ) : (
         <>
           <div className="people-section-label" style={{ marginBottom: '0.75rem' }}>

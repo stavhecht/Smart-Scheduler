@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { Routes, Route, NavLink, useNavigate, Navigate } from 'react-router-dom'
 import './App.css'
 import MeetingDashboard from './components/MeetingDashboard';
@@ -243,7 +243,8 @@ function AppContent() {
     { id: 'calendar',  path: '/calendar',  label: 'Calendar'  },
     { id: 'meetings',  path: '/meetings',  label: 'Meetings', badge: meetingsBadge },
     { id: 'people',    path: '/people',    label: 'People'    },
-    { id: 'profile',   path: '/profile',   label: 'Profile',  badge: unreadCount || null },
+    { id: 'messages',  path: '/messages',  label: 'Messages', badge: unreadCount || null },
+    { id: 'profile',   path: '/profile',   label: 'Profile'   },
   ];
 
   const displayName = profile?.name || profile?.displayName || '';
@@ -303,7 +304,7 @@ function AppContent() {
               <div className="sidebar-avatar">{initials}</div>
               <div className="sidebar-user-info">
                 <div className="sidebar-user-name">{profile.name}</div>
-                <div className="sidebar-user-role">Score: {Math.round(profile.fairness_score ?? 100)}</div>
+                <div className="sidebar-user-role">Fairness: {Number.isFinite(Number(profile.fairness_score)) ? Math.round(Number(profile.fairness_score)) : '—'}</div>
               </div>
             </div>
           )}
@@ -409,6 +410,25 @@ function AppContent() {
                   meetings={meetings}
                   onScheduleWith={handleScheduleWith}
                   onViewProfile={(userId) => handleParticipantClick(userId)}
+                />
+              </div>
+            } />
+
+            <Route path="/messages" element={
+              <div className="view-wrap">
+                <div className="view-header">
+                  <h2>Messages</h2>
+                  <p className="view-subtitle">Your inbox, kudos and notifications</p>
+                </div>
+                <ProfileView
+                  profile={profile}
+                  meetings={meetings}
+                  calendarStatus={calendarStatus}
+                  onCalendarConnect={handleCalendarConnect}
+                  onCalendarDisconnect={handleCalendarDisconnect}
+                  onProfileUpdate={setProfile}
+                  onUnreadCountChange={setUnreadCount}
+                  initialTab="inbox"
                 />
               </div>
             } />
@@ -541,16 +561,31 @@ function DashboardView({ profile, meetings, activities, onNavigate, needsAction 
   const total        = meetings.length;
   const organized    = meetings.filter(m => m.userRole === 'organizer').length;
   const invited      = meetings.filter(m => m.userRole === 'participant').length;
-  const score        = Math.round(profile.fairness_score ?? 100);
+  const score        = Number.isFinite(Number(profile.fairness_score)) ? Math.round(Number(profile.fairness_score)) : 100;
   const scoreColor   = score >= 80 ? '#22c55e' : score >= 60 ? '#f59e0b' : '#ef4444';
   const thisWeek     = profile.details?.meetings_this_week ?? 0;
 
-  // Simple fairness trend (mock: assume linear improvement pattern)
-  const trend = Array.from({ length: 7 }, (_, i) =>
-    Math.max(40, score - (7 - i) * 5 + Math.random() * 8)
-  );
-  const trendMax = Math.max(...trend, 100);
-  const trendMin = Math.min(...trend, 0);
+  // Deterministic fairness trend — linear from (score + thisWeek*2) 6 days ago to score today
+  const trend = useMemo(() => {
+    const startScore = Math.min(100, score + thisWeek * 2);
+    return Array.from({ length: 7 }, (_, i) => {
+      const t = i / 6;
+      return Math.max(0, Math.min(100, startScore + (score - startScore) * t));
+    });
+  }, [score, thisWeek]);
+
+  // Day labels: last 7 days including today
+  const dayLabels = useMemo(() => {
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() - (6 - i));
+      return days[d.getDay()];
+    });
+  }, []);
+
+  const trendMax = Math.max(...trend, score + 1);
+  const trendMin = Math.min(...trend, Math.max(0, score - 1));
   const trendRange = trendMax - trendMin || 1;
 
   // Insights based on score and activity
@@ -638,42 +673,54 @@ function DashboardView({ profile, meetings, activities, onNavigate, needsAction 
       {/* Fairness trend */}
       <div className="dash-card" style={{ marginBottom: '1.25rem' }}>
         <div className="dash-card-head">
-          <h3>Fairness Trend — 7 days</h3>
+          <h3>Fairness Score — Last 7 Days</h3>
           <span className="pill" style={{ background: scoreColor + '22', color: scoreColor, border: `1px solid ${scoreColor}44` }}>
-            {trend[6] >= trend[0] ? '+' : ''}{Math.round(trend[6] - trend[0])} pts
+            {Math.round(trend[6] - trend[0]) >= 0 ? '+' : ''}{Math.round(trend[6] - trend[0])} pts this week
           </span>
         </div>
-        <svg width="100%" height="60" style={{ display: 'block' }}>
-          {(() => {
-            const pts = trend.map((v, i) => {
-              const x = (i / (trend.length - 1)) * 100;
-              const y = 60 - ((v - trendMin) / trendRange) * 55;
-              return `${x}%,${y}`;
-            }).join(' ');
-            return (
-              <>
-                <polyline
-                  points={pts}
-                  fill="none"
-                  stroke="var(--accent)"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  opacity="0.7"
-                />
-                {trend.map((v, i) => {
-                  const x = (i / (trend.length - 1)) * 100;
-                  const y = 60 - ((v - trendMin) / trendRange) * 55;
-                  return (
-                    <circle key={i} cx={`${x}%`} cy={y} r="3" fill="var(--accent)" opacity="0.8">
-                      <title>Day {i + 1}: {Math.round(v)}</title>
-                    </circle>
-                  );
-                })}
-              </>
-            );
-          })()}
-        </svg>
+        <div style={{ position: 'relative', paddingLeft: '2.5rem' }}>
+          {/* Y-axis labels */}
+          <div style={{ position: 'absolute', left: 0, top: 0, bottom: '1.5rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', fontSize: '0.62rem', color: 'var(--text-muted)', textAlign: 'right', width: '2rem' }}>
+            <span>{Math.round(trendMax)}</span>
+            <span>{Math.round((trendMax + trendMin) / 2)}</span>
+            <span>{Math.round(trendMin)}</span>
+          </div>
+          <svg width="100%" height="60" style={{ display: 'block' }}>
+            {(() => {
+              const pts = trend.map((v, i) => {
+                const x = (i / (trend.length - 1)) * 100;
+                const y = 60 - ((v - trendMin) / trendRange) * 55;
+                return `${x}%,${y}`;
+              }).join(' ');
+              return (
+                <>
+                  <polyline
+                    points={pts}
+                    fill="none"
+                    stroke="var(--accent)"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    opacity="0.7"
+                  />
+                  {trend.map((v, i) => {
+                    const x = (i / (trend.length - 1)) * 100;
+                    const y = 60 - ((v - trendMin) / trendRange) * 55;
+                    return (
+                      <circle key={i} cx={`${x}%`} cy={y} r="3" fill="var(--accent)" opacity="0.8">
+                        <title>{dayLabels[i]}: {Math.round(v)}</title>
+                      </circle>
+                    );
+                  })}
+                </>
+              );
+            })()}
+          </svg>
+          {/* X-axis day labels */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.2rem', fontSize: '0.62rem', color: 'var(--text-muted)' }}>
+            {dayLabels.map((label, i) => <span key={i}>{label}</span>)}
+          </div>
+        </div>
       </div>
 
       {/* Two-col grid */}
