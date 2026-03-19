@@ -7,6 +7,7 @@ import ProfileView from './components/ProfileView';
 import PeopleView from './components/PeopleView';
 import PublicProfile from './components/PublicProfile';
 import MeetingDetailModal from './components/MeetingDetailModal';
+import CommandPalette from './components/CommandPalette';
 import { apiGet, apiPost } from './apiClient';
 
 import { Amplify } from 'aws-amplify';
@@ -31,6 +32,8 @@ function AppContent() {
   const [unreadCount, setUnreadCount]     = useState(0);
   const [meetingPrefill, setMeetingPrefill] = useState(null); // email string to prefill
   const [selectedMeeting, setSelectedMeeting] = useState(null); // for MeetingDetailModal
+  const [showPalette, setShowPalette]         = useState(false);
+  const [activities, setActivities]           = useState([]);
   // helper so child components can still call setActiveView('meetings') etc.
   const setActiveView = (view) => navigate(`/${view === 'dashboard' ? '' : view}`);
   const oauthProcessed = useRef(false);
@@ -84,14 +87,16 @@ function AppContent() {
         }
       }
 
-      const [profileData, meetingsData, calStatus] = await Promise.all([
+      const [profileData, meetingsData, calStatus, activityData] = await Promise.all([
         apiGet('/api/profile'),
         apiGet('/api/meetings'),
         apiGet('/api/calendar/status').catch(() => null), // non-fatal
+        apiGet('/api/activity').catch(() => []),          // non-fatal
       ]);
       setProfile(profileData);
       setMeetings(Array.isArray(meetingsData) ? meetingsData : (meetingsData?.meetings ?? []));
       if (calStatus) setCalendarStatus(calStatus);
+      setActivities(Array.isArray(activityData) ? activityData : []);
       setLoading(false);
     };
 
@@ -139,6 +144,19 @@ function AppContent() {
     const id = setInterval(refreshMeetings, 30_000);
     return () => clearInterval(id);
   }, [profile?.id]);
+
+  /** Global ⌘K / Ctrl+K → open command palette. */
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setShowPalette(p => !p);
+      }
+      if (e.key === 'Escape') setShowPalette(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
 
   /** Refresh meetings whenever the calendar route becomes active. */
   useEffect(() => {
@@ -193,6 +211,12 @@ function AppContent() {
     navigate('/meetings');
   };
 
+  /** Calendar click-to-create: navigate to /meetings with datetime prefill. */
+  const handleCreateAt = (isoDatetime) => {
+    setMeetingPrefill({ datetime: isoDatetime });
+    navigate('/meetings');
+  };
+
   /** Open another user's public profile. */
   const handleParticipantClick = async (userId) => {
     if (userId === profile?.id) {
@@ -242,9 +266,12 @@ function AppContent() {
 
       {/* ── Sidebar ── */}
       <aside className={`sidebar${sidebarOpen ? ' sidebar-open' : ''}`}>
-        <div className="sidebar-logo">
+        <div className="sidebar-logo" style={{ cursor: 'pointer' }} onClick={() => setShowPalette(true)} title="Open command palette (⌘K)">
           <div className="logo-mark">S</div>
-          <div className="logo-text">Smart<br />Scheduler</div>
+          <div className="logo-text">
+            Smart<br />Scheduler
+            <div className="logo-kbd-hint">⌘K</div>
+          </div>
         </div>
 
         <nav className="sidebar-nav">
@@ -342,6 +369,7 @@ function AppContent() {
               <DashboardView
                 profile={profile}
                 meetings={meetings}
+                activities={activities}
                 onNavigate={setActiveView}
                 needsAction={needsAction}
               />
@@ -356,6 +384,7 @@ function AppContent() {
                 <CalendarView
                   meetings={meetings}
                   onMeetingClick={(m) => setSelectedMeeting(m)}
+                  onCreateAt={handleCreateAt}
                 />
               </div>
             } />
@@ -418,6 +447,16 @@ function AppContent() {
         />
       )}
 
+      {/* ── Command Palette (Global, ⌘K) ── */}
+      {showPalette && (
+        <CommandPalette
+          onClose={() => setShowPalette(false)}
+          onNavigate={setActiveView}
+          onNewMeeting={() => { setMeetingPrefill(null); navigate('/meetings'); setShowPalette(false); }}
+          signOut={signOut}
+        />
+      )}
+
       {/* ── Meeting Detail Modal (Global, from Calendar click) ── */}
       {selectedMeeting && (
         <MeetingDetailModal
@@ -453,7 +492,50 @@ function AppContent() {
 /* ─────────────────────────────────────────────
    DashboardView — enhanced home with analytics
 ───────────────────────────────────────────── */
-function DashboardView({ profile, meetings, onNavigate, needsAction }) {
+function ActivityFeed({ activities }) {
+  const ACTION_META = {
+    created:     { dot: 'var(--accent)',   verb: 'created' },
+    booked:      { dot: 'var(--success)',  verb: 'confirmed a time for' },
+    accepted:    { dot: 'var(--success)',  verb: 'accepted' },
+    declined:    { dot: 'var(--danger)',   verb: 'declined' },
+    cancelled:   { dot: 'var(--danger)',   verb: 'cancelled' },
+    rescheduled: { dot: 'var(--warning)', verb: 'rescheduled' },
+    edited:      { dot: '#a78bfa',         verb: 'edited' },
+  };
+  const fmtRel = (iso) => {
+    const diff = Date.now() - new Date(iso).getTime();
+    const min = Math.floor(diff / 60000);
+    if (min < 1)  return 'just now';
+    if (min < 60) return `${min}m ago`;
+    const h = Math.floor(min / 60);
+    if (h < 24)   return `${h}h ago`;
+    if (h < 48)   return 'yesterday';
+    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
+  if (!activities || activities.length === 0) {
+    return <p className="empty-hint">No recent activity yet.</p>;
+  }
+  return (
+    <div className="activity-feed">
+      {activities.map((entry, i) => {
+        const meta = ACTION_META[entry.action] || { dot: 'var(--text-muted)', verb: entry.action };
+        return (
+          <div key={i} className="activity-row">
+            <div className="activity-dot" style={{ background: meta.dot }} />
+            <div className="activity-body">
+              <span className="activity-actor">{entry.actorName || 'Someone'}</span>
+              {' '}{meta.verb}{' '}
+              <span className="activity-meeting">"{entry.meetingTitle}"</span>
+            </div>
+            <span className="activity-time">{fmtRel(entry.at)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function DashboardView({ profile, meetings, activities, onNavigate, needsAction }) {
   const myPending    = meetings.filter(m => m.status === 'pending' && m.userRole === 'organizer');
   const confirmed    = meetings.filter(m => m.status === 'confirmed');
   const total        = meetings.length;
@@ -520,6 +602,12 @@ function DashboardView({ profile, meetings, onNavigate, needsAction }) {
           <div className="stat-bar-track">
             <div className="stat-bar-fill" style={{ width: `${score}%`, background: scoreColor }} />
           </div>
+          <details className="score-explainer">
+            <summary>How is this calculated?</summary>
+            <div className="score-explainer-body">
+              Starts at 100. Reduced by meetings this week (−2 each) and cancellations (−5 each). Boosted by accepting inconvenient slots (+3 each). Time slots are scored 0–100 by time of day, day of week, participant load, and fairness balance.
+            </div>
+          </details>
         </div>
 
         <div className="stat-card">
@@ -646,6 +734,14 @@ function DashboardView({ profile, meetings, onNavigate, needsAction }) {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Activity Feed */}
+      <div className="dash-card" style={{ marginBottom: '1.25rem' }}>
+        <div className="dash-card-head">
+          <h3>Recent Activity</h3>
+        </div>
+        <ActivityFeed activities={activities} />
       </div>
 
       {/* Recommendations */}

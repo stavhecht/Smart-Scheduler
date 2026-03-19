@@ -89,6 +89,8 @@ export async function apiGet(path) {
 
     if (path === '/api/profile/stats') return apiProxy('profile_stats');
 
+    if (path === '/api/activity') return apiProxy('activity_feed');
+
     if (path === '/api/users') return apiProxy('list_users');
 
     // /api/users/<userId>/shared_meetings

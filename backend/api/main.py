@@ -855,6 +855,21 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
             except Exception:
                 return {"count": 0, "recentTitles": []}
 
+        # ── activity_feed ─────────────────────────────────────────────────────
+        if action == "activity_feed":
+            try:
+                raw = db.get_recent_activity(user_id)
+                seen_profiles: dict = {}
+                for entry in raw:
+                    actor_id = entry.get('by', '')
+                    if actor_id and actor_id not in seen_profiles:
+                        p = db.get_profile(actor_id)
+                        seen_profiles[actor_id] = p.displayName if p else actor_id[:8]
+                    entry['actorName'] = seen_profiles.get(actor_id, actor_id[:8])
+                return raw
+            except Exception:
+                return []
+
         raise HTTPException(status_code=400, detail=f"Unknown action: '{action}'")
 
     except HTTPException:

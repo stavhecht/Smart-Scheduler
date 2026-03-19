@@ -14,7 +14,7 @@ const ROLE_COLOR = {
 };
 const PENDING_COLOR = { bg: 'rgba(251,191,36,0.18)', border: '#fbbf24', text: '#78350f' };
 
-export default function CalendarView({ meetings, onMeetingClick }) {
+export default function CalendarView({ meetings, onMeetingClick, onCreateAt }) {
   const [weekOffset, setWeekOffset] = useState(0);
   const [dayOffset, setDayOffset]   = useState(0);   // mobile day offset from today
   const [isMobile, setIsMobile]     = useState(() => window.innerWidth < 600);
@@ -162,8 +162,22 @@ export default function CalendarView({ meetings, onMeetingClick }) {
                 <span className={`cv-day-num ${day.isToday ? 'today-num' : ''}`}>{day.label}</span>
               </div>
 
-              {/* Body with events */}
-              <div className="cv-day-body">
+              {/* Body with events — click empty area to create meeting */}
+              <div className="cv-day-body"
+                style={{ cursor: onCreateAt ? 'crosshair' : undefined }}
+                onClick={(e) => {
+                  if (!onCreateAt) return;
+                  if (e.target.classList.contains('cv-event') || e.target.classList.contains('cv-ev-title') || e.target.classList.contains('cv-ev-time')) return;
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const hourFrac = ((e.clientY - rect.top) / rect.height) * TOTAL_HOURS + HOUR_START;
+                  const snapped = Math.floor(hourFrac * 2) / 2;
+                  const hour = Math.floor(snapped);
+                  const mins = Math.round((snapped % 1) * 60);
+                  const dt = new Date(day.date);
+                  dt.setHours(hour, mins, 0, 0);
+                  onCreateAt(dt.toISOString());
+                }}
+              >
                 {/* Grid lines */}
                 {hours.map(h => (
                   <div key={h} className="cv-hour-cell" />

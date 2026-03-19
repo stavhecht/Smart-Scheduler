@@ -313,6 +313,36 @@ def get_meeting_activity_log(request_id: str) -> List[dict]:
     return sorted(items, key=lambda x: x.get('at', ''))
 
 
+def get_recent_activity(user_id: str, limit: int = 12) -> List[dict]:
+    """
+    Returns recent meeting activity entries for a user.
+    Queries participation index for meeting IDs, then fetches LOG# entries.
+    Returns top N sorted by time descending.
+    """
+    part_items = _query_begins_with(f"USER#{user_id}", "PART#")
+    meeting_ids = [item.get('meetingId') for item in part_items if item.get('meetingId')]
+    meeting_ids = meeting_ids[:20]  # cap to avoid excessive queries
+
+    all_logs = []
+    for mid in meeting_ids:
+        meeting = _get_item(f"MEET#{mid}", "META")
+        if not meeting:
+            continue
+        meeting_title = meeting.get('title', 'Meeting')
+        log_items = _query_begins_with(f"MEET#{mid}", "LOG#")
+        for log in log_items:
+            all_logs.append({
+                'meetingId':    mid,
+                'meetingTitle': meeting_title,
+                'action':       log.get('action', ''),
+                'by':           log.get('by', ''),
+                'at':           log.get('at', ''),
+            })
+
+    all_logs.sort(key=lambda x: x.get('at', ''), reverse=True)
+    return all_logs[:limit]
+
+
 # ---------------------------------------------------------------------------
 # Meeting edit / cancel
 # ---------------------------------------------------------------------------

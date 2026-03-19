@@ -161,7 +161,8 @@ export default function PeopleView({ meetings, onScheduleWith, onViewProfile }) 
                         <div className="people-status-msg">{u.statusMessage}</div>
                       )}
                     </div>
-                    <div className="people-score-badge" style={{ color: scoreColor, borderColor: scoreColor + '40' }}>
+                    <div className="people-score-badge" style={{ color: scoreColor, borderColor: scoreColor + '40' }}
+                      title="Fairness score (0–100): based on meeting load, cancellations, and willingness to accept inconvenient times. Higher is better.">
                       {Math.round(u.fairness_score ?? 100)}
                     </div>
                   </div>
