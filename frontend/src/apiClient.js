@@ -19,7 +19,7 @@
 
 import { fetchAuthSession } from 'aws-amplify/auth';
 
-const API_BASE = 'https://du2fhsjyhl.execute-api.us-east-1.amazonaws.com';
+const API_BASE = 'https://5xv230dk19.execute-api.us-east-1.amazonaws.com';
 
 /** Returns the Cognito access token. Pass forceRefresh=true to force a new token. */
 async function getAccessToken(forceRefresh = false) {
