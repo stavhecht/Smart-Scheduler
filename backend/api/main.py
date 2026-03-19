@@ -214,7 +214,7 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
                     "id": user_id,
                     "name": display_name,
                     "email": email,
-                    "role": "Cloud Architect",
+                    "role": "Professional",
                     "fairness_score": 100.0,
                     "details": {
                         "meetings_this_week": 0,
@@ -887,7 +887,7 @@ def get_user_profile(request: Request):
         "id": user_id,
         "name": profile.displayName,
         "email": profile.email,
-        "role": "Cloud Architect",
+        "role": profile.role,
         "fairness_score": float(fairness.fairnessScore) if fairness else 100.0,
         "details": {
             "meetings_this_week": metrics.get("meetings_this_week", 0),

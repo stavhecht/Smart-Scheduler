@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { apiGet, apiPost, apiUpdateIcsUrl } from '../apiClient';
 import './ProfileView.css';
 
@@ -7,12 +7,21 @@ const STATUS_PRESETS = [
   "✈️ Travelling", "🌱 Learning", "💡 Thinking", "🎉 Available",
 ];
 
+const TIMEZONES = [
+  'Pacific/Honolulu', 'America/Anchorage', 'America/Los_Angeles', 'America/Denver',
+  'America/Chicago', 'America/New_York', 'America/Sao_Paulo', 'Atlantic/Reykjavik',
+  'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Europe/Helsinki',
+  'Asia/Jerusalem', 'Asia/Dubai', 'Asia/Karachi', 'Asia/Kolkata',
+  'Asia/Bangkok', 'Asia/Singapore', 'Asia/Tokyo', 'Australia/Sydney',
+  'Pacific/Auckland',
+];
+
 function getStatusDotColor(msg) {
-  if (!msg) return '#6b7280';
+  if (!msg) return '#3d4e68';
   const m = msg.toLowerCase();
-  if (m.includes('available') || m.includes('open') || m.includes('learning') || m.includes('thinking')) return '#22c55e';
-  if (m.includes('busy') || m.includes('travelling') || m.includes('focused')) return '#f59e0b';
-  return '#6b7280';
+  if (m.includes('available') || m.includes('open') || m.includes('learning') || m.includes('thinking')) return '#34d399';
+  if (m.includes('busy') || m.includes('travelling') || m.includes('focused')) return '#fbbf24';
+  return '#6b7a94';
 }
 
 function computeCompleteness(p) {
@@ -31,14 +40,54 @@ function parseHour(timeStr) {
   return parseInt(timeStr.split(':')[0], 10) || 0;
 }
 
+/* ── Toggle Switch ── */
+function Toggle({ on, onChange }) {
+  return (
+    <div
+      onClick={() => onChange(!on)}
+      style={{
+        width: '38px', height: '22px',
+        borderRadius: '11px',
+        background: on ? 'rgba(52,211,153,0.35)' : 'var(--bg-raised)',
+        border: on ? '1px solid rgba(52,211,153,0.4)' : '1px solid var(--border)',
+        position: 'relative',
+        cursor: 'pointer',
+        flexShrink: 0,
+        transition: 'all 0.2s',
+      }}
+    >
+      <div style={{
+        position: 'absolute',
+        top: '3px',
+        left: on ? '17px' : '3px',
+        width: '14px', height: '14px',
+        borderRadius: '50%',
+        background: on ? 'var(--success)' : 'var(--text-muted)',
+        transition: 'all 0.2s',
+      }} />
+    </div>
+  );
+}
+
+/* ── Setting Row with toggle ── */
+function PrefRow({ label, desc, on, onChange }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: '1rem',
+      padding: '0.85rem 0',
+      borderBottom: '1px solid var(--border)',
+    }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: '0.84rem', fontWeight: 600, color: 'var(--text-primary)' }}>{label}</div>
+        {desc && <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', marginTop: '0.1rem' }}>{desc}</div>}
+      </div>
+      <Toggle on={on} onChange={onChange} />
+    </div>
+  );
+}
+
 /* ─────────────────────────────────────────────
-   ProfileView
-   Props:
-     profile               – user profile object
-     meetings              – array of all user meetings
-     calendarStatus        – { google: {connected, email}, microsoft: {connected, email} }
-     onCalendarConnect     – fn(provider) → initiates OAuth flow
-     onCalendarDisconnect  – fn(provider) → disconnects calendar
+   ProfileView — 5-tab settings page
 ───────────────────────────────────────────── */
 export default function ProfileView({
   profile: initialProfile,
@@ -49,26 +98,26 @@ export default function ProfileView({
   onProfileUpdate,
   onUnreadCountChange,
 }) {
-  const [profile, setProfile] = useState(initialProfile);
-  const [activeTab, setActiveTab] = useState('overview'); // overview | inbox | insights
-  const [isEditing, setIsEditing] = useState(false);
+  const [profile, setProfile]         = useState(initialProfile);
+  const [activeTab, setActiveTab]     = useState('profile');
+  const [isEditing, setIsEditing]     = useState(false);
   const [tempProfile, setTempProfile] = useState(initialProfile);
-  const [skillInput, setSkillInput] = useState('');
-  const [messages, setMessages] = useState([]);
-  const [msgLoading, setMsgLoading] = useState(false);
-  const [isUpdating, setIsUpdating] = useState(false);
-  const [saveError, setSaveError] = useState('');
-  const [replyTo, setReplyTo] = useState(null); // { messageId, fromUserId, text }
-  const [replying, setReplying] = useState(false);
-  const [disconnectConfirm, setDisconnectConfirm] = useState(null); // provider string
-  const [stats, setStats] = useState(null);
-  const [icsUrl, setIcsUrl] = useState(calendarStatus?.ics?.url || '');
-  const [icsSaving, setIcsSaving] = useState(false);
-  const [icsSaveMsg, setIcsSaveMsg] = useState('');
+  const [skillInput, setSkillInput]   = useState('');
+  const [messages, setMessages]       = useState([]);
+  const [msgLoading, setMsgLoading]   = useState(false);
+  const [isUpdating, setIsUpdating]   = useState(false);
+  const [saveError, setSaveError]     = useState('');
+  const [replyTo, setReplyTo]         = useState(null);
+  const [replying, setReplying]       = useState(false);
+  const [disconnectConfirm, setDisconnectConfirm] = useState(null);
+  const [stats, setStats]             = useState(null);
+  const [icsUrl, setIcsUrl]           = useState(calendarStatus?.ics?.url || '');
+  const [icsSaving, setIcsSaving]     = useState(false);
+  const [icsSaveMsg, setIcsSaveMsg]   = useState('');
+  const [showFairnessExplainer, setShowFairnessExplainer] = useState(false);
 
-  // Derived stats (from meetings prop, updated by real /stats endpoint)
   const score      = Math.round(profile.fairness_score ?? 100);
-  const scoreColor = score >= 80 ? '#22c55e' : score >= 60 ? '#f59e0b' : '#ef4444';
+  const scoreColor = score >= 80 ? '#34d399' : score >= 60 ? '#fbbf24' : '#f87171';
   const total      = meetings.length;
   const confirmed  = meetings.filter(m => m.status === 'confirmed').length;
   const organized  = stats?.total_organized ?? meetings.filter(m => m.userRole === 'organizer').length;
@@ -76,14 +125,10 @@ export default function ProfileView({
   const thisWeek   = stats?.meetings_this_week ?? profile.details?.meetings_this_week ?? 0;
   const sufferingScore = stats?.suffering_score ?? profile.details?.suffering_score ?? 0;
 
-  useEffect(() => {
-    apiGet('/api/profile/stats').then(setStats).catch(() => {});
-  }, []);
+  useEffect(() => { apiGet('/api/profile/stats').then(setStats).catch(() => {}); }, []);
 
   useEffect(() => {
-    if (activeTab === 'inbox') {
-      fetchMessages();
-    }
+    if (activeTab === 'inbox') fetchMessages();
   }, [activeTab]);
 
   const fetchMessages = async () => {
@@ -112,9 +157,23 @@ export default function ProfileView({
         if (onProfileUpdate) onProfileUpdate(updated);
       }
     } catch (err) {
-      setSaveError('Failed to update profile: ' + err.message);
+      setSaveError('Failed to update: ' + err.message);
     } finally {
       setIsUpdating(false);
+    }
+  };
+
+  const handleSavePref = async (updates) => {
+    try {
+      const merged = { ...profile, ...updates };
+      const res = await apiPost('/api/profile/update', merged);
+      if (res.status === 'success') {
+        const updated = { ...profile, ...res.profile };
+        setProfile(updated);
+        if (onProfileUpdate) onProfileUpdate(updated);
+      }
+    } catch (err) {
+      console.error('Pref save failed:', err);
     }
   };
 
@@ -131,7 +190,6 @@ export default function ProfileView({
     }
   };
 
-  const handleDisconnect = (provider) => setDisconnectConfirm(provider);
   const confirmDisconnect = () => {
     if (disconnectConfirm) {
       onCalendarDisconnect(disconnectConfirm);
@@ -152,18 +210,6 @@ export default function ProfileView({
     }
   };
 
-  const pvDisplayName = profile.displayName || profile.name || '';
-  const initials = pvDisplayName
-    ? pvDisplayName.split(' ').filter(Boolean).map(n => n[0]).join('').slice(0, 2).toUpperCase()
-    : '??';
-
-  const completeness = computeCompleteness(profile);
-  const statusMsg = profile.statusMessage || profile.status_message || '';
-  const statusDotColor = getStatusDotColor(statusMsg);
-  const workingHours = profile.workingHours || { start: '09:00', end: '18:00' };
-  const whStartPct = (parseHour(workingHours.start) / 24) * 100;
-  const whEndPct   = (parseHour(workingHours.end)   / 24) * 100;
-
   const handleSkillKeyDown = (e) => {
     if (e.key === 'Enter' || e.key === ',') {
       e.preventDefault();
@@ -181,10 +227,31 @@ export default function ProfileView({
   const removeSkill = (skill) =>
     setTempProfile(p => ({ ...p, skills: (p.skills || []).filter(s => s !== skill) }));
 
+  const pvDisplayName = profile.displayName || profile.name || '';
+  const initials = pvDisplayName
+    ? pvDisplayName.split(' ').filter(Boolean).map(n => n[0]).join('').slice(0, 2).toUpperCase()
+    : '??';
+  const completeness   = computeCompleteness(profile);
+  const statusMsg      = profile.statusMessage || profile.status_message || '';
+  const statusDotColor = getStatusDotColor(statusMsg);
+  const workingHours   = profile.workingHours || { start: '09:00', end: '18:00' };
+  const whStartPct     = (parseHour(workingHours.start) / 24) * 100;
+  const whEndPct       = (parseHour(workingHours.end)   / 24) * 100;
+  const notifPrefs     = profile.notificationPrefs || { invites: true, reminders: true, digest: false };
+  const unreadCount    = messages.filter(m => !m.isRead).length;
+
+  const TABS = [
+    { id: 'profile',     label: 'Profile'     },
+    { id: 'preferences', label: 'Preferences' },
+    { id: 'calendar',    label: 'Calendar'    },
+    { id: 'inbox',       label: 'Inbox',      badge: unreadCount > 0 },
+    { id: 'fairness',    label: 'Fairness'    },
+  ];
+
   return (
     <div className="pv-wrap">
 
-      {/* Disconnect calendar confirmation dialog */}
+      {/* Disconnect confirmation */}
       {disconnectConfirm && (
         <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setDisconnectConfirm(null)}>
           <div className="modal-box confirm-box" style={{ maxWidth: '380px' }}>
@@ -202,32 +269,25 @@ export default function ProfileView({
           </div>
         </div>
       )}
-      
+
       {/* ── Tabs ── */}
       <div className="pv-tabs">
-        <button 
-          className={`pv-tab ${activeTab === 'overview' ? 'active' : ''}`}
-          onClick={() => setActiveTab('overview')}
-        >
-          👤 Overview
-        </button>
-        <button 
-          className={`pv-tab ${activeTab === 'inbox' ? 'active' : ''}`}
-          onClick={() => setActiveTab('inbox')}
-        >
-          ✉️ Inbox {messages.filter(m => !m.isRead).length > 0 && <span className="tab-badge" />}
-        </button>
-        <button 
-          className={`pv-tab ${activeTab === 'insights' ? 'active' : ''}`}
-          onClick={() => setActiveTab('insights')}
-        >
-          🔭 Fairness Insights
-        </button>
+        {TABS.map(t => (
+          <button
+            key={t.id}
+            className={`pv-tab ${activeTab === t.id ? 'active' : ''}`}
+            onClick={() => setActiveTab(t.id)}
+          >
+            {t.label}
+            {t.badge && <span className="tab-badge" />}
+          </button>
+        ))}
       </div>
 
-      {activeTab === 'overview' && (
+      {/* ──────────────── TAB 1: PROFILE ──────────────── */}
+      {activeTab === 'profile' && (
         <>
-          {/* ── Hero card ── */}
+          {/* Hero */}
           <div className="pv-hero">
             <div className="pv-avatar-wrap">
               <div className="pv-avatar">{initials}</div>
@@ -257,7 +317,6 @@ export default function ProfileView({
                       placeholder="Department"
                     />
                   </div>
-                  {/* Status message with presets */}
                   <div>
                     <div className="pv-status-presets">
                       {STATUS_PRESETS.map(p => (
@@ -281,23 +340,22 @@ export default function ProfileView({
               ) : (
                 <>
                   <h2 className="pv-name">{profile.displayName || profile.name}</h2>
-                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.4rem' }}>
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
                     <span className="pv-role-chip">{profile.role || 'Professional'}</span>
                     <span className="pv-dept-chip">{profile.department || 'General'}</span>
                   </div>
                   {statusMsg && (
-                    <div style={{ fontSize: '0.82rem', color: 'rgba(255,255,255,0.55)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: statusDotColor, display: 'inline-block', flexShrink: 0 }} />
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: statusDotColor, display: 'inline-block', flexShrink: 0 }} />
                       {statusMsg}
                     </div>
                   )}
                 </>
               )}
-
               {!isEditing && (
                 <div className="pv-meta">
-                  <span>📧 {profile.email}</span>
-                  <span>🌍 {profile.timezone || 'Asia/Jerusalem'}</span>
+                  <span>{profile.email}</span>
+                  <span>{profile.timezone || 'Asia/Jerusalem'}</span>
                 </div>
               )}
             </div>
@@ -307,32 +365,32 @@ export default function ProfileView({
                 <>
                   <button className="pv-btn secondary" onClick={() => { setIsEditing(false); setSkillInput(''); }}>Cancel</button>
                   <button className="pv-btn primary" onClick={handleSaveProfile} disabled={isUpdating}>
-                    {isUpdating ? 'Saving...' : 'Save Changes'}
+                    {isUpdating ? 'Saving...' : 'Save'}
                   </button>
                 </>
               ) : (
                 <button className="pv-btn ghost" onClick={() => { setTempProfile(profile); setIsEditing(true); setSaveError(''); setSkillInput(''); }}>
-                  ✏️ Edit Profile
+                  Edit Profile
                 </button>
               )}
-              {saveError && <p style={{ color: '#f87171', fontSize: '0.8rem', marginTop: '0.5rem' }}>{saveError}</p>}
+              {saveError && <p style={{ color: 'var(--danger)', fontSize: '0.78rem', marginTop: '0.4rem' }}>{saveError}</p>}
             </div>
           </div>
 
-          {/* ── Profile Completeness Bar ── */}
+          {/* Completeness bar */}
           <div className="pv-completeness">
             <div className="pv-completeness-track">
               <div className="pv-completeness-fill" style={{ width: `${completeness}%` }} />
             </div>
             <span className="pv-completeness-label">
-              {completeness >= 100 ? 'Profile complete ✓' : `Profile ${completeness}% complete`}
+              {completeness >= 100 ? 'Profile complete' : `${completeness}% complete`}
             </span>
           </div>
 
           <div className="pv-detail-grid">
             {/* Bio & Skills */}
             <div className="pv-card">
-              <h3>📝 Bio & Expertise</h3>
+              <h3>Bio & Expertise</h3>
               {isEditing ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                   <textarea
@@ -342,8 +400,8 @@ export default function ProfileView({
                     placeholder="Tell us about yourself..."
                   />
                   <div>
-                    <label style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.4)', marginBottom: '0.4rem', display: 'block' }}>
-                      SKILLS — press Enter or comma to add
+                    <label style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: '0.4rem', display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      Skills — press Enter or comma to add
                     </label>
                     <div className="skill-chips-wrap">
                       {(tempProfile.skills || []).filter(Boolean).map(s => (
@@ -361,145 +419,212 @@ export default function ProfileView({
                       />
                     </div>
                   </div>
-                  {/* Working hours */}
-                  <div>
-                    <label style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.4)', marginBottom: '0.4rem', display: 'block' }}>WORKING HOURS</label>
-                    <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-                      <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Start</label>
-                      <input
-                        type="time"
-                        className="pv-input-sub"
-                        style={{ width: 'auto' }}
-                        value={(tempProfile.workingHours || workingHours).start}
-                        onChange={e => setTempProfile(p => ({ ...p, workingHours: { ...(p.workingHours || workingHours), start: e.target.value } }))}
-                      />
-                      <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>End</label>
-                      <input
-                        type="time"
-                        className="pv-input-sub"
-                        style={{ width: 'auto' }}
-                        value={(tempProfile.workingHours || workingHours).end}
-                        onChange={e => setTempProfile(p => ({ ...p, workingHours: { ...(p.workingHours || workingHours), end: e.target.value } }))}
-                      />
-                    </div>
-                  </div>
                 </div>
               ) : (
                 <>
-                  <p className="pv-bio">{profile.bio || "No bio yet. Click Edit to add one!"}</p>
+                  <p className="pv-bio">{profile.bio || 'No bio yet. Click Edit Profile to add one.'}</p>
                   <div className="pv-skills">
                     {(profile.skills || []).filter(Boolean).map(skill => (
                       <span key={skill} className="pv-skill-tag">{skill}</span>
                     ))}
-                    {(profile.skills || []).length === 0 && <span className="empty-hint">No skills listed</span>}
-                  </div>
-                  {/* Working hours bar */}
-                  <div style={{ marginTop: '1.25rem' }}>
-                    <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.35)', marginBottom: '0.4rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Working Hours</div>
-                    <div className="wh-track">
-                      <div
-                        className="wh-fill"
-                        style={{ left: `${whStartPct}%`, width: `${whEndPct - whStartPct}%` }}
-                      />
-                    </div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.3rem' }}>
-                      {workingHours.start} – {workingHours.end}
-                    </div>
+                    {(profile.skills || []).length === 0 && <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>No skills listed</span>}
                   </div>
                 </>
               )}
             </div>
 
-            {/* Integration Status */}
+            {/* Stats */}
             <div className="pv-card">
-              <h3>🗓️ Calendar Connectivity</h3>
-              <div className="cal-providers">
-                <CalendarRow
-                  brand="google"
-                  name="Google Calendar"
-                  status={calendarStatus?.google}
-                  onConnect={onCalendarConnect}
-                  onDisconnect={handleDisconnect}
-                />
-                <CalendarRow
-                  brand="microsoft"
-                  name="Outlook"
-                  status={calendarStatus?.microsoft}
-                  onConnect={onCalendarConnect}
-                  onDisconnect={handleDisconnect}
-                />
-                <div className="cal-provider-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '0.5rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', width: '100%' }}>
-                    <div className="cal-provider-icon ms-icon" style={{ background: '#0078d4' }}>📅</div>
-                    <div className="cal-provider-info" style={{ flex: 1 }}>
-                      <span className="cal-provider-name">Outlook via Calendar Feed</span>
-                      <span className={icsUrl ? 'cal-status-connected' : 'cal-status-disconnected'}>
-                        {icsUrl ? 'Feed URL saved' : 'Paste your Outlook .ics URL below'}
-                      </span>
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', gap: '0.5rem', width: '100%' }}>
-                    <input
-                      className="pv-input-sub"
-                      style={{ flex: 1, fontSize: '0.75rem' }}
-                      placeholder="https://outlook.live.com/owa/calendar/…/calendar.ics"
-                      value={icsUrl}
-                      onChange={e => { setIcsUrl(e.target.value); setIcsSaveMsg(''); }}
-                    />
-                    <button className="cal-btn cal-btn-connect" onClick={handleSaveIcsUrl} disabled={icsSaving}>
-                      {icsSaving ? '...' : 'Save'}
-                    </button>
-                  </div>
-                  {icsSaveMsg && (
-                    <span style={{ fontSize: '0.72rem', color: icsSaveMsg.startsWith('Save failed') ? '#f87171' : '#22c55e', paddingLeft: '0.25rem' }}>
-                      {icsSaveMsg}
-                    </span>
-                  )}
-                  <details style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.4)', paddingLeft: '0.25rem' }}>
-                    <summary style={{ cursor: 'pointer' }}>How to get your Outlook .ics URL</summary>
-                    <ol style={{ marginTop: '0.4rem', paddingLeft: '1.2rem', lineHeight: '1.6' }}>
-                      <li>Open Outlook → Settings (gear icon) → View all Outlook settings</li>
-                      <li>Go to Calendar → Shared calendars</li>
-                      <li>Under "Publish a calendar", select your calendar and set permissions to "Can view all details"</li>
-                      <li>Click Publish, then copy the ICS link</li>
-                    </ol>
-                  </details>
+              <h3>Meeting Stats</h3>
+              <div className="pv-stats">
+                <StatItem val={total}     label="Total"     color="var(--accent)" />
+                <StatItem val={confirmed} label="Confirmed" color="var(--success)" />
+                <StatItem val={organized} label="Organized" color="var(--purple)" />
+                <StatItem val={invited}   label="Invited"   color="var(--warning)" />
+                <StatItem val={thisWeek}  label="This Week" color="var(--accent)" />
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ──────────────── TAB 2: PREFERENCES ──────────────── */}
+      {activeTab === 'preferences' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
+          {/* Timezone & Working Hours */}
+          <div className="pv-card">
+            <h3>Time & Availability</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '0.5rem' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.4rem' }}>
+                  Timezone
+                </label>
+                <select
+                  className="pv-input-sub"
+                  value={profile.timezone || 'Asia/Jerusalem'}
+                  onChange={e => handleSavePref({ timezone: e.target.value })}
+                  style={{ cursor: 'pointer' }}
+                >
+                  {TIMEZONES.map(tz => (
+                    <option key={tz} value={tz}>{tz}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.4rem' }}>
+                  Working Hours
+                </label>
+                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Start</span>
+                  <input
+                    type="time"
+                    className="pv-input-sub"
+                    style={{ width: 'auto' }}
+                    value={workingHours.start}
+                    onChange={e => handleSavePref({ workingHours: { ...workingHours, start: e.target.value } })}
+                  />
+                  <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>End</span>
+                  <input
+                    type="time"
+                    className="pv-input-sub"
+                    style={{ width: 'auto' }}
+                    value={workingHours.end}
+                    onChange={e => handleSavePref({ workingHours: { ...workingHours, end: e.target.value } })}
+                  />
+                </div>
+                <div className="wh-track" style={{ marginTop: '0.75rem' }}>
+                  <div className="wh-fill" style={{ left: `${whStartPct}%`, width: `${whEndPct - whStartPct}%` }} />
+                </div>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.3rem' }}>
+                  {workingHours.start} – {workingHours.end}
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Stats Bar */}
-          <div className="pv-stats">
-            <StatItem icon="📅" val={total}     label="Total"     color="var(--accent-color)" />
-            <StatItem icon="✅" val={confirmed}  label="Confirmed" color="#22c55e" />
-            <StatItem icon="🎯" val={organized}  label="Organized" color="#818cf8" />
-            <StatItem icon="📨" val={invited}    label="Invited"   color="#f59e0b" />
-            <StatItem icon="📊" val={thisWeek}   label="This Week" color="var(--accent-color)" />
+          {/* Notifications */}
+          <div className="pv-card">
+            <h3>Notifications</h3>
+            <div style={{ marginTop: '0.25rem' }}>
+              <PrefRow
+                label="Meeting invitations"
+                desc="Email me when someone invites me to a meeting"
+                on={notifPrefs.invites}
+                onChange={v => handleSavePref({ notificationPrefs: { ...notifPrefs, invites: v } })}
+              />
+              <PrefRow
+                label="Meeting reminders"
+                desc="Email me reminders 1 hour before meetings"
+                on={notifPrefs.reminders}
+                onChange={v => handleSavePref({ notificationPrefs: { ...notifPrefs, reminders: v } })}
+              />
+              <div style={{ borderBottom: 'none' }}>
+                <PrefRow
+                  label="Weekly fairness digest"
+                  desc="Weekly email summary of your fairness score and activity"
+                  on={notifPrefs.digest}
+                  onChange={v => handleSavePref({ notificationPrefs: { ...notifPrefs, digest: v } })}
+                />
+              </div>
+            </div>
           </div>
-        </>
+
+          {/* Visibility */}
+          <div className="pv-card">
+            <h3>Privacy</h3>
+            <div style={{ marginTop: '0.25rem' }}>
+              <PrefRow
+                label="Show fairness score publicly"
+                desc="Allow other users to see your fairness score on your public profile"
+                on={profile.showFairnessScore ?? true}
+                onChange={v => handleSavePref({ showFairnessScore: v })}
+              />
+              <div style={{ borderBottom: 'none' }}>
+                <PrefRow
+                  label="Allow messages"
+                  desc="Allow other users to send you kudos and nudges"
+                  on={profile.allowMessages ?? true}
+                  onChange={v => handleSavePref({ allowMessages: v })}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
+      {/* ──────────────── TAB 3: CALENDAR ──────────────── */}
+      {activeTab === 'calendar' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <CalendarCard
+            brand="google"
+            name="Google Calendar"
+            status={calendarStatus?.google}
+            onConnect={onCalendarConnect}
+            onDisconnect={() => setDisconnectConfirm('google')}
+          />
+          <CalendarCard
+            brand="microsoft"
+            name="Microsoft Outlook"
+            status={calendarStatus?.microsoft}
+            onConnect={onCalendarConnect}
+            onDisconnect={() => setDisconnectConfirm('microsoft')}
+          />
+          <div className="pv-card">
+            <h3>Outlook Calendar Feed</h3>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0 0 1rem', lineHeight: 1.6 }}>
+              No Azure app registration needed — paste your Outlook .ics feed URL to sync availability.
+            </p>
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
+              <input
+                className="pv-input-sub"
+                style={{ flex: 1 }}
+                placeholder="https://outlook.live.com/owa/calendar/…/calendar.ics"
+                value={icsUrl}
+                onChange={e => { setIcsUrl(e.target.value); setIcsSaveMsg(''); }}
+              />
+              <button className="cal-btn cal-btn-connect" onClick={handleSaveIcsUrl} disabled={icsSaving}>
+                {icsSaving ? '...' : 'Save'}
+              </button>
+            </div>
+            {icsSaveMsg && (
+              <span style={{ fontSize: '0.72rem', color: icsSaveMsg.startsWith('Save failed') ? 'var(--danger)' : 'var(--success)' }}>
+                {icsSaveMsg}
+              </span>
+            )}
+            <details style={{ marginTop: '0.75rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+              <summary style={{ cursor: 'pointer', userSelect: 'none' }}>How to get your Outlook .ics URL</summary>
+              <ol style={{ marginTop: '0.5rem', paddingLeft: '1.25rem', lineHeight: 1.7 }}>
+                <li>Open Outlook → Settings → View all Outlook settings</li>
+                <li>Go to Calendar → Shared calendars</li>
+                <li>Under "Publish a calendar", set permissions to "Can view all details"</li>
+                <li>Click Publish, then copy the ICS link</li>
+              </ol>
+            </details>
+          </div>
+        </div>
+      )}
+
+      {/* ──────────────── TAB 4: INBOX ──────────────── */}
       {activeTab === 'inbox' && (
         <div className="pv-card" style={{ minHeight: '400px' }}>
-          <div className="pv-card-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-            <h3>✉️ Your Communication Inbox</h3>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+            <h3 style={{ margin: 0 }}>Inbox</h3>
             <button className="pv-btn ghost tiny" onClick={fetchMessages} disabled={msgLoading}>
               {msgLoading ? '...' : '↻ Refresh'}
             </button>
           </div>
-          
+
           <div className="inbox-list">
             {messages.length === 0 ? (
               <div className="empty-state">
-                <div className="empty-icon">📭</div>
-                <p>No messages yet. When people nudge you or send kudos, they'll appear here.</p>
+                <div className="empty-icon">✉</div>
+                <p style={{ margin: 0, fontSize: '0.84rem' }}>No messages yet. When people nudge you or send kudos, they'll appear here.</p>
               </div>
             ) : (
               messages.map(m => (
                 <div key={m.messageId} className={`msg-item ${m.isRead ? 'read' : 'unread'}`}>
-                  <div className="msg-icon">{m.messageType === 'kudos' ? '🌟' : m.messageType === 'nudge' ? '🔔' : '💬'}</div>
-                  <div className="msg-body" style={{ flex: 1 }}>
+                  <div className="msg-icon">{m.messageType === 'kudos' ? '★' : m.messageType === 'nudge' ? '●' : '✉'}</div>
+                  <div className="msg-body">
                     <div className="msg-header">
                       <span className="msg-from">{m.fromDisplayName}</span>
                       <span className="msg-time">{new Date(m.createdAt).toLocaleDateString()}</span>
@@ -535,27 +660,102 @@ export default function ProfileView({
         </div>
       )}
 
-      {activeTab === 'insights' && (
-        <div className="pv-card">
-          <h3>🔭 Deep Fairness Analysis</h3>
-          <p className="fa-insight">
-            Based on your last {total} meetings, you have a fairness score of <strong>{score}</strong>. 
-            This places you in the <strong>top {100 - score + 5}%</strong> of your organization.
-          </p>
-          {/* Detailed metrics from the original view */}
-          <div className="fa-metrics-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '1rem', marginTop: '1.5rem' }}>
-             <div className="fa-metric-box" style={{ background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-               <span className="fa-b-label" style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Meetings Last 7 Days</span>
-               <span className="fa-b-val" style={{ color: scoreColor, fontSize: '1.4rem', fontWeight: 800 }}>{thisWeek}</span>
-             </div>
-             <div className="fa-metric-box" style={{ background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-               <span className="fa-b-label" style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Inconvenient Meetings</span>
-               <span className="fa-b-val" style={{ fontSize: '1.4rem', fontWeight: 800 }}>{sufferingScore}</span>
-             </div>
-             <div className="fa-metric-box" style={{ background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-               <span className="fa-b-label" style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Inconvenience Reward</span>
-               <span className="fa-b-val" style={{ color: '#22c55e', fontSize: '1.4rem', fontWeight: 800 }}>+{sufferingScore} pts</span>
-             </div>
+      {/* ──────────────── TAB 5: FAIRNESS ──────────────── */}
+      {activeTab === 'fairness' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
+          {/* Score card */}
+          <div className="pv-card">
+            <h3>Fairness Score</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '2rem', marginTop: '1rem', flexWrap: 'wrap' }}>
+              {/* Circular progress */}
+              <div style={{ position: 'relative', width: '96px', height: '96px', flexShrink: 0 }}>
+                <svg width="96" height="96" viewBox="0 0 96 96">
+                  <circle cx="48" cy="48" r="40" fill="none" stroke="var(--bg-raised)" strokeWidth="8" />
+                  <circle
+                    cx="48" cy="48" r="40"
+                    fill="none"
+                    stroke={scoreColor}
+                    strokeWidth="8"
+                    strokeLinecap="round"
+                    strokeDasharray={`${2 * Math.PI * 40}`}
+                    strokeDashoffset={`${2 * Math.PI * 40 * (1 - score / 100)}`}
+                    transform="rotate(-90 48 48)"
+                    style={{ transition: 'stroke-dashoffset 1s ease' }}
+                  />
+                </svg>
+                <div style={{
+                  position: 'absolute', inset: 0,
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <span style={{ fontSize: '1.4rem', fontWeight: 800, color: scoreColor }}>{score}</span>
+                  <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>/ 100</span>
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '0.3rem' }}>
+                  {score >= 80 ? 'Excellent' : score >= 60 ? 'Good standing' : 'Needs attention'}
+                </div>
+                <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+                  Top {Math.max(1, 100 - score + 5)}% of your organization
+                </div>
+                <span style={{
+                  display: 'inline-block', padding: '0.2rem 0.65rem',
+                  borderRadius: '20px', fontSize: '0.72rem', fontWeight: 700,
+                  background: score >= 80 ? 'rgba(52,211,153,0.12)' : score >= 60 ? 'rgba(251,191,36,0.12)' : 'rgba(248,113,113,0.12)',
+                  color: scoreColor,
+                  border: `1px solid ${scoreColor}33`,
+                }}>
+                  {score >= 80 ? 'Top performer' : score >= 60 ? 'On track' : 'At risk'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Metrics */}
+          <div className="pv-card">
+            <h3>Activity Metrics</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '1rem', marginTop: '0.75rem' }}>
+              <MetricBox label="Meetings last 7 days" value={thisWeek} color={scoreColor} />
+              <MetricBox label="Inconvenient meetings" value={sufferingScore} color="var(--text-primary)" />
+              <MetricBox label="Inconvenience reward" value={`+${sufferingScore} pts`} color="var(--success)" />
+            </div>
+          </div>
+
+          {/* How scoring works explainer */}
+          <div className="pv-card">
+            <button
+              onClick={() => setShowFairnessExplainer(v => !v)}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                width: '100%', padding: 0,
+                color: 'var(--text-primary)', fontFamily: 'inherit',
+              }}
+            >
+              <h3 style={{ margin: 0, fontSize: '0.88rem', fontWeight: 600 }}>How is my score calculated?</h3>
+              <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{showFairnessExplainer ? '▲' : '▼'}</span>
+            </button>
+            {showFairnessExplainer && (
+              <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                {[
+                  { label: 'Starting score', desc: 'Everyone starts at 100' },
+                  { label: '−2 per meeting this week', desc: 'Each meeting you attend reduces your score slightly' },
+                  { label: '−5 per cancellation', desc: 'Cancelling meetings penalizes your score more heavily' },
+                  { label: '+3 per inconvenient meeting', desc: 'Accepting meetings outside your preferred hours earns bonus points' },
+                  { label: 'Slot scoring', desc: 'Time slots are scored by time-of-day, day-of-week, and participant load balance' },
+                ].map((item, i) => (
+                  <div key={i} style={{
+                    display: 'flex', gap: '0.75rem', padding: '0.6rem 0.8rem',
+                    background: 'var(--bg-raised)', borderRadius: 'var(--radius-sm)',
+                  }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>{item.label}</div>
+                      <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>{item.desc}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -563,30 +763,11 @@ export default function ProfileView({
   );
 }
 
-function SettingRow({ label, desc, action, toggle, defaultOn, disabled }) {
-  return (
-    <div className="sr">
-      <div className="sr-info">
-        <span className="sr-label">{label}</span>
-        <span className="sr-desc">{desc}</span>
-      </div>
-      {toggle ? (
-        <div className={`toggle ${defaultOn ? 'on' : ''}`} />
-      ) : (
-        <button
-          className={`sr-btn ${disabled ? 'disabled' : ''}`}
-          disabled={disabled}
-        >
-          {action}
-        </button>
-      )}
-    </div>
-  );
-}
-function CalendarRow({ brand, name, status, onConnect, onDisconnect }) {
+/* ── Calendar card (full card version) ── */
+function CalendarCard({ brand, name, status, onConnect, onDisconnect }) {
   const isConnected = !!status?.connected;
   return (
-    <div className={`cal-provider-row ${isConnected ? 'connected' : ''}`}>
+    <div className="pv-card" style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
       <div className={`cal-provider-icon ${brand === 'google' ? 'google-icon' : 'ms-icon'}`}>
         {brand === 'google' ? 'G' : 'M'}
       </div>
@@ -597,7 +778,7 @@ function CalendarRow({ brand, name, status, onConnect, onDisconnect }) {
         </span>
       </div>
       {isConnected ? (
-        <button className="cal-btn cal-btn-disconnect" onClick={() => onDisconnect(brand)}>Disconnect</button>
+        <button className="cal-btn cal-btn-disconnect" onClick={onDisconnect}>Disconnect</button>
       ) : (
         <button className="cal-btn cal-btn-connect" onClick={() => onConnect(brand)}>Connect</button>
       )}
@@ -605,11 +786,22 @@ function CalendarRow({ brand, name, status, onConnect, onDisconnect }) {
   );
 }
 
-function StatItem({ icon, val, label, color }) {
+function MetricBox({ label, value, color }) {
+  return (
+    <div style={{
+      background: 'var(--bg-raised)', borderRadius: 'var(--radius-md)',
+      padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.4rem',
+    }}>
+      <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{label}</span>
+      <span style={{ fontSize: '1.5rem', fontWeight: 800, color: color || 'var(--text-primary)' }}>{value}</span>
+    </div>
+  );
+}
+
+function StatItem({ val, label, color }) {
   return (
     <div className="pv-stat">
-      <span className="pv-stat-icon">{icon}</span>
-      <span className="pv-stat-val" style={{ color: color || 'white' }}>{val}</span>
+      <span className="pv-stat-val" style={{ color: color || 'var(--text-primary)' }}>{val}</span>
       <span className="pv-stat-label">{label}</span>
     </div>
   );

@@ -14,6 +14,9 @@ class UserProfile(BaseModel):
     statusMessage: Optional[str] = "Focused & Ready"
     timezone: str = "Asia/Jerusalem"
     workingHours: Dict[str, str] = {"start": "09:00", "end": "18:00"}
+    notificationPrefs: Dict[str, bool] = Field(default_factory=lambda: {"invites": True, "reminders": True, "digest": False})
+    showFairnessScore: bool = True
+    allowMessages: bool = True
     createdAt: datetime = Field(default_factory=datetime.now)
 
 # --- 2. Connected Calendar (OAuth tokens stored separately in DB) ---

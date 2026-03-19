@@ -6,6 +6,7 @@ import CalendarView from './components/CalendarView';
 import ProfileView from './components/ProfileView';
 import PeopleView from './components/PeopleView';
 import PublicProfile from './components/PublicProfile';
+import MeetingDetailModal from './components/MeetingDetailModal';
 import { apiGet, apiPost } from './apiClient';
 
 import { Amplify } from 'aws-amplify';
@@ -29,6 +30,7 @@ function AppContent() {
   const [sidebarOpen, setSidebarOpen]     = useState(false);
   const [unreadCount, setUnreadCount]     = useState(0);
   const [meetingPrefill, setMeetingPrefill] = useState(null); // email string to prefill
+  const [selectedMeeting, setSelectedMeeting] = useState(null); // for MeetingDetailModal
   // helper so child components can still call setActiveView('meetings') etc.
   const setActiveView = (view) => navigate(`/${view === 'dashboard' ? '' : view}`);
   const oauthProcessed = useRef(false);
@@ -213,11 +215,11 @@ function AppContent() {
   const meetingsBadge = (meetings.filter(m => m.status === 'pending' && m.userRole === 'organizer').length + needsAction) || null;
 
   const navItems = [
-    { id: 'dashboard', path: '/',          emoji: '🏠', label: 'Dashboard' },
-    { id: 'calendar',  path: '/calendar',  emoji: '🗓️', label: 'Calendar'  },
-    { id: 'meetings',  path: '/meetings',  emoji: '📋', label: 'Meetings', badge: meetingsBadge },
-    { id: 'people',    path: '/people',    emoji: '👥', label: 'People'    },
-    { id: 'profile',   path: '/profile',   emoji: '👤', label: 'Profile',  badge: unreadCount || null },
+    { id: 'dashboard', path: '/',          label: 'Dashboard' },
+    { id: 'calendar',  path: '/calendar',  label: 'Calendar'  },
+    { id: 'meetings',  path: '/meetings',  label: 'Meetings', badge: meetingsBadge },
+    { id: 'people',    path: '/people',    label: 'People'    },
+    { id: 'profile',   path: '/profile',   label: 'Profile',  badge: unreadCount || null },
   ];
 
   const displayName = profile?.name || profile?.displayName || '';
@@ -255,7 +257,6 @@ function AppContent() {
               onClick={() => setSidebarOpen(false)}
               title={item.label}
             >
-              <span className="nav-emoji">{item.emoji}</span>
               <span className="nav-label">{item.label}</span>
               {item.badge > 0 && (
                 <span className="nav-badge">{item.badge}</span>
@@ -352,7 +353,10 @@ function AppContent() {
                   <h2>Calendar</h2>
                   <p className="view-subtitle">Visual overview of your confirmed meetings</p>
                 </div>
-                <CalendarView meetings={meetings} />
+                <CalendarView
+                  meetings={meetings}
+                  onMeetingClick={(m) => setSelectedMeeting(m)}
+                />
               </div>
             } />
 
@@ -413,6 +417,35 @@ function AppContent() {
           currentUserId={profile?.id}
         />
       )}
+
+      {/* ── Meeting Detail Modal (Global, from Calendar click) ── */}
+      {selectedMeeting && (
+        <MeetingDetailModal
+          meeting={selectedMeeting}
+          currentUserId={profile?.id}
+          onClose={() => setSelectedMeeting(null)}
+          onAccept={async (requestId) => {
+            try { await apiPost(`/api/meetings/${requestId}/accept`, {}); await refreshAll(); }
+            catch (err) { console.error('Accept failed:', err); }
+          }}
+          onDecline={async (requestId) => {
+            try { await apiPost(`/api/meetings/${requestId}/decline`, {}); await refreshAll(); }
+            catch (err) { console.error('Decline failed:', err); }
+          }}
+          onCancel={(requestId) => {
+            setSelectedMeeting(null);
+            navigate('/meetings');
+          }}
+          onReschedule={(requestId) => {
+            setSelectedMeeting(null);
+            navigate('/meetings');
+          }}
+          onEdit={(meeting) => {
+            setSelectedMeeting(null);
+            navigate('/meetings');
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -451,7 +484,7 @@ function DashboardView({ profile, meetings, onNavigate, needsAction }) {
       {/* Hero */}
       <div className="dash-hero">
         <div>
-          <h1 className="dash-greeting">Welcome back, {(profile.name || profile.displayName || 'there').split(' ')[0]} 👋</h1>
+          <h1 className="dash-greeting">Welcome back, {(profile.name || profile.displayName || 'there').split(' ')[0]}</h1>
           <p className="dash-subtitle">Your scheduling hub — analytics, meetings & insights</p>
         </div>
         <button className="btn-primary" onClick={() => onNavigate('meetings')}>
@@ -463,35 +496,33 @@ function DashboardView({ profile, meetings, onNavigate, needsAction }) {
       {needsAction > 0 && (
         <div
           className="insight-banner"
-          style={{ marginBottom: '1.5rem', cursor: 'pointer', borderColor: 'rgba(245,158,11,0.3)', background: 'rgba(245,158,11,0.06)' }}
+          style={{ marginBottom: '1.5rem', cursor: 'pointer', borderColor: 'rgba(251,191,36,0.25)', background: 'rgba(251,191,36,0.06)' }}
           onClick={() => onNavigate('meetings')}
         >
-          <span>🔔</span>
+          <span style={{ color: 'var(--warning)' }}>&#9679;</span>
           <span>
             <strong>{needsAction}</strong> meeting{needsAction > 1 ? 's' : ''} awaiting your acceptance.{' '}
-            <span style={{ color: 'var(--accent-color)' }}>View →</span>
+            <span style={{ color: 'var(--accent)' }}>View →</span>
           </span>
         </div>
       )}
 
-      {/* Enhanced stats grid */}
-      <div className="stats-row enhanced">
-        <div className="stat-card highlight">
-          <div className="stat-icon">⚖️</div>
+      {/* Stats grid */}
+      <div className="stats-row">
+        <div className="stat-card">
           <div className="stat-body">
             <div className="stat-value" style={{ color: scoreColor }}>{score}</div>
             <div className="stat-label">Fairness Score</div>
             <div className="stat-subtext">
-              {score >= 80 ? '🌟 Excellent' : score >= 60 ? '📈 Good' : '⚠️ Below average'}
+              {score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : 'Below average'}
             </div>
           </div>
           <div className="stat-bar-track">
-            <div className="stat-bar-fill" style={{ width: `${score}%`, background: scoreColor, borderRadius: '2px' }} />
+            <div className="stat-bar-fill" style={{ width: `${score}%`, background: scoreColor }} />
           </div>
         </div>
 
         <div className="stat-card">
-          <div className="stat-icon">📅</div>
           <div className="stat-body">
             <div className="stat-value">{total}</div>
             <div className="stat-label">Total Meetings</div>
@@ -500,7 +531,6 @@ function DashboardView({ profile, meetings, onNavigate, needsAction }) {
         </div>
 
         <div className="stat-card">
-          <div className="stat-icon">✅</div>
           <div className="stat-body">
             <div className="stat-value">{confirmed.length}</div>
             <div className="stat-label">Confirmed</div>
@@ -509,7 +539,6 @@ function DashboardView({ profile, meetings, onNavigate, needsAction }) {
         </div>
 
         <div className="stat-card">
-          <div className="stat-icon">📊</div>
           <div className="stat-body">
             <div className="stat-value">{thisWeek}</div>
             <div className="stat-label">This Week</div>
@@ -518,49 +547,60 @@ function DashboardView({ profile, meetings, onNavigate, needsAction }) {
         </div>
       </div>
 
-      {/* Fairness trend mini-chart */}
-      <div className="dash-card" style={{ marginBottom: '1.75rem' }}>
+      {/* Fairness trend */}
+      <div className="dash-card" style={{ marginBottom: '1.25rem' }}>
         <div className="dash-card-head">
-          <h3>📊 Fairness Trend (7 days)</h3>
-          <span className="pill" style={{ background: scoreColor + '20', color: scoreColor, border: `1px solid ${scoreColor}40` }}>
-            +{Math.round(trend[6] - trend[0])} pts
+          <h3>Fairness Trend — 7 days</h3>
+          <span className="pill" style={{ background: scoreColor + '22', color: scoreColor, border: `1px solid ${scoreColor}44` }}>
+            {trend[6] >= trend[0] ? '+' : ''}{Math.round(trend[6] - trend[0])} pts
           </span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0.35rem', height: '60px', paddingTop: '1rem' }}>
-          {trend.map((val, i) => (
-            <div
-              key={i}
-              style={{
-                flex: 1,
-                height: `${((val - trendMin) / trendRange) * 100}%`,
-                background: `rgba(56, 189, 248, ${0.4 + (val / 100) * 0.6})`,
-                borderRadius: '6px 6px 0 0',
-                transition: 'all 0.3s ease',
-                cursor: 'pointer',
-                minHeight: '4px',
-              }}
-              title={`Day ${i + 1}: ${Math.round(val)}`}
-              onMouseEnter={e => e.target.style.opacity = '1'}
-              onMouseLeave={e => e.target.style.opacity = '0.8'}
-            />
-          ))}
-        </div>
+        <svg width="100%" height="60" style={{ display: 'block' }}>
+          {(() => {
+            const pts = trend.map((v, i) => {
+              const x = (i / (trend.length - 1)) * 100;
+              const y = 60 - ((v - trendMin) / trendRange) * 55;
+              return `${x}%,${y}`;
+            }).join(' ');
+            return (
+              <>
+                <polyline
+                  points={pts}
+                  fill="none"
+                  stroke="var(--accent)"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  opacity="0.7"
+                />
+                {trend.map((v, i) => {
+                  const x = (i / (trend.length - 1)) * 100;
+                  const y = 60 - ((v - trendMin) / trendRange) * 55;
+                  return (
+                    <circle key={i} cx={`${x}%`} cy={y} r="3" fill="var(--accent)" opacity="0.8">
+                      <title>Day {i + 1}: {Math.round(v)}</title>
+                    </circle>
+                  );
+                })}
+              </>
+            );
+          })()}
+        </svg>
       </div>
 
       {/* Two-col grid */}
       <div className="dash-grid">
-        {/* Pending selections */}
         <div className="dash-card">
           <div className="dash-card-head">
-            <h3>⏳ Pending Selections</h3>
+            <h3>Pending Selections</h3>
             <span className="pill warning">{myPending.length}</span>
           </div>
           {myPending.length === 0 ? (
-            <p className="empty-hint">All caught up — no pending slot selections. ✅</p>
+            <p className="empty-hint">All caught up — no pending slot selections.</p>
           ) : (
             <div className="mini-list">
               {myPending.slice(0, 4).map(m => (
-                <div key={m.requestId} className="mini-item" onClick={() => onNavigate('meetings')} style={{ cursor: 'pointer' }}>
+                <div key={m.requestId} className="mini-item" onClick={() => onNavigate('meetings')}>
                   <span className="mini-dot pending" />
                   <div className="mini-body">
                     <div className="mini-title">{m.title}</div>
@@ -578,10 +618,9 @@ function DashboardView({ profile, meetings, onNavigate, needsAction }) {
           )}
         </div>
 
-        {/* Upcoming confirmed */}
         <div className="dash-card">
           <div className="dash-card-head">
-            <h3>📅 Upcoming Meetings</h3>
+            <h3>Upcoming Meetings</h3>
             <span className="pill success">{confirmed.length}</span>
           </div>
           {confirmed.length === 0 ? (
@@ -589,7 +628,7 @@ function DashboardView({ profile, meetings, onNavigate, needsAction }) {
           ) : (
             <div className="mini-list">
               {confirmed.slice(0, 4).map(m => (
-                <div key={m.requestId} className="mini-item" onClick={() => onNavigate('calendar')} style={{ cursor: 'pointer' }}>
+                <div key={m.requestId} className="mini-item" onClick={() => onNavigate('calendar')}>
                   <span className="mini-dot confirmed" />
                   <div className="mini-body">
                     <div className="mini-title">{m.title}</div>
@@ -597,12 +636,11 @@ function DashboardView({ profile, meetings, onNavigate, needsAction }) {
                       {m.selectedSlotStart
                         ? new Date(m.selectedSlotStart).toLocaleDateString('en-US', {
                             weekday: 'short', month: 'short', day: 'numeric',
-                            hour: '2-digit', minute: '2-digit',
                           })
                         : `${m.durationMinutes}m`}
                     </div>
                   </div>
-                  <span className="mini-arrow" style={{ color: 'var(--success)' }}>✓</span>
+                  <span className="mini-arrow" style={{ color: 'var(--success)', fontSize: '0.75rem' }}>✓</span>
                 </div>
               ))}
             </div>
@@ -610,10 +648,10 @@ function DashboardView({ profile, meetings, onNavigate, needsAction }) {
         </div>
       </div>
 
-      {/* Smart insights */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
+      {/* Recommendations */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
         {insights.slice(0, 2).map((ins, i) => (
-          <div key={i} className="insight-banner" style={{ cursor: 'pointer' }}>
+          <div key={i} className="insight-banner">
             <span>{ins.emoji}</span>
             <span>{ins.text}</span>
           </div>

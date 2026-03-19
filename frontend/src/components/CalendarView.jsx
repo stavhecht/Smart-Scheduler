@@ -14,10 +14,8 @@ const ROLE_COLOR = {
 };
 const PENDING_COLOR = { bg: 'rgba(251,191,36,0.18)', border: '#fbbf24', text: '#78350f' };
 
-export default function CalendarView({ meetings }) {
+export default function CalendarView({ meetings, onMeetingClick }) {
   const [weekOffset, setWeekOffset] = useState(0);
-  const [hovered, setHovered]       = useState(null);
-  const [mousePos, setMousePos]     = useState({ x: 0, y: 0 });
   const [dayOffset, setDayOffset]   = useState(0);   // mobile day offset from today
   const [isMobile, setIsMobile]     = useState(() => window.innerWidth < 600);
   const nowRef = useRef(null);
@@ -114,10 +112,7 @@ export default function CalendarView({ meetings }) {
   );
 
   return (
-    <div
-      className="cv-wrap"
-      onMouseMove={e => setMousePos({ x: e.clientX, y: e.clientY })}
-    >
+    <div className="cv-wrap">
 
       {/* ── Toolbar ── */}
       <div className="cv-header">
@@ -199,9 +194,9 @@ export default function CalendarView({ meetings }) {
                         background: colors.bg,
                         borderLeft: `3px solid ${colors.border}`,
                         color:      colors.text,
+                        cursor:     'pointer',
                       }}
-                      onMouseEnter={() => setHovered(ev)}
-                      onMouseLeave={() => setHovered(null)}
+                      onClick={(e) => { e.stopPropagation(); onMeetingClick?.(ev); }}
                     >
                       <span className="cv-ev-title">{ev.title}</span>
                       {ev.heightPct > 3 && (
@@ -215,28 +210,6 @@ export default function CalendarView({ meetings }) {
           ))}
         </div>
       </div>
-
-      {/* ── Hover tooltip (follows cursor) ── */}
-      {hovered && (
-        <div
-          className="cv-tooltip"
-          style={{
-            left: Math.min(mousePos.x + 18, window.innerWidth  - 248),
-            top:  Math.min(mousePos.y + 18, window.innerHeight - 175),
-          }}
-        >
-          <div className="cv-tt-title">{hovered.title}</div>
-          <div className="cv-tt-row">
-            📅 {new Date(hovered.selectedSlotStart).toLocaleDateString('en-US', {
-              weekday: 'long', month: 'short', day: 'numeric',
-            })}
-          </div>
-          <div className="cv-tt-row">🕐 {hovered.startStr} · {hovered.durationMinutes}m</div>
-          <div className="cv-tt-row cv-tt-role">
-            {hovered.userRole === 'organizer' ? '📋 You organized this' : '📨 You were invited'}
-          </div>
-        </div>
-      )}
 
       {/* ── Empty state ── */}
       {confirmed.length === 0 && (
