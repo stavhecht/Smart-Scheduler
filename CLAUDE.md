@@ -19,7 +19,7 @@ npm run build                      # production build → dist/
 **Backend only (from `backend/api/`):**
 ```bash
 pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
+ENVIRONMENT=development uvicorn main:app --reload --port 8000
 ```
 
 **Lambda package:**
@@ -29,7 +29,7 @@ python build_lambda.py             # → terraform/api_deployment.zip
 
 **Terraform deploy (from `terraform/`):**
 ```bash
-terraform apply -var="lab_role_arn=arn:aws:iam::451891680911:role/LabRole"
+terraform apply -var="lab_role_arn=arn:aws:iam::975049889875:role/LabRole"
 # api_deployment.zip must already exist in terraform/ before plan/apply
 ```
 
@@ -42,6 +42,20 @@ All frontend API calls go through a single public GET endpoint — **`GET /healt
 - `apiClient.js` encodes the logical action + Cognito access token as query params: `GET /health?action=<action>&token=<jwt>[&data=<json>]`
 - The backend's `/health` handler decodes `action`, validates the token via `cognito-idp:GetUser`, dispatches to the appropriate handler, and always returns HTTP 200 (even for backend errors — check `body.status === 'error'`).
 - `apiGet` / `apiPost` in `apiClient.js` are thin wrappers that map URL patterns to action strings.
+
+Key action strings (full list in `apiClient.js`):
+
+| Action | Triggered by |
+|---|---|
+| `profile`, `meetings`, `calendar_status` | `apiGet` |
+| `activity_feed`, `list_users`, `get_messages`, `profile_stats` | `apiGet` |
+| `get_public_profile:<userId>`, `shared_meetings:<userId>` | `apiGet` |
+| `meeting_log:<id>`, `oauth_url:<provider>` | `apiGet` |
+| `create_meeting`, `accept:<id>`, `book:<id>:<slot>` | `apiPost` |
+| `cancel:<id>`, `edit:<id>`, `reschedule:<id>` | `apiPost` |
+| `book_custom:<id>`, `update_profile`, `send_message:<userId>` | `apiPost` |
+| `oauth_callback:<provider>`, `calendar_disconnect:<provider>` | `apiPost` |
+| `score_slot`, `update_ics_url` | direct `apiProxy` calls |
 
 ### Lambda Dual-Dispatch (`main.py:handler`)
 
@@ -70,6 +84,21 @@ Single-table design (`SmartScheduler_V1`). Key schema:
 - User profiles: `PK=USER#<id>`, `SK=PROFILE`
 - Meetings: `PK=USER#<id>`, `SK=MTG#<requestId>`
 - All floats converted to `Decimal` before writes; all reads should `float()` Decimal values.
+
+### Frontend Components
+
+| Component | Role |
+|---|---|
+| `App.jsx` | Router + global state (`AppContent`) |
+| `MeetingDashboard.jsx` | Main scheduling UI (create, list, book) |
+| `CalendarView.jsx` | Calendar display |
+| `ProfileView.jsx` | User profile & metrics (5-tab) |
+| `PublicProfile.jsx` | Public-facing profile modal |
+| `PeopleView.jsx` | Social people list |
+| `MessagesView.jsx` | In-app messaging |
+| `MeetingDetailModal.jsx` | Meeting detail overlay |
+| `CommandPalette.jsx` | Keyboard-driven command palette |
+| `InboxPanel.jsx` | Inline inbox/notifications panel |
 
 ### State Management (Frontend)
 

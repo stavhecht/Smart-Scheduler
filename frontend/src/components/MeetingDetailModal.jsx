@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { X } from 'lucide-react';
 
 /* ─────────────────────────────────────────────
    MeetingDetailModal
@@ -26,19 +27,20 @@ export default function MeetingDetailModal({
   onReschedule,
   onEdit,
 }) {
+  /* Close on Escape — must be before early return (Rules of Hooks) */
+  useEffect(() => {
+    if (!meeting) return;
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [meeting, onClose]);
+
   if (!meeting) return null;
 
   const isOrganizer   = meeting.userRole === 'organizer' || meeting.creatorUserId === currentUserId;
   const isParticipant = !isOrganizer;
   const hasAccepted   = (meeting.acceptedBy || []).includes(currentUserId);
   const hasDeclined   = (meeting.declinedBy || []).includes(currentUserId);
-
-  /* Close on Escape */
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
 
   /* Format date/time */
   const formatDate = (iso) => {
@@ -72,6 +74,7 @@ export default function MeetingDetailModal({
       }}
     >
       <div
+        className="mdm-card"
         style={{
           background: 'var(--bg-card)',
           border: '1px solid var(--border)',
@@ -126,7 +129,7 @@ export default function MeetingDetailModal({
             onMouseEnter={e => { e.currentTarget.style.color = 'var(--text-primary)'; }}
             onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
             aria-label="Close"
-          >✕</button>
+          ><X size={14} /></button>
         </div>
 
         {/* Body */}

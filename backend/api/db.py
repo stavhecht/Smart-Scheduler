@@ -165,6 +165,44 @@ def get_profile_messages(user_id: str, limit: int = 20) -> List[models.ProfileMe
     return msgs[:limit]
 
 
+def mark_messages_read(user_id: str):
+    """Mark all unread messages for a user as read (batch update)."""
+    items = _query_begins_with(f"USER#{user_id}", "MSG#")
+    for item in items:
+        if not item.get('isRead', False):
+            pk = item.get('PK', f"USER#{user_id}")
+            sk = item.get('SK', '')
+            if sk:
+                try:
+                    table.update_item(
+                        Key={'PK': pk, 'SK': sk},
+                        UpdateExpression='SET isRead = :r',
+                        ExpressionAttributeValues={':r': True},
+                    )
+                except Exception:
+                    pass
+
+
+def _get_working_hours_list(participant_working_hours: List[dict]) -> List[int]:
+    """
+    Compute the intersection of participants' working hours and return candidate local hours.
+    Skips lunch hour (12). Falls back to default WORKING_HOURS on any error.
+    """
+    if not participant_working_hours:
+        return fairness_engine.WORKING_HOURS
+    try:
+        starts = [int(wh.get('start', '09:00').split(':')[0]) for wh in participant_working_hours]
+        ends   = [int(wh.get('end',   '18:00').split(':')[0]) for wh in participant_working_hours]
+        wh_start = max(starts)   # latest start = safe intersection
+        wh_end   = min(ends)     # earliest end = safe intersection
+        if wh_start >= wh_end:
+            return fairness_engine.WORKING_HOURS
+        hours = [h for h in range(max(7, wh_start), min(19, wh_end)) if h != 12]
+        return hours if hours else fairness_engine.WORKING_HOURS
+    except Exception:
+        return fairness_engine.WORKING_HOURS
+
+
 def update_fairness_on_booking(user_ids: List[str], slot_fairness_impact: float):
     """
     Updates fairness scores and meeting load metrics for all participants.
@@ -520,47 +558,95 @@ def create_meeting_with_simulation(req_data: models.MeetingCreateSchema, creator
     """
     Fallback path (used when Step Functions is not configured).
     Creates a meeting and uses the real FairnessEngine for slot scoring.
+    Uses participant timezones, working hours intersection, and live calendar conflicts.
     """
     meeting = create_meeting_record(req_data, creator_id)
+    all_pids = list(set([creator_id] + (req_data.participantIds or [])))
 
-    # Get creator fairness state for scoring
-    creator_state_data = _get_item(f"USER#{creator_id}", "FAIRNESS")
-    participant_states = [creator_state_data] if creator_state_data else []
+    # Fetch fairness states and profiles for all participants
+    participant_states = []
+    participant_profiles = []
+    for uid in all_pids:
+        state = _get_item(f"USER#{uid}", "FAIRNESS")
+        if state:
+            participant_states.append(state)
+        profile = _get_item(f"USER#{uid}", "PROFILE")
+        if profile:
+            participant_profiles.append(profile)
 
-    # Resolve creator's timezone offset for accurate slot scoring
-    creator_profile = _get_item(f"USER#{creator_id}", "PROFILE")
+    # Resolve organizer's timezone offset (for impact + explanation)
+    creator_profile = next((p for p in participant_profiles if p.get('userId') == creator_id), None)
     creator_tz = (creator_profile or {}).get("timezone", "UTC")
     tz_offset = get_tz_offset_hours(creator_tz)
 
-    # Generate candidate slots aligned to creator's local working hours
+    # Per-participant timezone offsets (for averaged time scoring)
+    participant_tz_offsets = [
+        get_tz_offset_hours(p.get('timezone', 'UTC')) for p in participant_profiles
+    ] if participant_profiles else None
+
+    # Working hours intersection across all participants
+    working_hours_data = [p.get('workingHours', {'start': '09:00', 'end': '18:00'}) for p in participant_profiles]
+    wh_list = _get_working_hours_list(working_hours_data)
+
+    # Generate candidate slots aligned to working hours intersection
     candidates = fairness_engine.generate_candidate_slots(
-        meeting.dateRangeStart, meeting.dateRangeEnd, tz_offset_hours=tz_offset
+        meeting.dateRangeStart, meeting.dateRangeEnd,
+        tz_offset_hours=tz_offset, working_hours=wh_list
     )
 
-    # Filter out slots that overlap with the creator's actual calendar busy times
-    try:
-        import calendar_client as _cc
-        busy_slots = _cc.get_user_busy_slots(creator_id, meeting.dateRangeStart, meeting.dateRangeEnd)
-        if busy_slots:
-            def _slot_overlaps(slot_dt):
-                slot_end = slot_dt + timedelta(minutes=meeting.durationMinutes)
-                for b in busy_slots:
-                    try:
-                        b_start = datetime.fromisoformat(b['start'].rstrip('Z'))
-                        b_end   = datetime.fromisoformat(b['end'].rstrip('Z'))
-                        if slot_dt < b_end and slot_end > b_start:
-                            return True
-                    except Exception:
-                        pass
-                return False
-            candidates = [c for c in candidates if not _slot_overlaps(c)]
-    except Exception:
-        pass  # Calendar unavailable — proceed with all candidates
+    # Fetch calendar busy slots for ALL participants
+    import calendar_client as _cc
+    all_busy: Dict[str, list] = {}
+    for uid in all_pids:
+        try:
+            busy = _cc.get_user_busy_slots(uid, meeting.dateRangeStart, meeting.dateRangeEnd)
+            if busy:
+                all_busy[uid] = busy
+        except Exception:
+            pass
 
-    # Score each candidate
+    def _conflict_count(slot_dt: datetime) -> int:
+        """Count how many participants have a calendar conflict at this slot."""
+        slot_end = slot_dt + timedelta(minutes=meeting.durationMinutes)
+        count = 0
+        for uid, busy_list in all_busy.items():
+            for b in busy_list:
+                try:
+                    b_start = datetime.fromisoformat(b['start'].rstrip('Z'))
+                    b_end   = datetime.fromisoformat(b['end'].rstrip('Z'))
+                    if slot_dt < b_end and slot_end > b_start:
+                        count += 1
+                        break
+                except Exception:
+                    pass
+        return count
+
+    # Filter slots where the creator has a hard conflict
+    creator_busy = all_busy.get(creator_id, [])
+    if creator_busy:
+        def _creator_conflicts(slot_dt):
+            slot_end = slot_dt + timedelta(minutes=meeting.durationMinutes)
+            for b in creator_busy:
+                try:
+                    b_start = datetime.fromisoformat(b['start'].rstrip('Z'))
+                    b_end   = datetime.fromisoformat(b['end'].rstrip('Z'))
+                    if slot_dt < b_end and slot_end > b_start:
+                        return True
+                except Exception:
+                    pass
+            return False
+        candidates = [c for c in candidates if not _creator_conflicts(c)]
+
+    # Score each candidate with real conflict counts and per-participant timezones
     all_scored = []
     for slot_dt in candidates:
-        result = fairness_engine.score_time_slot(slot_dt, participant_states, meeting.durationMinutes, tz_offset_hours=tz_offset)
+        busy_count = _conflict_count(slot_dt)
+        result = fairness_engine.score_time_slot(
+            slot_dt, participant_states, meeting.durationMinutes,
+            tz_offset_hours=tz_offset,
+            participant_tz_offsets=participant_tz_offsets,
+            busy_count=busy_count,
+        )
         end_dt = slot_dt + timedelta(minutes=meeting.durationMinutes)
         all_scored.append({
             "startIso": slot_dt.isoformat() + 'Z',
@@ -602,39 +688,101 @@ def create_meeting_with_simulation(req_data: models.MeetingCreateSchema, creator
 def sfn_fetch_participants(payload: dict) -> dict:
     """
     SFN State: FetchParticipantData
-    Fetches the fairness states for all participants.
+    Fetches the fairness states AND profiles (timezone, working hours) for all participants.
     """
     creator_id = payload.get('creator_id', '')
     participant_ids = payload.get('participant_ids', [])
 
     all_ids = list(set([creator_id] + participant_ids))
     participant_states = []
+    participant_profiles = []
     for uid in all_ids:
         state = _get_item(f"USER#{uid}", "FAIRNESS")
         if state:
             participant_states.append(state)
+        profile = _get_item(f"USER#{uid}", "PROFILE")
+        if profile:
+            participant_profiles.append({
+                'userId':       uid,
+                'timezone':     profile.get('timezone', 'UTC'),
+                'workingHours': profile.get('workingHours', {'start': '09:00', 'end': '18:00'}),
+            })
 
-    payload['participant_states'] = participant_states
+    payload['participant_states']   = participant_states
+    payload['participant_profiles'] = participant_profiles
     return payload
 
 
 def sfn_generate_slots(payload: dict) -> dict:
     """
     SFN State: GenerateCandidateSlots
-    Generates candidate time slots within the meeting's date range.
+    Generates candidate time slots using the working hours intersection of all participants.
+    Also pre-computes per-slot calendar conflict counts.
     """
-    date_start = datetime.fromisoformat(payload['date_range_start'])
-    date_end = datetime.fromisoformat(payload['date_range_end'])
+    date_start       = datetime.fromisoformat(payload['date_range_start'])
+    date_end         = datetime.fromisoformat(payload['date_range_end'])
     duration_minutes = payload.get('duration_minutes', 60)
+    tz_offset        = float(payload.get('tz_offset_hours', 0.0))
+    profiles         = payload.get('participant_profiles', [])
 
-    tz_offset = float(payload.get('tz_offset_hours', 0.0))
-    candidates = fairness_engine.generate_candidate_slots(date_start, date_end, tz_offset_hours=tz_offset)
+    # Working hours intersection
+    wh_data = [p.get('workingHours', {'start': '09:00', 'end': '18:00'}) for p in profiles]
+    wh_list = _get_working_hours_list(wh_data)
+
+    candidates = fairness_engine.generate_candidate_slots(
+        date_start, date_end, tz_offset_hours=tz_offset, working_hours=wh_list
+    )
     end_delta = timedelta(minutes=duration_minutes)
+
+    # Fetch calendar busy slots for all participants (best-effort)
+    import calendar_client as _cc
+    all_busy: Dict[str, list] = {}
+    creator_id = payload.get('creator_id', '')
+    all_ids = list({creator_id} | set(payload.get('participant_ids', [])))
+    for uid in all_ids:
+        try:
+            busy = _cc.get_user_busy_slots(uid, date_start, date_end)
+            if busy:
+                all_busy[uid] = busy
+        except Exception:
+            pass
+
+    def _conflict_count(slot_dt: datetime) -> int:
+        slot_end = slot_dt + end_delta
+        count = 0
+        for uid, busy_list in all_busy.items():
+            for b in busy_list:
+                try:
+                    b_start = datetime.fromisoformat(b['start'].rstrip('Z'))
+                    b_end   = datetime.fromisoformat(b['end'].rstrip('Z'))
+                    if slot_dt < b_end and slot_end > b_start:
+                        count += 1
+                        break
+                except Exception:
+                    pass
+        return count
+
+    # Filter creator hard-conflicts
+    creator_busy = all_busy.get(creator_id, [])
+    if creator_busy:
+        def _creator_conflicts(slot_dt):
+            slot_end = slot_dt + end_delta
+            for b in creator_busy:
+                try:
+                    b_start = datetime.fromisoformat(b['start'].rstrip('Z'))
+                    b_end   = datetime.fromisoformat(b['end'].rstrip('Z'))
+                    if slot_dt < b_end and slot_end > b_start:
+                        return True
+                except Exception:
+                    pass
+            return False
+        candidates = [c for c in candidates if not _creator_conflicts(c)]
 
     payload['candidate_slots'] = [
         {
-            "startIso": dt.isoformat() + 'Z',
-            "endIso": (dt + end_delta).isoformat() + 'Z',
+            "startIso":      dt.isoformat() + 'Z',
+            "endIso":        (dt + end_delta).isoformat() + 'Z',
+            "conflictCount": _conflict_count(dt),
         }
         for dt in candidates
     ]
@@ -644,21 +792,31 @@ def sfn_generate_slots(payload: dict) -> dict:
 def sfn_calculate_fairness(payload: dict) -> dict:
     """
     SFN State: CalculateFairnessScores
-    Scores each candidate slot using the Social Fairness Algorithm.
+    Scores each candidate slot using per-participant timezones and real conflict counts.
     Also determines whether the Reshuffling Engine needs to activate.
     """
-    participant_states = payload.get('participant_states', [])
-    candidate_slots = payload.get('candidate_slots', [])
-    duration_minutes = payload.get('duration_minutes', 60)
+    participant_states  = payload.get('participant_states', [])
+    candidate_slots     = payload.get('candidate_slots', [])
+    duration_minutes    = payload.get('duration_minutes', 60)
+    profiles            = payload.get('participant_profiles', [])
 
     tz_offset = float(payload.get('tz_offset_hours', 0.0))
+    # Per-participant timezone offsets for averaged time scoring
+    participant_tz_offsets = [get_tz_offset_hours(p.get('timezone', 'UTC')) for p in profiles] or None
+
     scored = []
     for slot in candidate_slots:
-        dt = datetime.fromisoformat(slot['startIso'])
-        result = fairness_engine.score_time_slot(dt, participant_states, duration_minutes, tz_offset_hours=tz_offset)
+        dt          = datetime.fromisoformat(slot['startIso'])
+        busy_count  = int(slot.get('conflictCount', 0))
+        result = fairness_engine.score_time_slot(
+            dt, participant_states, duration_minutes,
+            tz_offset_hours=tz_offset,
+            participant_tz_offsets=participant_tz_offsets,
+            busy_count=busy_count,
+        )
         scored.append({**slot, **result})
 
-    payload['scored_slots'] = scored
+    payload['scored_slots']        = scored
     payload['optimization_needed'] = fairness_engine.needs_optimization(scored)
     return payload
 

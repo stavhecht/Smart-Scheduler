@@ -102,11 +102,13 @@
   cursor: not-allowed;
 }
 
-.nav-emoji {
-  font-size: 0.95rem;
+.nav-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 18px;
-  text-align: center;
   flex-shrink: 0;
+  color: inherit;
 }
 
 .nav-label {
@@ -195,6 +197,25 @@
   background: rgba(248,113,113,0.08);
   color: var(--danger);
   border-color: rgba(248,113,113,0.25);
+}
+
+.theme-toggle-btn {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.55rem;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+  transition: all var(--transition);
+  flex-shrink: 0;
+}
+
+.theme-toggle-btn:hover {
+  background: var(--accent-dim);
+  color: var(--accent);
+  border-color: var(--border-focus);
 }
 
 /* ══════════════════ MAIN CONTENT ══════════════════ */
@@ -286,7 +307,7 @@
 
 /* ── View wrapper ── */
 .view-wrap {
-  animation: fadeIn 0.18s ease;
+  animation: viewEnter 0.18s ease both;
 }
 
 .view-header {
@@ -575,7 +596,7 @@
   .logo-mark { margin: 0 auto; }
   .sidebar-logo { justify-content: center; padding: 1.1rem 0; }
   .nav-item { justify-content: center; padding: 0.6rem; }
-  .nav-emoji { width: auto; }
+  .nav-icon { width: auto; }
   .sidebar-user { justify-content: center; }
   .sidebar-avatar { margin: 0 auto; }
   .signout-btn { padding: 0.4rem; font-size: 0; }
@@ -709,16 +730,33 @@
   outline: none;
   box-sizing: border-box;
 }
-.palette-list { max-height: 320px; overflow-y: auto; }
+.palette-list { max-height: 380px; overflow-y: auto; }
+.palette-section {
+  padding: 0.35rem 1.25rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+  background: var(--bg-raised);
+}
 .palette-item {
-  padding: 0.7rem 1.25rem;
+  padding: 0.6rem 1.25rem;
   cursor: pointer;
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 0.55rem;
   font-size: 0.875rem;
   color: var(--text-secondary);
   transition: background var(--transition), color var(--transition);
+}
+.palette-item-icon { font-size: 0.8rem; flex-shrink: 0; }
+.palette-item-label { flex: 1; }
+.palette-item-meta {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-left: auto;
+  flex-shrink: 0;
 }
 .palette-item:hover, .palette-item.selected {
   background: var(--accent-dim);

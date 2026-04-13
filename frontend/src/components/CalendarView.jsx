@@ -15,10 +15,13 @@ const ROLE_COLOR = {
 const PENDING_COLOR = { bg: 'rgba(251,191,36,0.18)', border: '#fbbf24', text: '#78350f' };
 
 export default function CalendarView({ meetings, onMeetingClick, onCreateAt }) {
-  const [weekOffset, setWeekOffset] = useState(0);
-  const [dayOffset, setDayOffset]   = useState(0);   // mobile day offset from today
-  const [isMobile, setIsMobile]     = useState(() => window.innerWidth < 600);
-  const nowRef = useRef(null);
+  const [weekOffset, setWeekOffset]   = useState(0);
+  const [dayOffset, setDayOffset]     = useState(0);   // mobile day offset from today
+  const [isMobile, setIsMobile]       = useState(() => window.innerWidth < 600);
+  const [showOrganized, setShowOrganized]   = useState(true);
+  const [showParticipant, setShowParticipant] = useState(true);
+  const nowRef       = useRef(null);
+  const touchStartX  = useRef(null);
 
   /* Detect mobile viewport */
   useEffect(() => {
@@ -27,7 +30,12 @@ export default function CalendarView({ meetings, onMeetingClick, onCreateAt }) {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  const confirmed = meetings.filter(m => (m.status === 'confirmed' || m.status === 'pending') && m.selectedSlotStart);
+  const allConfirmed = meetings.filter(m => (m.status === 'confirmed' || m.status === 'pending') && m.selectedSlotStart);
+  const confirmed = allConfirmed.filter(m =>
+    (m.userRole === 'organizer' && showOrganized) ||
+    (m.userRole === 'participant' && showParticipant) ||
+    (!['organizer', 'participant'].includes(m.userRole))
+  );
 
   /* ── Week dates ── */
   const todayBase = new Date();
@@ -135,13 +143,37 @@ export default function CalendarView({ meetings, onMeetingClick, onCreateAt }) {
         <span className="cv-week-label">{isMobile ? mobileDayLabel : weekLabel}</span>
 
         <div className="cv-legend">
-          <span className="cv-legend-item organizer">Organized</span>
-          <span className="cv-legend-item participant">Invited</span>
+          <button
+            className="cv-legend-item organizer"
+            onClick={() => setShowOrganized(v => !v)}
+            style={{ opacity: showOrganized ? 1 : 0.35, cursor: 'pointer', background: 'none', border: 'none', font: 'inherit', textDecoration: showOrganized ? 'none' : 'line-through' }}
+            title={showOrganized ? 'Click to hide organized meetings' : 'Click to show organized meetings'}
+          >Organized</button>
+          <button
+            className="cv-legend-item participant"
+            onClick={() => setShowParticipant(v => !v)}
+            style={{ opacity: showParticipant ? 1 : 0.35, cursor: 'pointer', background: 'none', border: 'none', font: 'inherit', textDecoration: showParticipant ? 'none' : 'line-through' }}
+            title={showParticipant ? 'Click to hide invited meetings' : 'Click to show invited meetings'}
+          >Invited</button>
         </div>
       </div>
 
       {/* ── Scrollable grid ── */}
-      <div className="cv-scroll">
+      <div
+        className="cv-scroll"
+        onTouchStart={e => { touchStartX.current = e.touches[0].clientX; }}
+        onTouchEnd={e => {
+          if (touchStartX.current === null) return;
+          const delta = e.changedTouches[0].clientX - touchStartX.current;
+          touchStartX.current = null;
+          if (Math.abs(delta) < 40) return; // ignore small movements
+          if (isMobile) {
+            setDayOffset(d => d + (delta < 0 ? 1 : -1));
+          } else {
+            setWeekOffset(w => w + (delta < 0 ? 1 : -1));
+          }
+        }}
+      >
         <div className="cv-grid">
 
           {/* Time column */}
@@ -159,7 +191,9 @@ export default function CalendarView({ meetings, onMeetingClick, onCreateAt }) {
               {/* Day header */}
               <div className={`cv-day-header ${day.isToday ? 'today' : ''}`}>
                 <span className="cv-day-name">{day.name}</span>
-                <span className={`cv-day-num ${day.isToday ? 'today-num' : ''}`}>{day.label}</span>
+                <span className={`cv-day-num ${day.isToday ? 'today-num' : ''}`}>
+                  {day.isToday ? day.date.getDate() : day.label}
+                </span>
               </div>
 
               {/* Body with events — click empty area to create meeting */}

@@ -1,22 +1,26 @@
 import { useState, useEffect, useMemo } from 'react';
 import { apiGet, apiPost } from '../apiClient';
+import { Users, Copy, Check, CalendarPlus, Search } from 'lucide-react';
+import { useToast } from '../context/ToastContext.jsx';
 import './PeopleView.css';
 
 const getInitials = (name) =>
   name ? name.split(' ').filter(Boolean).map(n => n[0]).join('').slice(0, 2).toUpperCase() : '?';
 
 const getScoreColor = (score) =>
-  score >= 80 ? '#22c55e' : score >= 60 ? '#f59e0b' : '#ef4444';
+  score >= 80 ? 'var(--success)' : score >= 60 ? 'var(--warning)' : 'var(--danger)';
 
 const APP_URL = 'https://main.d1omo55pxwqk6g.amplifyapp.com';
 
 export default function PeopleView({ meetings, onScheduleWith, onViewProfile }) {
+  const showToast = useToast();
   const [users, setUsers]           = useState([]);
   const [loading, setLoading]       = useState(true);
   const [search, setSearch]         = useState('');
   const [deptFilter, setDeptFilter] = useState('all');
-  const [toast, setToast]           = useState(null);
   const [inviteCopied, setInviteCopied] = useState(false);
+  const [sendingKudosId, setSendingKudosId] = useState(null);
+  const [kudosSentId, setKudosSentId]   = useState(null);
 
   useEffect(() => {
     setLoading(true);
@@ -66,30 +70,25 @@ export default function PeopleView({ meetings, onScheduleWith, onViewProfile }) 
     return list;
   }, [users, search, deptFilter]);
 
-  const showToast = (msg, type = 'success') => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3000);
-  };
-
   const handleKudos = async (user) => {
+    setSendingKudosId(user.id);
     try {
       await apiPost(`/api/profile/${user.id}/message`, {
         content: 'Sent you some kudos! 🌟',
         type: 'kudos',
       });
-      showToast(`Kudos sent to ${user.name}! 🌟`);
-    } catch (err) {
-      showToast('Failed to send kudos', 'error');
+      showToast(`Kudos sent to ${user.name}!`, 'success');
+      setKudosSentId(user.id);
+      setTimeout(() => setKudosSentId(null), 1500);
+    } catch {
+      showToast('Failed to send kudos — please try again.', 'error');
+    } finally {
+      setSendingKudosId(null);
     }
   };
 
   return (
     <div className="pv-people-wrap">
-      {/* Toast */}
-      {toast && (
-        <div className={`people-toast people-toast-${toast.type}`}>{toast.msg}</div>
-      )}
-
       <div className="people-header">
         <div>
           <h2 className="people-title">People</h2>
@@ -114,13 +113,16 @@ export default function PeopleView({ meetings, onScheduleWith, onViewProfile }) 
 
       {/* Search + filter */}
       <div className="people-search-bar">
-        <input
-          type="text"
-          className="people-search-input"
-          placeholder="🔍 Search by name, role or department…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-        />
+        <div className="people-search-wrap">
+          <Search size={14} className="people-search-icon" />
+          <input
+            type="text"
+            className="people-search-input"
+            placeholder="Search by name, role or department…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+        </div>
         <select
           className="people-dept-select"
           value={deptFilter}
@@ -133,14 +135,22 @@ export default function PeopleView({ meetings, onScheduleWith, onViewProfile }) 
 
       {/* Grid */}
       {loading ? (
-        <div className="people-loading">
-          <div className="people-spinner" />
-          <span>Loading members…</span>
+        <div className="people-grid">
+          {[...Array(6)].map((_, i) => (
+            <div key={i} className="people-card-skeleton">
+              <div className="skeleton" style={{ width: 48, height: 48, borderRadius: '50%', flexShrink: 0 }} />
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <div className="skeleton" style={{ height: 13, width: '60%' }} />
+                <div className="skeleton" style={{ height: 11, width: '40%' }} />
+                <div className="skeleton" style={{ height: 10, width: '75%' }} />
+              </div>
+            </div>
+          ))}
         </div>
       ) : filtered.length === 0 ? (
         users.length === 0 ? (
           <div className="people-empty" style={{ padding: '3rem 1rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem' }}>
-            <div style={{ fontSize: '3.5rem', opacity: 0.25 }}>👥</div>
+            <Users size={56} strokeWidth={1} style={{ opacity: 0.25 }} />
             <div style={{ fontWeight: 600, fontSize: '1rem', color: 'var(--text-primary)' }}>No colleagues yet</div>
             <p style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', textAlign: 'center', maxWidth: '340px', margin: 0, lineHeight: 1.6 }}>
               People appear here when colleagues sign up to Smart Scheduler.
@@ -163,12 +173,12 @@ export default function PeopleView({ meetings, onScheduleWith, onViewProfile }) 
                 });
               }}
             >
-              {inviteCopied ? '✓ Copied!' : '📋 Copy invite message'}
+              {inviteCopied ? <><Check size={14} /> Copied!</> : <><Copy size={14} /> Copy invite message</>}
             </button>
           </div>
         ) : (
           <div className="people-empty">
-            <div style={{ fontSize: '3rem', opacity: 0.3 }}>👥</div>
+            <Users size={48} strokeWidth={1} style={{ opacity: 0.3 }} />
             <p>No results match your search.</p>
           </div>
         )
@@ -178,10 +188,10 @@ export default function PeopleView({ meetings, onScheduleWith, onViewProfile }) 
             {filtered.length} member{filtered.length !== 1 ? 's' : ''}
           </div>
           <div className="people-grid">
-            {filtered.map(u => {
+            {filtered.map((u, i) => {
               const scoreColor = getScoreColor(Math.round(u.fairness_score ?? 100));
               return (
-                <div key={u.id} className="people-card">
+                <div key={u.id} className="people-card" style={{ '--delay': `${Math.min(i * 40, 400)}ms` }}>
                   <div className="people-card-top" onClick={() => onViewProfile?.(u.id)} style={{ cursor: 'pointer' }}>
                     <div className="people-card-avatar">{getInitials(u.name)}</div>
                     <div className="people-card-info">
@@ -200,14 +210,18 @@ export default function PeopleView({ meetings, onScheduleWith, onViewProfile }) 
                     </div>
                   </div>
                   <div className="people-card-actions">
-                    <button className="people-btn kudos-btn" onClick={() => handleKudos(u)}>
-                      🌟 Kudos
+                    <button
+                      className="people-btn kudos-btn"
+                      onClick={() => handleKudos(u)}
+                      disabled={sendingKudosId === u.id}
+                    >
+                      {kudosSentId === u.id ? <><Check size={13} /> Sent!</> : sendingKudosId === u.id ? 'Sending…' : '★ Kudos'}
                     </button>
                     <button
                       className="people-btn schedule-btn"
                       onClick={() => { if (onScheduleWith) onScheduleWith(u.email); }}
                     >
-                      📅 Schedule
+                      <CalendarPlus size={13} style={{ marginRight: '0.3rem', verticalAlign: 'middle' }} />Schedule
                     </button>
                   </div>
                 </div>
