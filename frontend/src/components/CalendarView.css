@@ -3,7 +3,7 @@
    ═══════════════════════════════════════════════ */
 
 .cv-wrap {
-  background: #1e293b;
+  background: var(--bg-card);
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 18px;
   overflow: hidden;
@@ -101,7 +101,7 @@
   width: 52px;
   flex-shrink: 0;
   border-right: 1px solid rgba(255, 255, 255, 0.05);
-  background: #1e293b;
+  background: var(--bg-card);
   position: sticky;
   left: 0;
   z-index: 2;
@@ -139,7 +139,7 @@
   align-items: center;
   justify-content: center;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  background: #1e293b;
+  background: var(--bg-card);
   position: sticky;
   top: 0;
   z-index: 1;
@@ -238,7 +238,7 @@
 /* ── Tooltip (position set inline to follow cursor) ── */
 .cv-tooltip {
   position: fixed;
-  background: #1e293b;
+  background: var(--bg-card);
   border: 1px solid rgba(56, 189, 248, 0.22);
   border-radius: 14px;
   padding: 1rem 1.2rem;

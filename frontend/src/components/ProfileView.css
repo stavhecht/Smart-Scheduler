@@ -874,3 +874,7 @@
   .pv-gauge { align-self: center; }
   .pv-stats { grid-template-columns: repeat(3, 1fr); }
 }
+
+.reply-form {
+  animation: tabEnter 0.12s ease both;
+}

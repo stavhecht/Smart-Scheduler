@@ -239,8 +239,16 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
             try:
                 msgs = db.get_profile_messages(user_id)
                 return [m.model_dump(mode="json") for m in msgs]
-            except Exception as exc:
+            except Exception:
                 return []
+
+        # ── mark_messages_read ────────────────────────────────────────────
+        if action == "mark_messages_read":
+            try:
+                db.mark_messages_read(user_id)
+                return {"status": "success"}
+            except Exception:
+                return {"status": "error"}
 
         # ── send_message:<to_user_id> ─────────────────────────────────────
         if action.startswith("send_message:"):
@@ -333,14 +341,26 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
                 meeting = db.create_meeting_record(meeting_data, user_id)
                 creator_profile = db._get_item(f"USER#{user_id}", "PROFILE")
                 creator_tz = (creator_profile or {}).get("timezone", "UTC")
+                # Collect participant profiles so SFN can use working hours + timezones
+                all_pids = list(set([user_id] + (meeting_data.participantIds or [])))
+                participant_profiles_for_sfn = []
+                for uid in all_pids:
+                    p = db._get_item(f"USER#{uid}", "PROFILE")
+                    if p:
+                        participant_profiles_for_sfn.append({
+                            'userId':       uid,
+                            'timezone':     p.get('timezone', 'UTC'),
+                            'workingHours': p.get('workingHours', {'start': '09:00', 'end': '18:00'}),
+                        })
                 sfn_input = {
-                    "request_id":       meeting.requestId,
-                    "creator_id":       user_id,
-                    "participant_ids":  meeting_data.participantIds,
-                    "date_range_start": meeting.dateRangeStart.isoformat(),
-                    "date_range_end":   meeting.dateRangeEnd.isoformat(),
-                    "duration_minutes": meeting.durationMinutes,
-                    "tz_offset_hours":  db.get_tz_offset_hours(creator_tz),
+                    "request_id":           meeting.requestId,
+                    "creator_id":           user_id,
+                    "participant_ids":      meeting_data.participantIds,
+                    "date_range_start":     meeting.dateRangeStart.isoformat(),
+                    "date_range_end":       meeting.dateRangeEnd.isoformat(),
+                    "duration_minutes":     meeting.durationMinutes,
+                    "tz_offset_hours":      db.get_tz_offset_hours(creator_tz),
+                    "participant_profiles": participant_profiles_for_sfn,
                 }
                 try:
                     sfn  = get_sfn_client()

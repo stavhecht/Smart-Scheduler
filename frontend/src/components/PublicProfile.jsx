@@ -1,11 +1,14 @@
 import { useState, useEffect } from 'react';
 import { apiGet, apiPost } from '../apiClient';
+import { X, Users, Check, Star, Bell, CalendarPlus } from 'lucide-react';
+import { useToast } from '../context/ToastContext.jsx';
 import './PublicProfile.css';
 
 export default function PublicProfile({ profile, onClose, onScheduleWith, currentUserId }) {
+  const showToast = useToast();
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
-  const [toast, setToast] = useState(null); // { msg, type: 'success'|'error' }
+  const [sentType, setSentType] = useState(null); // 'kudos' | 'nudge' — for success flash
   const [sharedMeetings, setSharedMeetings] = useState(null);
 
   useEffect(() => {
@@ -15,11 +18,6 @@ export default function PublicProfile({ profile, onClose, onScheduleWith, curren
         .catch(() => {});
     }
   }, [profile?.id, currentUserId]);
-
-  const showToast = (msg, type = 'success') => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3000);
-  };
 
   const handleSendMessage = async (type = 'general') => {
     if (!message.trim() && type === 'general') return;
@@ -32,6 +30,10 @@ export default function PublicProfile({ profile, onClose, onScheduleWith, curren
       }
       const label = type.charAt(0).toUpperCase() + type.slice(1);
       showToast(`${label} sent!`);
+      if (type === 'kudos' || type === 'nudge') {
+        setSentType(type);
+        setTimeout(() => setSentType(null), 2000);
+      }
     } catch (err) {
       showToast('Failed to send: ' + err.message, 'error');
     } finally {
@@ -45,25 +47,13 @@ export default function PublicProfile({ profile, onClose, onScheduleWith, curren
     : '??';
 
   const score = Math.round(profile.fairness_score ?? profile.score ?? 100);
-  const scoreColor = score >= 80 ? '#22c55e' : score >= 60 ? '#f59e0b' : '#ef4444';
+  const scoreColor = score >= 80 ? 'var(--success)' : score >= 60 ? 'var(--warning)' : 'var(--danger)';
 
   return (
     <div className="pp-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="pp-modal">
-        <button className="pp-close" onClick={onClose}>✕</button>
-        {toast && (
-          <div style={{
-            position: 'absolute', top: '0.75rem', left: '50%', transform: 'translateX(-50%)',
-            background: toast.type === 'error' ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)',
-            border: `1px solid ${toast.type === 'error' ? 'rgba(239,68,68,0.4)' : 'rgba(34,197,94,0.4)'}`,
-            color: toast.type === 'error' ? '#f87171' : '#4ade80',
-            padding: '0.5rem 1rem', borderRadius: '8px', fontSize: '0.82rem', whiteSpace: 'nowrap',
-            zIndex: 10,
-          }}>
-            {toast.msg}
-          </div>
-        )}
-        
+        <button className="pp-close" onClick={onClose}><X size={14} /></button>
+
         <div className="pp-head">
           <div className="pp-avatar">{initials}</div>
           <div className="pp-info">
@@ -78,8 +68,8 @@ export default function PublicProfile({ profile, onClose, onScheduleWith, curren
               </div>
             )}
             {sharedMeetings?.count > 0 && (
-              <div style={{ fontSize: '0.74rem', color: 'var(--accent-color)', marginTop: '0.3rem' }}>
-                🤝 {sharedMeetings.count} meeting{sharedMeetings.count !== 1 ? 's' : ''} together
+              <div style={{ fontSize: '0.74rem', color: 'var(--accent-color)', marginTop: '0.3rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                <Users size={12} />{sharedMeetings.count} meeting{sharedMeetings.count !== 1 ? 's' : ''} together
               </div>
             )}
           </div>
@@ -107,17 +97,17 @@ export default function PublicProfile({ profile, onClose, onScheduleWith, curren
             <label>QUICK ACTIONS</label>
             <div className="pp-quick-actions">
               <button className="pp-action-btn" onClick={() => handleSendMessage('kudos')} disabled={sending}>
-                🌟 Send Kudos
+                {sentType === 'kudos' ? <><Check size={13} /> Kudos sent!</> : <><Star size={13} /> Send Kudos</>}
               </button>
               <button className="pp-action-btn" onClick={() => handleSendMessage('nudge')} disabled={sending}>
-                🔔 Nudge
+                {sentType === 'nudge' ? <><Check size={13} /> Nudge sent!</> : <><Bell size={13} /> Nudge</>}
               </button>
               {onScheduleWith && (
                 <button
                   className="pp-action-btn pp-schedule-btn"
                   onClick={() => { onClose(); onScheduleWith(profile.email); }}
                 >
-                  📅 Schedule Meeting
+                  <CalendarPlus size={13} style={{ marginRight: '0.3rem', verticalAlign: 'middle' }} />Schedule Meeting
                 </button>
               )}
             </div>

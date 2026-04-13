@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { Routes, Route, NavLink, useNavigate, Navigate } from 'react-router-dom'
+import { LayoutDashboard, Calendar, CalendarCheck, Users, MessageSquare, User, Sun, Moon } from 'lucide-react'
+import { useToast } from './context/ToastContext.jsx'
 import './App.css'
 import MeetingDashboard from './components/MeetingDashboard';
 import CalendarView from './components/CalendarView';
@@ -8,6 +10,7 @@ import PeopleView from './components/PeopleView';
 import PublicProfile from './components/PublicProfile';
 import MeetingDetailModal from './components/MeetingDetailModal';
 import CommandPalette from './components/CommandPalette';
+import MessagesView from './components/MessagesView';
 import { apiGet, apiPost } from './apiClient';
 
 import { Amplify } from 'aws-amplify';
@@ -20,16 +23,17 @@ Amplify.configure(awsConfig);
 function AppContent() {
   const { user, signOut } = useAuthenticator((context) => [context.user]);
   const navigate = useNavigate();
+  const toast = useToast();
   const [profile, setProfile]             = useState(null);
   const [meetings, setMeetings]           = useState([]);
   const [calendarStatus, setCalendarStatus] = useState({ google: { connected: false, email: '' }, microsoft: { connected: false, email: '' } });
   const [loading, setLoading]             = useState(true);
   const [error, setError]                 = useState(null);
   const [retryCount, setRetryCount]       = useState(0);
-  const [calendarToast, setCalendarToast] = useState(null); // { type: 'success'|'error'|'info', msg } | null
   const [targetProfile, setTargetProfile] = useState(null); // for viewing other user profiles
   const [sidebarOpen, setSidebarOpen]     = useState(false);
   const [unreadCount, setUnreadCount]     = useState(0);
+  const [theme, setTheme]                 = useState(() => localStorage.getItem('theme') || 'dark');
   const [meetingPrefill, setMeetingPrefill] = useState(null); // email string to prefill
   const [selectedMeeting, setSelectedMeeting] = useState(null); // for MeetingDetailModal
   const [showPalette, setShowPalette]         = useState(false);
@@ -37,7 +41,12 @@ function AppContent() {
   // helper so child components can still call setActiveView('meetings') etc.
   const setActiveView = (view) => navigate(`/${view === 'dashboard' ? '' : view}`);
   const oauthProcessed = useRef(false);
-  const calendarToastTimer = useRef(null);
+
+  // Apply + persist theme
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('theme', theme);
+  }, [theme]);
 
   // Capture OAuth callback params from URL on component mount (before they disappear).
   // State initializer runs only once — safe to use window.location here.
@@ -64,6 +73,7 @@ function AppContent() {
 
   useEffect(() => {
     if (!user) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(null);
 
@@ -72,15 +82,14 @@ function AppContent() {
       if (oauthPending?.oauthError && !oauthProcessed.current) {
         oauthProcessed.current = true;
         const desc = oauthPending.oauthErrDesc?.replace(/\+/g, ' ') || oauthPending.oauthError;
-        showCalendarToast('error', `Calendar connection failed: ${desc}`);
+        toast(`Calendar connection failed: ${desc}`, 'error');
       }
       if (oauthPending && !oauthPending.oauthError && !oauthProcessed.current) {
         oauthProcessed.current = true;
         try {
           await apiPost('/api/calendar/callback', oauthPending);
-          const provider = oauthPending.provider;
           const label = oauthPending.provider === 'google' ? 'Google Calendar' : 'Microsoft Outlook';
-          showCalendarToast('success', `${label} connected successfully!`);
+          toast(`${label} connected successfully!`, 'success');
           setActiveView('profile'); // navigate straight to profile to show connected calendar
         } catch (err) {
           console.error('OAuth callback exchange failed:', err);
@@ -167,13 +176,6 @@ function AppContent() {
     }
   }, [window.location.pathname]);
 
-  /** Show a toast notification (clears any previous timer). */
-  const showCalendarToast = (type, msg) => {
-    if (calendarToastTimer.current) clearTimeout(calendarToastTimer.current);
-    setCalendarToast({ type, msg });
-    calendarToastTimer.current = setTimeout(() => setCalendarToast(null), 6000);
-  };
-
   /** Open Google / Microsoft OAuth flow (redirects the page). */
   const handleCalendarConnect = async (provider) => {
     try {
@@ -184,11 +186,12 @@ function AppContent() {
     } catch (err) {
       const label = provider === 'google' ? 'Google' : 'Microsoft';
       if (err.message?.toLowerCase().includes('not configured')) {
-        showCalendarToast('info',
-          `${label} OAuth credentials not yet configured. Add ${provider === 'google' ? 'GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET' : 'MICROSOFT_CLIENT_ID + MICROSOFT_CLIENT_SECRET'} to the Lambda environment variables.`
+        toast(
+          `${label} OAuth credentials not yet configured. Add ${provider === 'google' ? 'GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET' : 'MICROSOFT_CLIENT_ID + MICROSOFT_CLIENT_SECRET'} to the Lambda environment variables.`,
+          'info'
         );
       } else {
-        showCalendarToast('error', `Failed to connect ${label}. Please try again.`);
+        toast(`Failed to connect ${label}. Please try again.`, 'error');
         console.error('Failed to get OAuth URL:', err);
       }
     }
@@ -239,12 +242,12 @@ function AppContent() {
   const meetingsBadge = (meetings.filter(m => m.status === 'pending' && m.userRole === 'organizer').length + needsAction) || null;
 
   const navItems = [
-    { id: 'dashboard', path: '/',          label: 'Dashboard' },
-    { id: 'calendar',  path: '/calendar',  label: 'Calendar'  },
-    { id: 'meetings',  path: '/meetings',  label: 'Meetings', badge: meetingsBadge },
-    { id: 'people',    path: '/people',    label: 'People'    },
-    { id: 'messages',  path: '/messages',  label: 'Messages', badge: unreadCount || null },
-    { id: 'profile',   path: '/profile',   label: 'Profile'   },
+    { id: 'dashboard', path: '/',          label: 'Dashboard', icon: <LayoutDashboard size={16} /> },
+    { id: 'calendar',  path: '/calendar',  label: 'Calendar',  icon: <Calendar size={16} /> },
+    { id: 'meetings',  path: '/meetings',  label: 'Meetings',  icon: <CalendarCheck size={16} />, badge: meetingsBadge },
+    { id: 'people',    path: '/people',    label: 'People',    icon: <Users size={16} /> },
+    { id: 'messages',  path: '/messages',  label: 'Messages',  icon: <MessageSquare size={16} />, badge: unreadCount || null },
+    { id: 'profile',   path: '/profile',   label: 'Profile',   icon: <User size={16} /> },
   ];
 
   const displayName = profile?.name || profile?.displayName || '';
@@ -285,6 +288,7 @@ function AppContent() {
               onClick={() => setSidebarOpen(false)}
               title={item.label}
             >
+              <span className="nav-icon">{item.icon}</span>
               <span className="nav-label">{item.label}</span>
               {item.badge > 0 && (
                 <span className="nav-badge">{item.badge}</span>
@@ -308,35 +312,21 @@ function AppContent() {
               </div>
             </div>
           )}
-          <button onClick={signOut} className="signout-btn">Sign Out</button>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <button
+              onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+              className="theme-toggle-btn"
+              title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+            </button>
+            <button onClick={signOut} className="signout-btn" style={{ flex: 1 }}>Sign Out</button>
+          </div>
         </div>
       </aside>
 
       {/* ── Main ── */}
       <main className="main-content">
-        {/* Calendar toast notification */}
-        {calendarToast && (() => {
-          const styles = {
-            success: { bg: 'rgba(34,197,94,0.12)',   border: 'rgba(34,197,94,0.3)',   color: '#4ade80', icon: '✅' },
-            error:   { bg: 'rgba(239,68,68,0.12)',   border: 'rgba(239,68,68,0.3)',   color: '#f87171', icon: '❌' },
-            info:    { bg: 'rgba(56,189,248,0.12)',  border: 'rgba(56,189,248,0.3)',  color: '#38bdf8', icon: 'ℹ️' },
-          };
-          const s = styles[calendarToast.type] || styles.info;
-          return (
-            <div style={{
-              position: 'fixed', top: '1.5rem', right: '1.5rem', zIndex: 9999,
-              padding: '0.8rem 1.2rem', borderRadius: '12px', fontSize: '0.84rem',
-              fontWeight: 500, boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
-              background: s.bg, border: `1px solid ${s.border}`, color: s.color,
-              maxWidth: '380px', lineHeight: 1.5,
-              display: 'flex', alignItems: 'flex-start', gap: '0.5rem',
-            }}>
-              <span style={{ flexShrink: 0 }}>{s.icon}</span>
-              <span>{calendarToast.msg}</span>
-            </div>
-          );
-        })()}
-
         {loading && (
           <div className="loading-screen">
             <div className="skeleton-sidebar">
@@ -420,16 +410,7 @@ function AppContent() {
                   <h2>Messages</h2>
                   <p className="view-subtitle">Your inbox, kudos and notifications</p>
                 </div>
-                <ProfileView
-                  profile={profile}
-                  meetings={meetings}
-                  calendarStatus={calendarStatus}
-                  onCalendarConnect={handleCalendarConnect}
-                  onCalendarDisconnect={handleCalendarDisconnect}
-                  onProfileUpdate={setProfile}
-                  onUnreadCountChange={setUnreadCount}
-                  initialTab="inbox"
-                />
+                <MessagesView onUnreadCountChange={setUnreadCount} />
               </div>
             } />
 
@@ -447,6 +428,7 @@ function AppContent() {
                   onCalendarDisconnect={handleCalendarDisconnect}
                   onProfileUpdate={setProfile}
                   onUnreadCountChange={setUnreadCount}
+                  unreadCount={unreadCount}
                 />
               </div>
             } />
@@ -474,6 +456,8 @@ function AppContent() {
           onNavigate={setActiveView}
           onNewMeeting={() => { setMeetingPrefill(null); navigate('/meetings'); setShowPalette(false); }}
           signOut={signOut}
+          meetings={meetings}
+          users={[]}
         />
       )}
 
@@ -491,15 +475,15 @@ function AppContent() {
             try { await apiPost(`/api/meetings/${requestId}/decline`, {}); await refreshAll(); }
             catch (err) { console.error('Decline failed:', err); }
           }}
-          onCancel={(requestId) => {
+          onCancel={() => {
             setSelectedMeeting(null);
             navigate('/meetings');
           }}
-          onReschedule={(requestId) => {
+          onReschedule={() => {
             setSelectedMeeting(null);
             navigate('/meetings');
           }}
-          onEdit={(meeting) => {
+          onEdit={() => {
             setSelectedMeeting(null);
             navigate('/meetings');
           }}
@@ -512,26 +496,29 @@ function AppContent() {
 /* ─────────────────────────────────────────────
    DashboardView — enhanced home with analytics
 ───────────────────────────────────────────── */
+const ACTIVITY_ACTION_META = {
+  created:     { dot: 'var(--accent)',   verb: 'created' },
+  booked:      { dot: 'var(--success)',  verb: 'confirmed a time for' },
+  accepted:    { dot: 'var(--success)',  verb: 'accepted' },
+  declined:    { dot: 'var(--danger)',   verb: 'declined' },
+  cancelled:   { dot: 'var(--danger)',   verb: 'cancelled' },
+  rescheduled: { dot: 'var(--warning)', verb: 'rescheduled' },
+  edited:      { dot: '#a78bfa',         verb: 'edited' },
+};
+
+const fmtRel = (iso) => {
+  const diff = new Date() - new Date(iso);
+  const min = Math.floor(diff / 60000);
+  if (min < 1)  return 'just now';
+  if (min < 60) return `${min}m ago`;
+  const h = Math.floor(min / 60);
+  if (h < 24)   return `${h}h ago`;
+  if (h < 48)   return 'yesterday';
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+};
+
 function ActivityFeed({ activities }) {
-  const ACTION_META = {
-    created:     { dot: 'var(--accent)',   verb: 'created' },
-    booked:      { dot: 'var(--success)',  verb: 'confirmed a time for' },
-    accepted:    { dot: 'var(--success)',  verb: 'accepted' },
-    declined:    { dot: 'var(--danger)',   verb: 'declined' },
-    cancelled:   { dot: 'var(--danger)',   verb: 'cancelled' },
-    rescheduled: { dot: 'var(--warning)', verb: 'rescheduled' },
-    edited:      { dot: '#a78bfa',         verb: 'edited' },
-  };
-  const fmtRel = (iso) => {
-    const diff = Date.now() - new Date(iso).getTime();
-    const min = Math.floor(diff / 60000);
-    if (min < 1)  return 'just now';
-    if (min < 60) return `${min}m ago`;
-    const h = Math.floor(min / 60);
-    if (h < 24)   return `${h}h ago`;
-    if (h < 48)   return 'yesterday';
-    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  };
+  const ACTION_META = ACTIVITY_ACTION_META;
   if (!activities || activities.length === 0) {
     return <p className="empty-hint">No recent activity yet.</p>;
   }

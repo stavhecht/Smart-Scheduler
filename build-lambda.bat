@@ -9,6 +9,7 @@ copy /Y backend\api\main.py          backend\api\package\main.py
 copy /Y backend\api\db.py            backend\api\package\db.py
 copy /Y backend\api\models.py        backend\api\package\models.py
 copy /Y backend\api\fairness_engine.py backend\api\package\fairness_engine.py
+copy /Y backend\api\calendar_client.py backend\api\package\calendar_client.py
 
 echo [2/3] Zipping package directory -> terraform/api_deployment.zip ...
 powershell -NoProfile -Command ^
@@ -19,6 +20,7 @@ del backend\api\package\main.py
 del backend\api\package\db.py
 del backend\api\package\models.py
 del backend\api\package\fairness_engine.py
+del backend\api\package\calendar_client.py
 
 echo.
 echo Done! terraform\api_deployment.zip is ready.

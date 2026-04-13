@@ -156,3 +156,8 @@ export async function apiScoreSlot(startIso, durationMinutes, participantIds = [
 export async function apiUpdateIcsUrl(icsUrl) {
     return apiProxy('update_ics_url', { icsUrl });
 }
+
+/** Mark all messages in the current user's inbox as read. */
+export async function apiMarkMessagesRead() {
+    return apiProxy('mark_messages_read');
+}

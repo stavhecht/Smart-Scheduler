@@ -8,7 +8,7 @@ Implements:
 """
 
 from datetime import datetime, timedelta
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 
 class FairnessEngine:
@@ -63,29 +63,42 @@ class FairnessEngine:
         slot_dt: datetime,
         participant_states: List[dict],
         duration_minutes: int,
-        tz_offset_hours: float = 0.0
+        tz_offset_hours: float = 0.0,
+        participant_tz_offsets: Optional[List[float]] = None,
+        busy_count: int = 0,
     ) -> Dict[str, Any]:
         """
         Score a candidate time slot using the Social Fairness AI Engine.
         Combines:
-        - Time-of-day/Day-of-week heuristics (adjusted for user's timezone)
+        - Time-of-day/Day-of-week heuristics (averaged across all participant timezones)
         - Participant Load Index (Real-time meeting pressure)
         - Social Momentum (Rewards flexibility history)
-        - Recipient Fatigue (Penalizes clustering meetings)
+        - Fairness Variance (Penalizes unequal load distribution)
+        - Calendar Conflict Penalty (Penalizes slots that clash with existing events)
 
-        tz_offset_hours: UTC offset for the organizer's timezone (e.g. +2 for Jerusalem,
-                         -5 for EST). Slot times on Lambda are UTC; this converts to local
-                         time before hour/day scoring so HOUR_WEIGHTS apply correctly.
+        tz_offset_hours: UTC offset for the organizer (used for impact scoring & explanation).
+        participant_tz_offsets: list of UTC offsets for all participants (inc. organizer).
+                                When provided, time_score is averaged across all local times.
+        busy_count: number of participants with a calendar conflict at this slot.
         """
-        # Convert UTC slot to organizer's local time for scoring
+        # Organizer's local time — used for fairness impact and explanation text
         local_dt = slot_dt + timedelta(hours=tz_offset_hours)
         hour = local_dt.hour
         day = local_dt.weekday()
 
-        # 1. Base Time Score (0-100)
-        hour_weight = self.HOUR_WEIGHTS.get(hour, 0.3)
-        day_weight = self.DAY_WEIGHTS.get(day, 0.3)
-        time_score = hour_weight * day_weight * 100.0
+        # 1. Base Time Score — averaged across all participant local times when available
+        if participant_tz_offsets:
+            p_time_scores = []
+            for offset in participant_tz_offsets:
+                p_local = slot_dt + timedelta(hours=offset)
+                hw = self.HOUR_WEIGHTS.get(p_local.hour, 0.3)
+                dw = self.DAY_WEIGHTS.get(p_local.weekday(), 0.3)
+                p_time_scores.append(hw * dw * 100.0)
+            time_score = sum(p_time_scores) / len(p_time_scores)
+        else:
+            hour_weight = self.HOUR_WEIGHTS.get(hour, 0.3)
+            day_weight = self.DAY_WEIGHTS.get(day, 0.3)
+            time_score = hour_weight * day_weight * 100.0
 
         if participant_states:
             # 2. Participant Load & Fatigue (0-30 penalty)
@@ -117,16 +130,20 @@ class FairnessEngine:
         else:
             final_score = time_score
 
+        # 5. Calendar Conflict Penalty — 10 pts per conflicting participant, max 30
+        if busy_count > 0:
+            final_score -= min(busy_count * 10.0, 30.0)
+
         # Clamping
         final_score = round(max(0.0, min(100.0, final_score)), 1)
-        
+
         # Calculate impact for DB
         impact = self._fairness_impact(hour, day)
 
         return {
             "score": final_score,
             "fairnessImpact": impact,
-            "conflictCount": 0,
+            "conflictCount": busy_count,
             "explanation": self._ai_explain(hour, day, final_score, participant_states)
         }
 
@@ -175,23 +192,27 @@ class FairnessEngine:
         self,
         date_start: datetime,
         date_end: datetime,
-        tz_offset_hours: float = 0.0
+        tz_offset_hours: float = 0.0,
+        working_hours: Optional[List[int]] = None,
     ) -> List[datetime]:
         """
         Generate candidate time slots within the given date range.
         Respects working hours (in the organizer's local timezone) and skips weekends.
 
-        tz_offset_hours: UTC offset for the organizer. WORKING_HOURS are treated as
-                         local hours; they are converted back to UTC for storage so that
-                         calendar clients receive the correct absolute time.
+        tz_offset_hours: UTC offset for the organizer. Hours are treated as local and
+                         converted back to UTC for storage.
+        working_hours: optional list of local hours to use (e.g. [9, 10, 11, 13, 14]).
+                       When provided (from participant profile intersection) this overrides
+                       the class default WORKING_HOURS.
         """
+        hours = working_hours if working_hours else self.WORKING_HOURS
         slots: List[datetime] = []
         now_utc = datetime.utcnow()
         current = date_start.replace(hour=9, minute=0, second=0, microsecond=0)
 
         while current <= date_end and len(slots) < 12:
             if current.weekday() < 5:  # Mon–Fri only
-                for local_hour in self.WORKING_HOURS:
+                for local_hour in hours:
                     # Convert local hour → UTC hour for the stored slot
                     utc_hour = local_hour - int(tz_offset_hours)
                     candidate = current.replace(hour=utc_hour % 24, minute=0)

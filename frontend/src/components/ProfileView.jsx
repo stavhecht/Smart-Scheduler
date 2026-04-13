@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { apiGet, apiPost, apiUpdateIcsUrl } from '../apiClient';
+import InboxPanel from './InboxPanel';
 import './ProfileView.css';
 
 const STATUS_PRESETS = [
@@ -97,6 +98,7 @@ export default function ProfileView({
   onCalendarDisconnect,
   onProfileUpdate,
   onUnreadCountChange,
+  unreadCount: unreadCountProp = 0,
   initialTab,
 }) {
   const [profile, setProfile]         = useState(initialProfile);
@@ -104,12 +106,8 @@ export default function ProfileView({
   const [isEditing, setIsEditing]     = useState(false);
   const [tempProfile, setTempProfile] = useState(initialProfile);
   const [skillInput, setSkillInput]   = useState('');
-  const [messages, setMessages]       = useState([]);
-  const [msgLoading, setMsgLoading]   = useState(false);
   const [isUpdating, setIsUpdating]   = useState(false);
   const [saveError, setSaveError]     = useState('');
-  const [replyTo, setReplyTo]         = useState(null);
-  const [replying, setReplying]       = useState(false);
   const [disconnectConfirm, setDisconnectConfirm] = useState(null);
   const [stats, setStats]             = useState(null);
   const [icsUrl, setIcsUrl]           = useState(calendarStatus?.ics?.url || '');
@@ -117,6 +115,9 @@ export default function ProfileView({
   const [icsSaving, setIcsSaving]     = useState(false);
   const [icsSaveMsg, setIcsSaveMsg]   = useState('');
   const [showFairnessExplainer, setShowFairnessExplainer] = useState(false);
+  const [tzSearch, setTzSearch]       = useState('');
+  const [tzOpen, setTzOpen]           = useState(false);
+  const tzRef                         = useRef(null);
 
   const score      = Math.round(profile.fairness_score ?? 100);
   const scoreColor = score >= 80 ? '#34d399' : score >= 60 ? '#fbbf24' : '#f87171';
@@ -129,23 +130,12 @@ export default function ProfileView({
 
   useEffect(() => { apiGet('/api/profile/stats').then(setStats).catch(() => {}); }, []);
 
+  // Close timezone dropdown on outside click
   useEffect(() => {
-    if (activeTab === 'inbox') fetchMessages();
-  }, [activeTab]);
-
-  const fetchMessages = async () => {
-    setMsgLoading(true);
-    try {
-      const msgs = await apiGet('/api/profile/messages');
-      setMessages(msgs);
-      const unread = (msgs || []).filter(m => !m.isRead).length;
-      if (onUnreadCountChange) onUnreadCountChange(unread);
-    } catch (err) {
-      console.error('Failed to fetch messages:', err);
-    } finally {
-      setMsgLoading(false);
-    }
-  };
+    const handler = (e) => { if (tzRef.current && !tzRef.current.contains(e.target)) setTzOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
   const handleSaveProfile = async () => {
     setSaveError('');
@@ -176,19 +166,6 @@ export default function ProfileView({
       }
     } catch (err) {
       console.error('Pref save failed:', err);
-    }
-  };
-
-  const handleReply = async (m) => {
-    if (!replyTo?.text?.trim()) return;
-    setReplying(true);
-    try {
-      await apiPost(`/api/profile/${m.fromUserId}/message`, { content: replyTo.text, type: 'general' });
-      setReplyTo(null);
-    } catch (err) {
-      console.error('Reply failed:', err);
-    } finally {
-      setReplying(false);
     }
   };
 
@@ -256,7 +233,7 @@ export default function ProfileView({
   const whStartPct     = (parseHour(workingHours.start) / 24) * 100;
   const whEndPct       = (parseHour(workingHours.end)   / 24) * 100;
   const notifPrefs     = profile.notificationPrefs || { invites: true, reminders: true, digest: false };
-  const unreadCount    = messages.filter(m => !m.isRead).length;
+  const unreadCount    = unreadCountProp;
 
   const TABS = [
     { id: 'profile',     label: 'Profile'     },
@@ -301,6 +278,9 @@ export default function ProfileView({
           </button>
         ))}
       </div>
+
+      {/* ──────────────── TAB CONTENT (key triggers re-animation on switch) ──────────────── */}
+      <div key={activeTab} className="pv-tab-content">
 
       {/* ──────────────── TAB 1: PROFILE ──────────────── */}
       {activeTab === 'profile' && (
@@ -391,6 +371,19 @@ export default function ProfileView({
               ) : (
                 <>
                   <h2 className="pv-name">{profile.displayName || profile.name}</h2>
+                  {(() => {
+                    const n = profile.displayName || profile.name || '';
+                    const looksLikeUsername = !n.includes(' ') && /[\d.]/.test(n);
+                    return looksLikeUsername ? (
+                      <div style={{ fontSize: '0.74rem', color: '#fbbf24', background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.25)', borderRadius: '6px', padding: '0.35rem 0.6rem', marginBottom: '0.4rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        💡 Set your real name for a better experience{' '}
+                        <button
+                          onClick={() => { setTempProfile(profile); setIsEditing(true); setSaveError(''); setSkillInput(''); }}
+                          style={{ background: 'none', border: 'none', color: '#fbbf24', textDecoration: 'underline', cursor: 'pointer', padding: 0, fontSize: 'inherit', fontFamily: 'inherit' }}
+                        >Edit profile</button>
+                      </div>
+                    ) : null;
+                  })()}
                   <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
                     <span className="pv-role-chip">{profile.role || 'Professional'}</span>
                     <span className="pv-dept-chip">{profile.department || 'General'}</span>
@@ -510,16 +503,57 @@ export default function ProfileView({
                 <label style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.4rem' }}>
                   Timezone
                 </label>
-                <select
-                  className="pv-input-sub"
-                  value={profile.timezone || 'Asia/Jerusalem'}
-                  onChange={e => handleSavePref({ timezone: e.target.value })}
-                  style={{ cursor: 'pointer' }}
-                >
-                  {TIMEZONES.map(tz => (
-                    <option key={tz} value={tz}>{tz}</option>
-                  ))}
-                </select>
+                {/* Searchable timezone picker */}
+                <div ref={tzRef} style={{ position: 'relative' }}>
+                  <div
+                    className="pv-input-sub"
+                    onClick={() => { setTzOpen(o => !o); setTzSearch(''); }}
+                    style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                  >
+                    <span>{profile.timezone || 'Asia/Jerusalem'}</span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>{tzOpen ? '▲' : '▼'}</span>
+                  </div>
+                  {tzOpen && (
+                    <div style={{
+                      position: 'absolute', zIndex: 100, top: '100%', left: 0, right: 0,
+                      background: 'var(--bg-card)', border: '1px solid var(--border)',
+                      borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-raised)',
+                      overflow: 'hidden', marginTop: '2px',
+                    }}>
+                      <input
+                        autoFocus
+                        className="pv-input-sub"
+                        placeholder="Search timezone…"
+                        value={tzSearch}
+                        onChange={e => setTzSearch(e.target.value)}
+                        style={{ margin: '6px', width: 'calc(100% - 12px)', boxSizing: 'border-box' }}
+                        onKeyDown={e => { if (e.key === 'Escape') setTzOpen(false); }}
+                        onClick={e => e.stopPropagation()}
+                      />
+                      <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                        {TIMEZONES.filter(tz => tz.toLowerCase().includes(tzSearch.toLowerCase())).map(tz => {
+                          const isSelected = tz === (profile.timezone || 'Asia/Jerusalem');
+                          return (
+                            <div
+                              key={tz}
+                              onClick={() => { handleSavePref({ timezone: tz }); setTzOpen(false); }}
+                              style={{
+                                padding: '0.5rem 0.75rem', cursor: 'pointer', fontSize: '0.82rem',
+                                background: isSelected ? 'var(--accent-dim)' : 'transparent',
+                                color: isSelected ? 'var(--accent)' : 'var(--text-primary)',
+                                transition: 'background 0.1s',
+                              }}
+                              onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = 'var(--bg-raised)'; }}
+                              onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = 'transparent'; }}
+                            >
+                              {tz}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
               <div>
                 <label style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.4rem' }}>
@@ -681,58 +715,7 @@ export default function ProfileView({
 
       {/* ──────────────── TAB 4: INBOX ──────────────── */}
       {activeTab === 'inbox' && (
-        <div className="pv-card" style={{ minHeight: '400px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-            <h3 style={{ margin: 0 }}>Inbox</h3>
-            <button className="pv-btn ghost tiny" onClick={fetchMessages} disabled={msgLoading}>
-              {msgLoading ? '...' : '↻ Refresh'}
-            </button>
-          </div>
-
-          <div className="inbox-list">
-            {messages.length === 0 ? (
-              <div className="empty-state">
-                <div className="empty-icon">✉</div>
-                <p style={{ margin: 0, fontSize: '0.84rem' }}>No messages yet. When people nudge you or send kudos, they'll appear here.</p>
-              </div>
-            ) : (
-              messages.map(m => (
-                <div key={m.messageId} className={`msg-item ${m.isRead ? 'read' : 'unread'}`}>
-                  <div className="msg-icon">{m.messageType === 'kudos' ? '★' : m.messageType === 'nudge' ? '●' : '✉'}</div>
-                  <div className="msg-body">
-                    <div className="msg-header">
-                      <span className="msg-from">{m.fromDisplayName}</span>
-                      <span className="msg-time">{new Date(m.createdAt).toLocaleDateString()}</span>
-                    </div>
-                    <p className="msg-text">{m.content}</p>
-                    {replyTo?.messageId === m.messageId && (
-                      <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.5rem' }}>
-                        <input
-                          autoFocus
-                          className="pv-input-sub"
-                          style={{ flex: 1 }}
-                          placeholder="Write a reply..."
-                          value={replyTo.text}
-                          onChange={e => setReplyTo(r => ({ ...r, text: e.target.value }))}
-                          onKeyDown={e => { if (e.key === 'Enter') handleReply(m); if (e.key === 'Escape') setReplyTo(null); }}
-                        />
-                        <button className="pv-btn primary tiny" onClick={() => handleReply(m)} disabled={replying || !replyTo.text?.trim()}>
-                          {replying ? '...' : 'Send'}
-                        </button>
-                        <button className="pv-btn tiny" onClick={() => setReplyTo(null)}>✕</button>
-                      </div>
-                    )}
-                  </div>
-                  <div className="msg-actions">
-                    <button className="pv-btn tiny" onClick={() => setReplyTo({ messageId: m.messageId, fromUserId: m.fromUserId, text: '' })}>
-                      Reply
-                    </button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
+        <InboxPanel onUnreadCountChange={onUnreadCountChange} />
       )}
 
       {/* ──────────────── TAB 5: FAIRNESS ──────────────── */}
@@ -834,6 +817,8 @@ export default function ProfileView({
           </div>
         </div>
       )}
+
+      </div>{/* end pv-tab-content */}
     </div>
   );
 }
