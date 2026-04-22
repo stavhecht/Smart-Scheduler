@@ -6,7 +6,7 @@
 resource "aws_lambda_function" "api_handler" {
   filename      = "${path.module}/api_deployment.zip"
   function_name = "smart_scheduler_api"
-  role          = var.lab_role_arn
+  role          = local.lab_role_arn
   handler       = "main.handler"
   runtime       = "python3.12"
   timeout       = 30

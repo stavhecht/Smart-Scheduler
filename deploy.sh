@@ -3,16 +3,17 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PYTHON="/c/Users/YoedH/AppData/Local/Programs/Python/Python312/python.exe"
-BUILD_DIR="/tmp/lambda_build_$$"
-ZIP_OUT="$SCRIPT_DIR/terraform/api_deployment.zip"
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+PYTHON="/usr/bin/python3"
+export BUILD_DIR="/tmp/lambda_build_$$"
+export ZIP_OUT="$SCRIPT_DIR/terraform/api_deployment.zip"
 
 echo "=== Building Lambda deployment package ==="
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
-# Install Python dependencies
-"$PYTHON" -m pip install -q -r "$SCRIPT_DIR/backend/api/requirements.txt" -t "$BUILD_DIR"
+# Install Python dependencies natively for AWS Lambda Linux
+"$PYTHON" -m pip install -q -r "$SCRIPT_DIR/backend/api/requirements.txt" -t "$BUILD_DIR" --platform manylinux2014_x86_64 --only-binary=:all: --python-version 3.12
 
 # Copy API source files
 cp "$SCRIPT_DIR/backend/api/"*.py "$BUILD_DIR/"

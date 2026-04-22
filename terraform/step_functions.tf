@@ -10,7 +10,7 @@
 
 resource "aws_sfn_state_machine" "scheduler" {
   name     = "SmartSchedulerWorkflow"
-  role_arn = var.lab_role_arn
+  role_arn = local.lab_role_arn
   type     = "EXPRESS"
 
   definition = jsonencode({
