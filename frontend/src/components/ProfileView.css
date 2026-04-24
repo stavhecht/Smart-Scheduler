@@ -878,3 +878,130 @@
 .reply-form {
   animation: tabEnter 0.12s ease both;
 }
+
+/* ═══════════════════════════════════════════════
+   Light theme overrides
+   ═══════════════════════════════════════════════ */
+
+[data-theme="light"] .pv-tab:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .pv-bio {
+  color: var(--text-secondary);
+}
+
+[data-theme="light"] .pv-skill-tag {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.10);
+  color: var(--text-primary);
+}
+
+[data-theme="light"] .pv-name {
+  color: var(--text-primary);
+}
+
+[data-theme="light"] .msg-from {
+  color: var(--text-primary);
+}
+
+[data-theme="light"] .msg-text {
+  color: var(--text-secondary);
+}
+
+[data-theme="light"] .msg-item:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme="light"] .pv-btn.ghost:hover {
+  border-color: rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .pv-preset-chip {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.10);
+  color: var(--text-secondary);
+}
+
+[data-theme="light"] .skill-chip-input {
+  color: var(--text-primary);
+}
+
+[data-theme="light"] .skill-chip-input::placeholder {
+  color: rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="light"] .wh-track {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .fa-track {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .fa-insight {
+  color: var(--text-secondary);
+  background: rgba(0, 0, 0, 0.02);
+}
+
+[data-theme="light"] .fa-metric {
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .fa-m-val {
+  color: var(--text-primary);
+}
+
+/* Settings */
+[data-theme="light"] .sr {
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .sr-label {
+  color: var(--text-primary);
+}
+
+[data-theme="light"] .sr-btn {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.10);
+  color: var(--text-secondary);
+}
+
+[data-theme="light"] .toggle {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .toggle::after {
+  background: rgba(0, 0, 0, 0.35);
+}
+
+/* Timeline */
+[data-theme="light"] .tl-item {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+[data-theme="light"] .tl-item:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .tl-title {
+  color: var(--text-primary);
+}
+
+/* Calendar integration */
+[data-theme="light"] .cal-provider-row {
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .cal-provider-name {
+  color: var(--text-primary);
+}
+
+[data-theme="light"] .cal-note {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+[data-theme="light"] .pp-gauge {
+  border-left-color: rgba(0, 0, 0, 0.06);
+}
+

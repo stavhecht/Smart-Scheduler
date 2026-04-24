@@ -287,3 +287,105 @@
 }
 
 .cv-empty span:first-child { font-size: 1.25rem; }
+
+/* ═══════════════════════════════════════════════
+   Light theme overrides
+   ═══════════════════════════════════════════════ */
+[data-theme="light"] .cv-wrap {
+  border-color: rgba(0, 0, 0, 0.10);
+}
+
+[data-theme="light"] .cv-header {
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+  background: rgba(0, 0, 0, 0.02);
+}
+
+[data-theme="light"] .cv-btn {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: rgba(0, 0, 0, 0.6);
+}
+
+[data-theme="light"] .cv-btn:hover {
+  background: rgba(0, 0, 0, 0.08);
+  color: var(--text-primary);
+}
+
+[data-theme="light"] .cv-week-label {
+  color: var(--text-primary);
+}
+
+[data-theme="light"] .cv-time-col {
+  border-right-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .cv-corner {
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .cv-hour-label {
+  color: rgba(0, 0, 0, 0.4);
+}
+
+[data-theme="light"] .cv-day-col {
+  border-right-color: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .cv-day-header {
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .cv-day-header.today {
+  background: rgba(37, 99, 235, 0.06);
+}
+
+[data-theme="light"] .cv-day-name {
+  color: rgba(0, 0, 0, 0.45);
+}
+
+[data-theme="light"] .cv-day-num {
+  color: rgba(0, 0, 0, 0.7);
+}
+
+[data-theme="light"] .cv-hour-cell {
+  border-bottom-color: rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="light"] .cv-tooltip {
+  background: var(--bg-surface);
+  border-color: rgba(37, 99, 235, 0.22);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .cv-tt-title {
+  color: var(--text-primary);
+}
+
+[data-theme="light"] .cv-tt-row {
+  color: rgba(0, 0, 0, 0.55);
+}
+
+[data-theme="light"] .cv-tt-role {
+  border-top-color: rgba(0, 0, 0, 0.08);
+  color: rgba(0, 0, 0, 0.45);
+}
+
+[data-theme="light"] .cv-empty {
+  border-top-color: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .cv-ev-title {
+  color: var(--text-primary);
+}
+
+[data-theme="light"] .cv-legend-item.organizer {
+  background: rgba(37, 99, 235, 0.08);
+  color: #2563eb;
+  border-color: rgba(37, 99, 235, 0.22);
+}
+
+[data-theme="light"] .cv-legend-item.participant {
+  background: rgba(99, 102, 241, 0.08);
+  color: #6366f1;
+  border-color: rgba(99, 102, 241, 0.22);
+}

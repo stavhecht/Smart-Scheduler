@@ -125,36 +125,30 @@ export default function CalendarView({ meetings, onMeetingClick, onCreateAt }) {
       {/* ── Toolbar ── */}
       <div className="cv-header">
         <div className="cv-nav">
-          {isMobile ? (
-            <>
-              <button className="cv-btn" onClick={() => setDayOffset(d => d - 1)}>‹ Prev</button>
-              <button className="cv-today-btn" onClick={() => setDayOffset(0)}>Today</button>
-              <button className="cv-btn" onClick={() => setDayOffset(d => d + 1)}>Next ›</button>
-            </>
-          ) : (
-            <>
-              <button className="cv-btn" onClick={() => setWeekOffset(w => w - 1)}>‹ Prev</button>
-              <button className="cv-today-btn" onClick={() => setWeekOffset(0)}>Today</button>
-              <button className="cv-btn" onClick={() => setWeekOffset(w => w + 1)}>Next ›</button>
-            </>
-          )}
+          <>
+            <button className="cv-btn" onClick={() => isMobile ? setDayOffset(d => d - 1) : setWeekOffset(w => w - 1)}>‹ Prev</button>
+            <button className="cv-today-btn" onClick={() => isMobile ? setDayOffset(0) : setWeekOffset(0)}>Today</button>
+            <button className="cv-btn" onClick={() => isMobile ? setDayOffset(d => d + 1) : setWeekOffset(w => w + 1)}>Next ›</button>
+          </>
         </div>
 
         <span className="cv-week-label">{isMobile ? mobileDayLabel : weekLabel}</span>
 
         <div className="cv-legend">
-          <button
-            className="cv-legend-item organizer"
-            onClick={() => setShowOrganized(v => !v)}
-            style={{ opacity: showOrganized ? 1 : 0.35, cursor: 'pointer', background: 'none', border: 'none', font: 'inherit', textDecoration: showOrganized ? 'none' : 'line-through' }}
-            title={showOrganized ? 'Click to hide organized meetings' : 'Click to show organized meetings'}
-          >Organized</button>
-          <button
-            className="cv-legend-item participant"
-            onClick={() => setShowParticipant(v => !v)}
-            style={{ opacity: showParticipant ? 1 : 0.35, cursor: 'pointer', background: 'none', border: 'none', font: 'inherit', textDecoration: showParticipant ? 'none' : 'line-through' }}
-            title={showParticipant ? 'Click to hide invited meetings' : 'Click to show invited meetings'}
-          >Invited</button>
+          {[
+            { role: 'organizer', label: 'Organized', state: showOrganized, setState: setShowOrganized },
+            { role: 'participant', label: 'Invited', state: showParticipant, setState: setShowParticipant }
+          ].map(({ role, label, state, setState }) => (
+            <button
+              key={role}
+              className={`cv-legend-item ${role}`}
+              onClick={() => setState(v => !v)}
+              style={{ opacity: state ? 1 : 0.35, cursor: 'pointer', background: 'none', border: 'none', font: 'inherit', textDecoration: state ? 'none' : 'line-through' }}
+              title={`Click to ${state ? 'hide' : 'show'} ${label.toLowerCase()} meetings`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 

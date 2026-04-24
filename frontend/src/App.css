@@ -835,3 +835,67 @@
   flex-shrink: 0;
   margin-top: 2px;
 }
+
+/* ═══════════════════════════════════════════════
+   Light theme overrides
+   ═══════════════════════════════════════════════ */
+
+/* Sidebar */
+[data-theme="light"] .nav-item:hover:not(.nav-disabled) {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .sidebar-user:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .stat-card:hover {
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .stat-bar-track {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+/* Mini list */
+[data-theme="light"] .mini-item:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+/* Activity feed */
+[data-theme="light"] .activity-row {
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+/* Skeleton loading */
+[data-theme="light"] .skeleton-sidebar,
+[data-theme="light"] .skeleton-nav-item,
+[data-theme="light"] .skeleton-main,
+[data-theme="light"] .skeleton-header,
+[data-theme="light"] .skeleton-card,
+[data-theme="light"] .skeleton-table {
+  background: linear-gradient(90deg,
+    rgba(0, 0, 0, 0.04) 25%,
+    rgba(0, 0, 0, 0.08) 50%,
+    rgba(0, 0, 0, 0.04) 75%
+  );
+  background-size: 800px 100%;
+}
+
+/* Command palette */
+[data-theme="light"] .palette-overlay {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+[data-theme="light"] .palette-shortcut {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .logo-kbd-hint {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+/* Hamburger (mobile) */
+[data-theme="light"] .hamburger-btn span {
+  background: rgba(0, 0, 0, 0.75);
+}

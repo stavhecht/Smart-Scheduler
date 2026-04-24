@@ -244,3 +244,69 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* ═══════════════════════════════════════════════
+   Light theme overrides
+   ═══════════════════════════════════════════════ */
+
+[data-theme="light"] .pp-overlay {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="light"] .pp-modal {
+  border-color: rgba(0, 0, 0, 0.12);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .pp-close {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="light"] .pp-head {
+  background: linear-gradient(to bottom, rgba(37, 99, 235, 0.04), transparent);
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .pp-dept {
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--text-secondary);
+  border-color: rgba(0, 0, 0, 0.10);
+}
+
+[data-theme="light"] .pp-gauge {
+  border-left-color: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .pp-gauge-label {
+  color: var(--text-muted);
+}
+
+[data-theme="light"] .pp-section label {
+  color: var(--text-muted);
+}
+
+[data-theme="light"] .pp-section p {
+  color: var(--text-primary);
+}
+
+[data-theme="light"] .pp-skill {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.10);
+  color: var(--text-secondary);
+}
+
+[data-theme="light"] .pp-action-btn {
+  background: rgba(0, 0, 0, 0.02);
+  border-color: rgba(0, 0, 0, 0.10);
+}
+
+[data-theme="light"] .pp-message-box textarea {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .pp-message-box textarea:focus {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(37, 99, 235, 0.5);
+}
+

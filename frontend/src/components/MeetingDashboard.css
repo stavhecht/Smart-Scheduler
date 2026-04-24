@@ -1254,3 +1254,236 @@
   line-height: 1.5;
 }
 
+/* ═══════════════════════════════════════════════
+   Light theme overrides
+   ═══════════════════════════════════════════════ */
+
+/* Title */
+[data-theme="light"] .md-title {
+  color: var(--text-primary);
+}
+
+/* Alert */
+[data-theme="light"] .md-alert {
+  color: var(--text-primary);
+}
+
+/* Modal */
+[data-theme="light"] .modal-overlay {
+  background: rgba(0, 0, 0, 0.35);
+}
+
+[data-theme="light"] .modal-box {
+  background: var(--bg-surface);
+  border-color: var(--border);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .modal-head {
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .modal-close:hover {
+  color: var(--text-primary);
+}
+
+/* Forms */
+[data-theme="light"] .form-group label {
+  color: var(--text-secondary);
+}
+
+[data-theme="light"] .form-group input {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: var(--text-primary);
+}
+
+[data-theme="light"] .form-group input::placeholder {
+  color: rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="light"] .form-group input:focus {
+  background: rgba(37, 99, 235, 0.04);
+  border-color: rgba(37, 99, 235, 0.4);
+}
+
+/* Duration pills */
+[data-theme="light"] .dur-pill {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .dur-pill:hover {
+  color: var(--text-primary);
+}
+
+/* Cancel button */
+[data-theme="light"] .btn-cancel {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .btn-cancel:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text-primary);
+}
+
+/* Section heads */
+[data-theme="light"] .section-head h3 {
+  color: var(--text-primary);
+}
+
+[data-theme="light"] .section-head-toggle:hover h3 {
+  color: var(--text-primary);
+}
+
+/* Empty state */
+[data-theme="light"] .empty-state {
+  background: rgba(0, 0, 0, 0.02);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+/* Meeting cards */
+[data-theme="light"] .mc {
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .mc:hover {
+  border-color: rgba(0, 0, 0, 0.15);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .mc-title {
+  color: var(--text-primary);
+}
+
+/* Panel */
+[data-theme="light"] .mc-panel {
+  border-top-color: rgba(0, 0, 0, 0.06);
+  background: rgba(0, 0, 0, 0.02);
+}
+
+/* Participant rows */
+[data-theme="light"] .participant-row {
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .p-name {
+  color: var(--text-primary);
+}
+
+/* Action buttons */
+[data-theme="light"] .btn-action-sm {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.10);
+}
+
+[data-theme="light"] .btn-action-sm:hover {
+  background: rgba(0, 0, 0, 0.07);
+  border-color: rgba(0, 0, 0, 0.18);
+}
+
+/* Confirm dialog */
+[data-theme="light"] .confirm-body p {
+  color: var(--text-secondary);
+}
+
+/* Slot cards */
+[data-theme="light"] .slot-card {
+  background: rgba(0, 0, 0, 0.02);
+  border-color: rgba(0, 0, 0, 0.10);
+}
+
+[data-theme="light"] .slot-time {
+  color: var(--text-primary);
+}
+
+[data-theme="light"] .slot-score-track {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .slot-view-toggle {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .slt-grid-line {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+/* Search + filter */
+[data-theme="light"] .md-search-icon {
+  color: rgba(0, 0, 0, 0.35);
+}
+
+[data-theme="light"] .md-search-input {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .md-search-input::placeholder {
+  color: rgba(0, 0, 0, 0.35);
+}
+
+[data-theme="light"] .md-filter-select {
+  background-color: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .md-filter-select option {
+  background: var(--bg-surface);
+}
+
+/* Refresh */
+[data-theme="light"] .btn-refresh {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .btn-refresh:hover {
+  background: rgba(0, 0, 0, 0.10);
+  color: var(--text-primary);
+}
+
+[data-theme="light"] .last-refreshed {
+  color: var(--text-muted);
+}
+
+/* ICS banner */
+[data-theme="light"] .ics-download-banner {
+  color: var(--text-primary);
+}
+
+[data-theme="light"] .ics-banner-close:hover {
+  color: var(--text-primary);
+}
+
+/* Avatar borders */
+[data-theme="light"] .p-avatar-chip {
+  border-color: var(--bg-surface);
+}
+
+[data-theme="light"] .p-avatar-overflow {
+  background: rgba(0, 0, 0, 0.08);
+  border-color: var(--bg-surface);
+}
+
+/* Wizard review */
+[data-theme="light"] .wizard-review {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+/* Custom picker */
+[data-theme="light"] .custom-picker {
+  border-top-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .custom-datetime-input {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.12);
+  color-scheme: light;
+}
+
+/* Meeting description */
+[data-theme="light"] .mc-description {
+  background: rgba(0, 0, 0, 0.03);
+}

@@ -10,6 +10,7 @@ import PeopleView from './components/PeopleView';
 import PublicProfile from './components/PublicProfile';
 import MeetingDetailModal from './components/MeetingDetailModal';
 import CommandPalette from './components/CommandPalette';
+import CreateMeetingModal from './components/CreateMeetingModal';
 import MessagesView from './components/MessagesView';
 import { apiGet, apiPost } from './apiClient';
 
@@ -35,6 +36,7 @@ function AppContent() {
   const [unreadCount, setUnreadCount]     = useState(0);
   const [theme, setTheme]                 = useState(() => localStorage.getItem('theme') || 'dark');
   const [meetingPrefill, setMeetingPrefill] = useState(null); // email string to prefill
+  const [showGlobalCreate, setShowGlobalCreate] = useState(false); // global create modal (from calendar / people / ⌘K)
   const [selectedMeeting, setSelectedMeeting] = useState(null); // for MeetingDetailModal
   const [showPalette, setShowPalette]         = useState(false);
   const [activities, setActivities]           = useState([]);
@@ -211,13 +213,13 @@ function AppContent() {
   /** Navigate to /meetings with a pre-filled participant email. */
   const handleScheduleWith = (email) => {
     setMeetingPrefill(email);
-    navigate('/meetings');
+    setShowGlobalCreate(true);
   };
 
-  /** Calendar click-to-create: navigate to /meetings with datetime prefill. */
+  /** Calendar click-to-create: open global create modal without navigating. */
   const handleCreateAt = (isoDatetime) => {
     setMeetingPrefill({ datetime: isoDatetime });
-    navigate('/meetings');
+    setShowGlobalCreate(true);
   };
 
   /** Open another user's public profile. */
@@ -388,8 +390,7 @@ function AppContent() {
                   currentUserId={profile.id}
                   onParticipantClick={handleParticipantClick}
                   lastRefreshed={lastRefreshed}
-                  prefillEmail={meetingPrefill}
-                  onPrefillConsumed={() => setMeetingPrefill(null)}
+                  onNewMeetingClick={() => { setMeetingPrefill(null); setShowGlobalCreate(true); }}
                 />
               </div>
             } />
@@ -454,10 +455,20 @@ function AppContent() {
         <CommandPalette
           onClose={() => setShowPalette(false)}
           onNavigate={setActiveView}
-          onNewMeeting={() => { setMeetingPrefill(null); navigate('/meetings'); setShowPalette(false); }}
+          onNewMeeting={() => { setMeetingPrefill(null); setShowGlobalCreate(true); setShowPalette(false); }}
           signOut={signOut}
           meetings={meetings}
           users={[]}
+        />
+      )}
+
+      {/* ── Global Create Meeting Modal ── */}
+      {showGlobalCreate && (
+        <CreateMeetingModal
+          prefill={meetingPrefill}
+          onClose={() => { setShowGlobalCreate(false); setMeetingPrefill(null); }}
+          onCreated={() => { setShowGlobalCreate(false); setMeetingPrefill(null); navigate('/meetings'); refreshAll(); }}
+          onRefresh={refreshAll}
         />
       )}
 

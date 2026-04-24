@@ -327,3 +327,66 @@
   animation: cardEnter 0.22s ease both;
   animation-delay: var(--delay, 0ms);
 }
+
+/* ═══════════════════════════════════════════════
+   Light theme overrides
+   ═══════════════════════════════════════════════ */
+
+[data-theme="light"] .people-section-label {
+  color: var(--text-muted);
+}
+
+[data-theme="light"] .people-recent {
+  background: rgba(0, 0, 0, 0.02);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .people-recent-chip {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.10);
+  color: var(--text-secondary);
+}
+
+[data-theme="light"] .people-search-icon {
+  color: rgba(0, 0, 0, 0.35);
+}
+
+[data-theme="light"] .people-search-input {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .people-search-input::placeholder {
+  color: rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="light"] .people-dept-select {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .people-card {
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .people-card:hover {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  border-color: rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .people-status-msg {
+  color: var(--text-muted);
+}
+
+[data-theme="light"] .people-card-actions {
+  border-top-color: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .people-btn:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .people-btn + .people-btn {
+  border-left-color: rgba(0, 0, 0, 0.06);
+}
+

@@ -256,3 +256,22 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 .toast-warning { background: rgba(251,191,36,0.12);  border: 1px solid rgba(251,191,36,0.3);  color: var(--warning); }
 @keyframes toastSlideIn  { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
 @keyframes toastSlideOut { to   { opacity: 0; transform: translateX(40px); } }
+
+/* ═══════════════════════════════════════════════
+   Light theme overrides (index)
+   ═══════════════════════════════════════════════ */
+
+[data-theme="light"] .skeleton {
+  background: linear-gradient(90deg, rgba(0,0,0,0.04) 25%, rgba(0,0,0,0.08) 50%, rgba(0,0,0,0.04) 75%);
+  background-size: 800px 100%;
+}
+
+[data-theme="light"] .toast-success { background: rgba(34,197,94,0.08); border-color: rgba(34,197,94,0.2); color: #16a34a; }
+[data-theme="light"] .toast-error   { background: rgba(239,68,68,0.08);  border-color: rgba(239,68,68,0.2);  color: #dc2626; }
+[data-theme="light"] .toast-info    { background: rgba(37,99,235,0.08);  border-color: rgba(37,99,235,0.2);  color: var(--accent); }
+[data-theme="light"] .toast-warning { background: rgba(245,158,11,0.08); border-color: rgba(245,158,11,0.2); color: #d97706; }
+
+[data-theme="light"] .toast-item {
+  box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+}
+
