@@ -8,6 +8,8 @@ const STATUS_PRESETS = [
   "✈️ Travelling", "🌱 Learning", "💡 Thinking", "🎉 Available",
 ];
 
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
 const TIMEZONES = [
   'Pacific/Honolulu', 'America/Anchorage', 'America/Los_Angeles', 'America/Denver',
   'America/Chicago', 'America/New_York', 'America/Sao_Paulo', 'Atlantic/Reykjavik',
@@ -118,6 +120,11 @@ export default function ProfileView({
   const [tzSearch, setTzSearch]       = useState('');
   const [tzOpen, setTzOpen]           = useState(false);
   const tzRef                         = useRef(null);
+  const scrollTimeout                 = useRef(null);
+  const trackRef                      = useRef(null);
+  const whDragRef                     = useRef(null);
+  const workingHoursRef               = useRef(null);
+  const handleSavePrefRef             = useRef(null);
 
   const score      = Math.round(profile.fairness_score ?? 100);
   const scoreColor = score >= 80 ? '#34d399' : score >= 60 ? '#fbbf24' : '#f87171';
@@ -160,9 +167,13 @@ export default function ProfileView({
       const merged = { ...profile, ...updates };
       const res = await apiPost('/api/profile/update', merged);
       if (res.status === 'success') {
-        const updated = { ...profile, ...res.profile };
-        setProfile(updated);
-        if (onProfileUpdate) onProfileUpdate(updated);
+        // Functional update: merges API response on top of the *current* state,
+        // so any optimistic updates applied while the request was in-flight are preserved.
+        setProfile(p => {
+          const updated = { ...p, ...res.profile };
+          if (onProfileUpdate) onProfileUpdate(updated);
+          return updated;
+        });
       }
     } catch (err) {
       console.error('Pref save failed:', err);
@@ -230,10 +241,85 @@ export default function ProfileView({
   const statusMsg      = profile.statusMessage || profile.status_message || '';
   const statusDotColor = getStatusDotColor(statusMsg);
   const workingHours   = profile.workingHours || { start: '09:00', end: '18:00' };
+  const workingDays    = profile.workingDays || [0, 1, 2, 3, 4]; // Default Mon-Fri
+  const lunchBreak     = profile.lunchBreak  || { start: '12:00', duration: 60 };
   const whStartPct     = (parseHour(workingHours.start) / 24) * 100;
   const whEndPct       = (parseHour(workingHours.end)   / 24) * 100;
   const notifPrefs     = profile.notificationPrefs || { invites: true, reminders: true, digest: false };
   const unreadCount    = unreadCountProp;
+
+  // Keep refs pointing at latest values so event listeners with [] deps stay fresh
+  workingHoursRef.current = workingHours;
+  handleSavePrefRef.current = handleSavePref;
+
+  // Non-passive wheel listener so we can call e.preventDefault() and block page scroll
+  useEffect(() => {
+    const track = trackRef.current;
+    if (!track) return;
+    const onWheel = (e) => {
+      e.preventDefault();
+      const wh = workingHoursRef.current;
+      const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY;
+      if (Math.abs(delta) < 2) return;
+      const shift = delta > 0 ? 1 : -1;
+      const curS = parseHour(wh.start);
+      const curE = parseHour(wh.end);
+      if (curS + shift >= 0 && curE + shift <= 24) {
+        const fmt = h => `${h.toString().padStart(2, '0')}:00`;
+        const newWh = { start: fmt(curS + shift), end: fmt(curE + shift) };
+        setProfile(p => ({ ...p, workingHours: newWh }));
+        clearTimeout(scrollTimeout.current);
+        scrollTimeout.current = setTimeout(() => {
+          handleSavePrefRef.current({ workingHours: newWh });
+        }, 500);
+      }
+    };
+    track.addEventListener('wheel', onWheel, { passive: false });
+    return () => track.removeEventListener('wheel', onWheel);
+  }, []); // safe — reads workingHours / handleSavePref via refs
+
+  // Drag handler: 'start' handle | 'end' handle | 'move' (whole bar)
+  const handleBarMouseDown = (e, dragType) => {
+    e.preventDefault();
+    const track = trackRef.current;
+    if (!track) return;
+    const rect   = track.getBoundingClientRect();
+    const startX = e.clientX;
+    const startS = parseHour(workingHoursRef.current.start);
+    const startE = parseHour(workingHoursRef.current.end);
+    const duration = startE - startS;
+    const fmt = h => `${h.toString().padStart(2, '0')}:00`;
+
+    const onMove = (ev) => {
+      const dx        = ev.clientX - startX;
+      const hourDelta = Math.round((dx / rect.width) * 24);
+      let newWh;
+      if (dragType === 'start') {
+        const newS = Math.max(0, Math.min(startE - 1, startS + hourDelta));
+        newWh = { start: fmt(newS), end: fmt(startE) };
+      } else if (dragType === 'end') {
+        const newE = Math.max(startS + 1, Math.min(24, startE + hourDelta));
+        newWh = { start: fmt(startS), end: fmt(newE) };
+      } else {
+        const newS = Math.max(0, Math.min(24 - duration, startS + hourDelta));
+        newWh = { start: fmt(newS), end: fmt(newS + duration) };
+      }
+      whDragRef.current = newWh;
+      setProfile(p => ({ ...p, workingHours: newWh }));
+    };
+
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      if (whDragRef.current) {
+        handleSavePrefRef.current({ workingHours: whDragRef.current });
+        whDragRef.current = null;
+      }
+    };
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
 
   const TABS = [
     { id: 'profile',     label: 'Profile'     },
@@ -577,11 +663,87 @@ export default function ProfileView({
                     onChange={e => handleSavePref({ workingHours: { ...workingHours, end: e.target.value } })}
                   />
                 </div>
-                <div className="wh-track" style={{ marginTop: '0.75rem' }}>
-                  <div className="wh-fill" style={{ left: `${whStartPct}%`, width: `${whEndPct - whStartPct}%` }} />
+                <div ref={trackRef} className="wh-track" style={{ marginTop: '0.75rem' }}>
+                  <div
+                    className="wh-fill"
+                    style={{ left: `${whStartPct}%`, width: `${whEndPct - whStartPct}%` }}
+                    onMouseDown={e => handleBarMouseDown(e, 'move')}
+                  />
+                  <div
+                    className="wh-handle"
+                    style={{ left: `${whStartPct}%` }}
+                    onMouseDown={e => { e.stopPropagation(); handleBarMouseDown(e, 'start'); }}
+                  />
+                  <div
+                    className="wh-handle"
+                    style={{ left: `${whEndPct}%` }}
+                    onMouseDown={e => { e.stopPropagation(); handleBarMouseDown(e, 'end'); }}
+                  />
                 </div>
-                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.3rem' }}>
-                  {workingHours.start} – {workingHours.end}
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.3rem', display: 'flex', justifyContent: 'space-between' }}>
+                  <span>{workingHours.start} – {workingHours.end}</span>
+                  <span style={{ fontStyle: 'italic', opacity: 0.7 }}>Drag handles · scroll sideways to shift</span>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.4rem' }}>
+                  Lunch Break
+                </label>
+                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Start</span>
+                  <input
+                    type="time"
+                    className="pv-input-sub"
+                    style={{ width: 'auto' }}
+                    value={lunchBreak.start}
+                    onChange={e => {
+                      const newLB = { ...lunchBreak, start: e.target.value };
+                      setProfile(p => ({ ...p, lunchBreak: newLB }));
+                      handleSavePref({ lunchBreak: newLB });
+                    }}
+                  />
+                  <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Duration</span>
+                  <select
+                    className="pv-input-sub"
+                    style={{ width: 'auto' }}
+                    value={lunchBreak.duration}
+                    onChange={e => {
+                      const newLB = { ...lunchBreak, duration: parseInt(e.target.value, 10) };
+                      setProfile(p => ({ ...p, lunchBreak: newLB }));
+                      handleSavePref({ lunchBreak: newLB });
+                    }}
+                  >
+                    <option value={30}>30 min</option>
+                    <option value={60}>60 min</option>
+                    <option value={90}>90 min</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.4rem' }}>
+                  Working Days
+                </label>
+                <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                  {DAYS.map((d, i) => {
+                    const isActive = workingDays.includes(i);
+                    return (
+                      <button
+                        key={d}
+                        className={`wd-day-btn${isActive ? ' active' : ''}`}
+                        onClick={() => {
+                          const newDays = isActive
+                            ? workingDays.filter(day => day !== i)
+                            : [...workingDays, i].sort();
+                          setProfile(p => ({ ...p, workingDays: newDays }));
+                          handleSavePref({ workingDays: newDays });
+                        }}
+                      >
+                        {d}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>

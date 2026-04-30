@@ -13,7 +13,7 @@
   /* ── Text ── */
   --text-primary:   #e8edf5;
   --text-secondary: #6b7a94;
-  --text-muted:     #3d4e68;
+  --text-muted:     #6b7a94;/*#3d4e68;*/
 
   /* ── Accent ── */
   --accent:       #38bdf8;
@@ -78,7 +78,7 @@
 
   --text-primary:   #0f1a2e;
   --text-secondary: #4a5568;
-  --text-muted:     #9aa5b4;
+  --text-muted:     #4a5568;/*#9aa5b4;*/
 
   --accent:       #2563eb;
   --accent-dim:   rgba(37,99,235,0.10);

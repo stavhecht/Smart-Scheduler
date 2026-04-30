@@ -31,3 +31,6 @@ response*.json
 # Claude/Tooling
 .claude/
 .agents/
+
+.DS_Store
+

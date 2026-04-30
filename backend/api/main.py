@@ -190,6 +190,7 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
                 return {
                     "id":             user_id,
                     "name":           profile.displayName,
+                    "displayName":    profile.displayName,
                     "email":          profile.email,
                     "bio":            profile.bio,
                     "role":           profile.role,
@@ -197,7 +198,10 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
                     "skills":         profile.skills,
                     "status_message": profile.statusMessage,
                     "statusMessage":  profile.statusMessage,
+                    "timezone":       profile.timezone,
                     "workingHours":   profile.workingHours,
+                    "workingDays":    profile.workingDays,
+                    "lunchHour":      profile.lunchHour,
                     "fairness_score": float(fairness.fairnessScore) if fairness else 100.0,
                     "details": {
                         "meetings_this_week":      metrics.get("meetings_this_week", 0),
@@ -704,14 +708,25 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
                 end_dt  = slot_dt + timedelta(minutes=duration_minutes)
                 all_ids = list(set([user_id] + participant_ids))
                 participant_states = []
+                participant_tz_offsets = []
+                participant_working_days = []  
                 for uid in all_ids:
                     state = db._get_item(f"USER#{uid}", "FAIRNESS")
                     if state:
                         participant_states.append(state)
+                    p = db._get_item(f"USER#{uid}", "PROFILE")
+                    if p:
+                        participant_tz_offsets.append(db.get_tz_offset_hours(p.get('timezone', 'UTC')))
+                        participant_working_days.append(p.get('workingDays', [0, 1, 2, 3, 4]))
                 user_profile = db._get_item(f"USER#{user_id}", "PROFILE")
                 user_tz = (user_profile or {}).get("timezone", "UTC")
                 tz_offset = db.get_tz_offset_hours(user_tz)
-                result = fe.score_time_slot(slot_dt, participant_states, duration_minutes, tz_offset_hours=tz_offset)
+                result = fe.score_time_slot(
+                    slot_dt, participant_states, duration_minutes,
+                    tz_offset_hours=tz_offset,
+                    participant_tz_offsets=participant_tz_offsets or None,
+                    participant_working_days=participant_working_days or None,
+                )
                 return {
                     "startIso":       start_iso,
                     "endIso":         end_dt.isoformat(),
