@@ -813,17 +813,7 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
                     tokens = calendar_client.exchange_microsoft_code(code)
                 except Exception as exc:
                     raise HTTPException(status_code=400, detail=f"Token exchange failed: {exc}")
-                # Decode the id_token to get email (it's a JWT — parse the payload)
-                calendar_email = ""
-                try:
-                    import base64
-                    id_token = tokens.get('id_token', '')
-                    payload  = id_token.split('.')[1]
-                    payload += '=' * (4 - len(payload) % 4)   # fix padding
-                    claims   = json.loads(base64.b64decode(payload))
-                    calendar_email = claims.get('email') or claims.get('preferred_username', '')
-                except Exception:
-                    pass
+                calendar_email = calendar_client.get_microsoft_user_email(tokens.get('access_token', ''))
                 expires_at = datetime.now() + timedelta(seconds=tokens.get('expires_in', 3600))
                 db.save_oauth_tokens(user_id, 'microsoft', {
                     'access_token':   tokens.get('access_token', ''),
