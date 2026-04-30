@@ -7,8 +7,8 @@ WORKDIR /app
 # Copy the requirements file into the container at /app
 COPY requirements.txt .
 
-# Install any needed packages specified in requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt && pip install --no-cache-dir uvicorn boto3
+# Install any needed packages specified in requirements.txt, uvicorn, boto3 just for dev
+RUN pip install --no-cache-dir -r requirements.txt && pip install --no-cache-dir uvicorn boto3 
 
 # Copy the current directory contents into the container at /app
 COPY . .

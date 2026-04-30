@@ -18,7 +18,7 @@ import os
 import time
 import urllib.request
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Dict
 
 import db   # local module
@@ -142,6 +142,16 @@ def get_google_user_email(access_token: str) -> str:
         return ''
 
 
+def get_microsoft_user_email(access_token: str) -> str:
+    """Fetch the Microsoft account email via Graph /me endpoint (same pattern as Google)."""
+    try:
+        info = _http_get(f"{MS_GRAPH}/me", headers={'Authorization': f'Bearer {access_token}'})
+        # 'mail' is the SMTP address; 'userPrincipalName' is the UPN fallback
+        return info.get('mail') or info.get('userPrincipalName', '')
+    except Exception:
+        return ''
+
+
 def _ensure_fresh_google_token(user_id: str) -> Optional[str]:
     """Return a valid access token, refreshing if needed. None if not connected."""
     tokens = db.get_oauth_tokens(user_id, 'google')
@@ -168,6 +178,7 @@ def _ensure_fresh_google_token(user_id: str) -> Optional[str]:
             })
     except Exception as e:
         print(f"[calendar] Google token refresh failed for {user_id}: {e}")
+        return None
 
     return access_token
 
@@ -309,8 +320,9 @@ def _ensure_fresh_microsoft_token(user_id: str) -> Optional[str]:
                 'scope':          tokens.get('scope', ''),
                 'calendar_email': tokens.get('calendarEmail', ''),
             })
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[calendar] Microsoft token refresh failed for {user_id}: {e}")
+        return None
 
     return access_token
 

@@ -73,8 +73,8 @@ async function apiProxy(action, data = null, _isRetry = false) {
 /* ── Public API ─────────────────────────────────────────────────────────── */
 
 export async function apiGet(path) {
-    if (path === '/api/profile')         return apiProxy('profile');
-    if (path === '/api/meetings')        return apiProxy('meetings');
+    if (path === '/api/profile') return apiProxy('profile');
+    if (path === '/api/meetings') return apiProxy('meetings');
     if (path === '/api/calendar/status') return apiProxy('calendar_status');
 
     // /api/meetings/<id>/log
