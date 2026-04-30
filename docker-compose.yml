@@ -6,6 +6,9 @@ services:
       - "8000:8000"
     environment:
       - ENVIRONMENT=development
+      - AWS_DEFAULT_REGION=us-east-1
+    volumes:
+      - ~/.aws:/root/.aws:ro
     networks:
       - app-network
 

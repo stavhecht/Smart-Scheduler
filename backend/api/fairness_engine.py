@@ -15,14 +15,15 @@ class FairnessEngine:
     # Preference weights per hour of day (0.0 - 1.0)
     HOUR_WEIGHTS: Dict[int, float] = {
         7: 0.45, 8: 0.65, 9: 0.85, 10: 1.00, 11: 1.00,
-        12: 0.70,  # Lunch hour - reduced
+        12: 0.15,  # Default lunch hour — very low (avoid scheduling during lunch)
         13: 0.90, 14: 1.00, 15: 0.95, 16: 0.85, 17: 0.65, 18: 0.45
     }
 
-    # Preference weights per day of week (0=Monday, 6=Sunday)
-    DAY_WEIGHTS: Dict[int, float] = {
-        0: 1.00, 1: 1.00, 2: 1.00, 3: 0.95, 4: 0.80, 5: 0.40, 6: 0.20
-    }
+    # Day-of-week weights derived from per-user working days.
+    # Working days score at full weight; non-working days are heavily discounted.
+    WORKING_DAY_WEIGHT: float  = 1.0
+    REST_DAY_WEIGHT: float     = 0.2
+    LUNCH_BREAK_WEIGHT: float  = 0.15  # Applied to any configured lunch break hour
 
     # Threshold below which the Reshuffling Engine activates
     OPTIMIZATION_THRESHOLD: float = 75.0
@@ -58,6 +59,18 @@ class FairnessEngine:
     # Slot scoring (Social Fairness Algorithm)
     # ---------------------------------------------------------------------------
 
+    def _is_lunch_hour(self, hour: int, lunch_break: Optional[dict]) -> bool:
+        """Return True if `hour` falls within the participant's configured lunch window."""
+        if not lunch_break:
+            return False
+        try:
+            start_hour = int(str(lunch_break.get('start', '12:00')).split(':')[0])
+            duration   = int(lunch_break.get('duration', 60))
+            end_hour   = start_hour + max(1, duration // 60)
+            return start_hour <= hour < end_hour
+        except (ValueError, TypeError):
+            return False
+
     def score_time_slot(
         self,
         slot_dt: datetime,
@@ -65,6 +78,8 @@ class FairnessEngine:
         duration_minutes: int,
         tz_offset_hours: float = 0.0,
         participant_tz_offsets: Optional[List[float]] = None,
+        participant_working_days: Optional[List[List[int]]] = None,
+        participant_lunch_breaks: Optional[List[Optional[dict]]] = None,
         busy_count: int = 0,
     ) -> Dict[str, Any]:
         """
@@ -89,15 +104,30 @@ class FairnessEngine:
         # 1. Base Time Score — averaged across all participant local times when available
         if participant_tz_offsets:
             p_time_scores = []
-            for offset in participant_tz_offsets:
+            for i, offset in enumerate(participant_tz_offsets):
                 p_local = slot_dt + timedelta(hours=offset)
-                hw = self.HOUR_WEIGHTS.get(p_local.hour, 0.3)
-                dw = self.DAY_WEIGHTS.get(p_local.weekday(), 0.3)
+
+                lb  = participant_lunch_breaks[i] if participant_lunch_breaks and i < len(participant_lunch_breaks) else None
+                hw  = self.LUNCH_BREAK_WEIGHT if self._is_lunch_hour(p_local.hour, lb) else self.HOUR_WEIGHTS.get(p_local.hour, 0.3)
+
+                if participant_working_days and i < len(participant_working_days):
+                    pwd = participant_working_days[i]
+                else:
+                    pwd = [0, 1, 2, 3, 4]
+
+                dw = self.WORKING_DAY_WEIGHT if p_local.weekday() in pwd else self.REST_DAY_WEIGHT
                 p_time_scores.append(hw * dw * 100.0)
             time_score = sum(p_time_scores) / len(p_time_scores)
         else:
-            hour_weight = self.HOUR_WEIGHTS.get(hour, 0.3)
-            day_weight = self.DAY_WEIGHTS.get(day, 0.3)
+            lb0          = participant_lunch_breaks[0] if participant_lunch_breaks else None
+            hour_weight  = self.LUNCH_BREAK_WEIGHT if self._is_lunch_hour(hour, lb0) else self.HOUR_WEIGHTS.get(hour, 0.3)
+
+            if participant_working_days and len(participant_working_days) > 0:
+                pwd = participant_working_days[0]
+            else:
+                pwd = [0, 1, 2, 3, 4]
+
+            day_weight = self.WORKING_DAY_WEIGHT if day in pwd else self.REST_DAY_WEIGHT
             time_score = hour_weight * day_weight * 100.0
 
         if participant_states:

@@ -415,18 +415,84 @@
 /* ── Working hours bar ── */
 .wh-track {
   position: relative;
-  height: 8px;
+  height: 20px;
   background: rgba(255, 255, 255, 0.06);
-  border-radius: 4px;
-  overflow: hidden;
+  border-radius: 10px;
+  cursor: ew-resize;
+  user-select: none;
 }
 
 .wh-fill {
   position: absolute;
   top: 0;
   height: 100%;
-  background: linear-gradient(to right, rgba(56, 189, 248, 0.6), rgba(129, 140, 248, 0.6));
-  border-radius: 4px;
+  background: linear-gradient(to right, rgba(56, 189, 248, 0.55), rgba(129, 140, 248, 0.55));
+  border-radius: 10px;
+  cursor: grab;
+  transition: opacity 0.1s;
+}
+
+.wh-fill:hover { opacity: 0.85; }
+.wh-fill:active { cursor: grabbing; }
+
+.wh-handle {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  cursor: ew-resize;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.45);
+  z-index: 1;
+  transition: transform 0.1s, box-shadow 0.1s;
+}
+
+.wh-handle:hover {
+  transform: translate(-50%, -50%) scale(1.25);
+  box-shadow: 0 2px 8px rgba(56, 189, 248, 0.5);
+}
+
+/* ── Working days pill buttons ── */
+.wd-day-btn {
+  padding: 0.3rem 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-family: inherit;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  min-width: 40px;
+}
+
+/* Inactive button pressed — preview of what selecting it will look like */
+.wd-day-btn:active:not(.active) {
+  background: rgba(56, 189, 248, 0.14);
+  border-color: rgba(56, 189, 248, 0.35);
+  color: var(--accent);
+}
+
+.wd-day-btn:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: var(--text-secondary);
+}
+
+.wd-day-btn.active {
+  border-color: rgba(56, 189, 248, 0.55);
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+/* Active button pressed — preview of deselection */
+.wd-day-btn.active:active {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.07);
+  color: var(--text-muted);
 }
 
 .pv-info {
@@ -933,6 +999,37 @@
 
 [data-theme="light"] .wh-track {
   background: rgba(0, 0, 0, 0.08);
+}
+
+/* ── Working days buttons — light mode ── */
+[data-theme="light"] .wd-day-btn {
+  background: var(--bg-raised);
+  border-color: rgba(0, 0, 0, 0.18);
+  color: var(--text-secondary);
+}
+
+[data-theme="light"] .wd-day-btn:hover:not(.active) {
+  background: #e2e8f0;
+  border-color: rgba(0, 0, 0, 0.28);
+  color: var(--text-primary);
+}
+
+[data-theme="light"] .wd-day-btn:active:not(.active) {
+  background: rgba(37, 99, 235, 0.08);
+  border-color: rgba(37, 99, 235, 0.35);
+  color: var(--accent);
+}
+
+[data-theme="light"] .wd-day-btn.active {
+  background: var(--accent-dim);
+  border-color: rgba(37, 99, 235, 0.45);
+  color: var(--accent);
+}
+
+[data-theme="light"] .wd-day-btn.active:active {
+  background: var(--bg-raised);
+  border-color: rgba(0, 0, 0, 0.18);
+  color: var(--text-secondary);
 }
 
 [data-theme="light"] .fa-track {

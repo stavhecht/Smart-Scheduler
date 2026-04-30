@@ -14,6 +14,7 @@ class UserProfile(BaseModel):
     statusMessage: Optional[str] = "Focused & Ready"
     timezone: str = "Asia/Jerusalem"
     workingHours: Dict[str, str] = {"start": "09:00", "end": "18:00"}
+    workingDays: List[int] = [0, 1, 2, 3, 4]
     notificationPrefs: Dict[str, bool] = Field(default_factory=lambda: {"invites": True, "reminders": True, "digest": False})
     showFairnessScore: bool = True
     allowMessages: bool = True

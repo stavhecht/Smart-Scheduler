@@ -97,7 +97,9 @@ def ensure_user_profile(user_id: str, email: str, display_name: str):
         email=email,
         displayName=display_name,
         timezone="Asia/Jerusalem",
-        workingHours={"start": "09:00", "end": "18:00"}
+        workingHours={"start": "09:00", "end": "18:00"},
+        workingDays=[0, 1, 2, 3, 4],
+        lunchHour=12
     ).model_dump(mode="json"))
 
     _put_item(f"USER#{user_id}", "FAIRNESS", models.FairnessState(
@@ -183,21 +185,35 @@ def mark_messages_read(user_id: str):
                     pass
 
 
-def _get_working_hours_list(participant_working_hours: List[dict]) -> List[int]:
+def _get_working_days_intersection(participant_profiles: List[dict]) -> List[int]:
+    """Compute the intersection of participants' working days."""
+    if not participant_profiles:
+        return [0, 1, 2, 3, 4]
+    try:
+        common_days = set(range(7))
+        for p in participant_profiles:
+            common_days &= set(p.get('workingDays', [0, 1, 2, 3, 4]))
+        return sorted(list(common_days)) if common_days else [0, 1, 2, 3, 4]
+    except Exception:
+        return [0, 1, 2, 3, 4]
+
+
+def _get_working_hours_list(participant_profiles: List[dict]) -> List[int]:
     """
     Compute the intersection of participants' working hours and return candidate local hours.
-    Skips lunch hour (12). Falls back to default WORKING_HOURS on any error.
+    Skips personal lunch hours. Falls back to default WORKING_HOURS on any error.
     """
-    if not participant_working_hours:
+    if not participant_profiles:
         return fairness_engine.WORKING_HOURS
     try:
-        starts = [int(wh.get('start', '09:00').split(':')[0]) for wh in participant_working_hours]
-        ends   = [int(wh.get('end',   '18:00').split(':')[0]) for wh in participant_working_hours]
+        starts = [int(p.get('workingHours', {}).get('start', '09:00').split(':')[0]) for p in participant_profiles]
+        ends   = [int(p.get('workingHours', {}).get('end',   '18:00').split(':')[0]) for p in participant_profiles]
+        lunch_hours = {int(p.get('lunchHour', 12)) for p in participant_profiles}
         wh_start = max(starts)   # latest start = safe intersection
         wh_end   = min(ends)     # earliest end = safe intersection
         if wh_start >= wh_end:
             return fairness_engine.WORKING_HOURS
-        hours = [h for h in range(max(7, wh_start), min(19, wh_end)) if h != 12]
+        hours = [h for h in range(max(7, wh_start), min(19, wh_end)) if h not in lunch_hours]
         return hours if hours else fairness_engine.WORKING_HOURS
     except Exception:
         return fairness_engine.WORKING_HOURS
@@ -584,14 +600,24 @@ def create_meeting_with_simulation(req_data: models.MeetingCreateSchema, creator
         get_tz_offset_hours(p.get('timezone', 'UTC')) for p in participant_profiles
     ] if participant_profiles else None
 
+    # Per-participant working days (for personalized day-weight scoring)
+    participant_working_days = [
+        p.get('workingDays', [0, 1, 2, 3, 4]) for p in participant_profiles
+    ] if participant_profiles else None
+
+    # Per-participant lunch breaks (for personalized lunch-hour weight scoring)
+    participant_lunch_breaks = [
+        p.get('lunchBreak') for p in participant_profiles
+    ] if participant_profiles else None
+
     # Working hours intersection across all participants
-    working_hours_data = [p.get('workingHours', {'start': '09:00', 'end': '18:00'}) for p in participant_profiles]
-    wh_list = _get_working_hours_list(working_hours_data)
+    wh_list = _get_working_hours_list(participant_profiles)
+    wd_list = _get_working_days_intersection(participant_profiles)
 
     # Generate candidate slots aligned to working hours intersection
     candidates = fairness_engine.generate_candidate_slots(
         meeting.dateRangeStart, meeting.dateRangeEnd,
-        tz_offset_hours=tz_offset, working_hours=wh_list
+        tz_offset_hours=tz_offset, working_hours=wh_list, working_days=wd_list
     )
 
     # Fetch calendar busy slots for ALL participants
@@ -645,6 +671,8 @@ def create_meeting_with_simulation(req_data: models.MeetingCreateSchema, creator
             slot_dt, participant_states, meeting.durationMinutes,
             tz_offset_hours=tz_offset,
             participant_tz_offsets=participant_tz_offsets,
+            participant_working_days=participant_working_days,
+            participant_lunch_breaks=participant_lunch_breaks,
             busy_count=busy_count,
         )
         end_dt = slot_dt + timedelta(minutes=meeting.durationMinutes)
@@ -706,6 +734,8 @@ def sfn_fetch_participants(payload: dict) -> dict:
                 'userId':       uid,
                 'timezone':     profile.get('timezone', 'UTC'),
                 'workingHours': profile.get('workingHours', {'start': '09:00', 'end': '18:00'}),
+                'workingDays':  profile.get('workingDays', [0, 1, 2, 3, 4]),
+                'lunchHour':    profile.get('lunchHour', 12),
             })
 
     payload['participant_states']   = participant_states
@@ -726,11 +756,11 @@ def sfn_generate_slots(payload: dict) -> dict:
     profiles         = payload.get('participant_profiles', [])
 
     # Working hours intersection
-    wh_data = [p.get('workingHours', {'start': '09:00', 'end': '18:00'}) for p in profiles]
-    wh_list = _get_working_hours_list(wh_data)
+    wh_list = _get_working_hours_list(profiles)
+    wd_list = _get_working_days_intersection(profiles)
 
     candidates = fairness_engine.generate_candidate_slots(
-        date_start, date_end, tz_offset_hours=tz_offset, working_hours=wh_list
+        date_start, date_end, tz_offset_hours=tz_offset, working_hours=wh_list, working_days=wd_list
     )
     end_delta = timedelta(minutes=duration_minutes)
 
@@ -803,6 +833,10 @@ def sfn_calculate_fairness(payload: dict) -> dict:
     tz_offset = float(payload.get('tz_offset_hours', 0.0))
     # Per-participant timezone offsets for averaged time scoring
     participant_tz_offsets = [get_tz_offset_hours(p.get('timezone', 'UTC')) for p in profiles] or None
+    # Per-participant working days for personalized day-weight scoring
+    participant_working_days = [p.get('workingDays', [0, 1, 2, 3, 4]) for p in profiles] or None
+    # Per-participant lunch breaks for personalized lunch-hour weight scoring
+    participant_lunch_breaks = [p.get('lunchBreak') for p in profiles] or None
 
     scored = []
     for slot in candidate_slots:
@@ -812,6 +846,8 @@ def sfn_calculate_fairness(payload: dict) -> dict:
             dt, participant_states, duration_minutes,
             tz_offset_hours=tz_offset,
             participant_tz_offsets=participant_tz_offsets,
+            participant_working_days=participant_working_days,
+            participant_lunch_breaks=participant_lunch_breaks,
             busy_count=busy_count,
         )
         scored.append({**slot, **result})
