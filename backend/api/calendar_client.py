@@ -180,7 +180,8 @@ def _ensure_fresh_google_token(user_id: str) -> Optional[str]:
                 'calendar_email': tokens.get('calendarEmail', ''),
             })
     except Exception as e:
-        print(f"[calendar] Google token refresh failed for {user_id}: {e}")
+        print(f"[calendar] Google token refresh failed for {user_id}: {e} — deleting stale tokens so user is prompted to reconnect")
+        db.delete_oauth_tokens(user_id, 'google')
         return None
 
     return access_token
@@ -324,7 +325,8 @@ def _ensure_fresh_microsoft_token(user_id: str) -> Optional[str]:
                 'calendar_email': tokens.get('calendarEmail', ''),
             })
     except Exception as e:
-        print(f"[calendar] Microsoft token refresh failed for {user_id}: {e}")
+        print(f"[calendar] Microsoft token refresh failed for {user_id}: {e} — deleting stale tokens so user is prompted to reconnect")
+        db.delete_oauth_tokens(user_id, 'microsoft')
         return None
 
     return access_token

@@ -224,6 +224,7 @@ class FairnessEngine:
         date_end: datetime,
         tz_offset_hours: float = 0.0,
         working_hours: Optional[List[int]] = None,
+        working_days: Optional[List[int]] = None,
     ) -> List[datetime]:
         """
         Generate candidate time slots within the given date range.
@@ -236,12 +237,13 @@ class FairnessEngine:
                        the class default WORKING_HOURS.
         """
         hours = working_hours if working_hours else self.WORKING_HOURS
+        allowed_days = set(working_days) if working_days else set(range(5))  # default Mon–Fri
         slots: List[datetime] = []
         now_utc = datetime.utcnow()
         current = date_start.replace(hour=9, minute=0, second=0, microsecond=0)
 
         while current <= date_end and len(slots) < 12:
-            if current.weekday() < 5:  # Mon–Fri only
+            if current.weekday() in allowed_days:
                 for local_hour in hours:
                     # Convert local hour → UTC hour for the stored slot
                     utc_hour = local_hour - int(tz_offset_hours)
