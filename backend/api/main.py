@@ -2,8 +2,17 @@ import json
 import logging
 import os
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional
 from urllib.parse import unquote
+
+# Auto-load .env when running locally with uvicorn
+if os.environ.get('ENVIRONMENT') == 'development':
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(Path(__file__).parent.parent.parent / '.env')
+    except ImportError:
+        pass
 
 import boto3
 from fastapi import FastAPI, HTTPException, Request
@@ -14,6 +23,7 @@ import db
 import calendar_client
 import models
 
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
@@ -23,7 +33,7 @@ _FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://main.dndn8x61u1xu5.ampli
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[_FRONTEND_URL, 'http://localhost:5173'],
+    allow_origins=[_FRONTEND_URL, 'http://localhost:5273', 'http://localhost:5173'],
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],

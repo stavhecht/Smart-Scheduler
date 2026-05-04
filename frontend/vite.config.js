@@ -5,7 +5,8 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
-    // הגדרה שמפנה בקשות API לשרת ה-Backend המקומי
+    port: 5173,
+    strictPort: true,
     proxy: {
       '/api': {
         target: 'http://localhost:8000',
@@ -13,7 +14,6 @@ export default defineConfig({
         secure: false,
       }
     },
-    // SPA fallback: כל path שלא קיים יפנה ל-index.html
     historyApiFallback: true,
   }
 })
