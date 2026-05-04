@@ -18,8 +18,7 @@
  */
 
 import { fetchAuthSession } from 'aws-amplify/auth';
-
-const API_BASE = 'https://xobqlykrlg.execute-api.us-east-1.amazonaws.com';
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 /** Returns the Cognito access token. Pass forceRefresh=true to force a new token. */
 async function getAccessToken(forceRefresh = false) {
