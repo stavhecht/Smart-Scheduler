@@ -18,8 +18,7 @@
  */
 
 import { fetchAuthSession } from 'aws-amplify/auth';
-
-const API_BASE = 'https://xobqlykrlg.execute-api.us-east-1.amazonaws.com';
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 /** Returns the Cognito access token. Pass forceRefresh=true to force a new token. */
 async function getAccessToken(forceRefresh = false) {
@@ -73,8 +72,8 @@ async function apiProxy(action, data = null, _isRetry = false) {
 /* ── Public API ─────────────────────────────────────────────────────────── */
 
 export async function apiGet(path) {
-    if (path === '/api/profile')         return apiProxy('profile');
-    if (path === '/api/meetings')        return apiProxy('meetings');
+    if (path === '/api/profile') return apiProxy('profile');
+    if (path === '/api/meetings') return apiProxy('meetings');
     if (path === '/api/calendar/status') return apiProxy('calendar_status');
 
     // /api/meetings/<id>/log

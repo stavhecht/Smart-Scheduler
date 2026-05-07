@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { Routes, Route, NavLink, useNavigate, Navigate } from 'react-router-dom'
+import { Routes, Route, NavLink, useNavigate, useLocation, Navigate } from 'react-router-dom'
 import { LayoutDashboard, Calendar, CalendarCheck, Users, MessageSquare, User, Sun, Moon } from 'lucide-react'
 import { useToast } from './context/ToastContext.jsx'
 import './App.css'
@@ -24,6 +24,7 @@ Amplify.configure(awsConfig);
 function AppContent() {
   const { user, signOut } = useAuthenticator((context) => [context.user]);
   const navigate = useNavigate();
+  const location = useLocation();
   const toast = useToast();
   const [profile, setProfile]             = useState(null);
   const [meetings, setMeetings]           = useState([]);
@@ -92,7 +93,7 @@ function AppContent() {
           await apiPost('/api/calendar/callback', oauthPending);
           const label = oauthPending.provider === 'google' ? 'Google Calendar' : 'Microsoft Outlook';
           toast(`${label} connected successfully!`, 'success');
-          setActiveView('profile'); // navigate straight to profile to show connected calendar
+          navigate('/profile', { state: { initialTab: 'calendar' } });
         } catch (err) {
           console.error('OAuth callback exchange failed:', err);
         }
@@ -430,6 +431,7 @@ function AppContent() {
                   onProfileUpdate={setProfile}
                   onUnreadCountChange={setUnreadCount}
                   unreadCount={unreadCount}
+                  initialTab={location.state?.initialTab}
                 />
               </div>
             } />

@@ -18,7 +18,7 @@ import os
 import time
 import urllib.request
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Dict
 
 import db   # local module
@@ -33,8 +33,11 @@ GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
 MS_CLIENT_ID         = os.environ.get('MICROSOFT_CLIENT_ID', '')
 MS_CLIENT_SECRET     = os.environ.get('MICROSOFT_CLIENT_SECRET', '')
 
-# Redirect URI — Use the base URL directly (the React app handles query params on mount)
-REDIRECT_URI = FRONTEND_URL if FRONTEND_URL.endswith('/') else FRONTEND_URL + '/'
+# Redirect URI — localhost:5173 in dev, production FRONTEND_URL otherwise
+if os.environ.get('ENVIRONMENT') == 'development':
+    REDIRECT_URI = 'http://localhost:5173/'
+else:
+    REDIRECT_URI = FRONTEND_URL if FRONTEND_URL.endswith('/') else FRONTEND_URL + '/'
 
 GOOGLE_AUTH_URL   = 'https://accounts.google.com/o/oauth2/v2/auth'
 GOOGLE_TOKEN_URL  = 'https://oauth2.googleapis.com/token'
@@ -142,6 +145,16 @@ def get_google_user_email(access_token: str) -> str:
         return ''
 
 
+def get_microsoft_user_email(access_token: str) -> str:
+    """Fetch the Microsoft account email via Graph /me endpoint (same pattern as Google)."""
+    try:
+        info = _http_get(f"{MS_GRAPH}/me", headers={'Authorization': f'Bearer {access_token}'})
+        # 'mail' is the SMTP address; 'userPrincipalName' is the UPN fallback
+        return info.get('mail') or info.get('userPrincipalName', '')
+    except Exception:
+        return ''
+
+
 def _ensure_fresh_google_token(user_id: str) -> Optional[str]:
     """Return a valid access token, refreshing if needed. None if not connected."""
     tokens = db.get_oauth_tokens(user_id, 'google')
@@ -167,7 +180,9 @@ def _ensure_fresh_google_token(user_id: str) -> Optional[str]:
                 'calendar_email': tokens.get('calendarEmail', ''),
             })
     except Exception as e:
-        print(f"[calendar] Google token refresh failed for {user_id}: {e}")
+        print(f"[calendar] Google token refresh failed for {user_id}: {e} — deleting stale tokens so user is prompted to reconnect")
+        db.delete_oauth_tokens(user_id, 'google')
+        return None
 
     return access_token
 
@@ -309,8 +324,10 @@ def _ensure_fresh_microsoft_token(user_id: str) -> Optional[str]:
                 'scope':          tokens.get('scope', ''),
                 'calendar_email': tokens.get('calendarEmail', ''),
             })
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[calendar] Microsoft token refresh failed for {user_id}: {e} — deleting stale tokens so user is prompted to reconnect")
+        db.delete_oauth_tokens(user_id, 'microsoft')
+        return None
 
     return access_token
 

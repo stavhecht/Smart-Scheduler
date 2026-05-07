@@ -15,7 +15,7 @@ resource "aws_lambda_function" "api_handler" {
     variables = {
       TABLE_NAME     = aws_dynamodb_table.smart_scheduler_table.name
       AWS_ACCOUNT_ID = data.aws_caller_identity.current.account_id
-      FRONTEND_URL   = "https://main.dswqybh1v4bo.amplifyapp.com"
+      FRONTEND_URL   = var.frontend_url
       GOOGLE_CLIENT_ID     = var.google_client_id
       GOOGLE_CLIENT_SECRET = var.google_client_secret
       MICROSOFT_CLIENT_ID  = var.microsoft_client_id
@@ -35,7 +35,7 @@ resource "aws_apigatewayv2_api" "api_gateway" {
     allow_credentials = false
     allow_headers     = ["date", "keep-alive", "content-type", "authorization"]
     allow_methods     = ["*"]
-    allow_origins     = ["*"]
+    allow_origins     = [var.frontend_url]
     expose_headers    = ["date", "keep-alive"]
     max_age           = 86400
   }
