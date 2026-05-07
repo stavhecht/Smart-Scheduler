@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { apiGet, apiPost, apiUpdateIcsUrl } from '../apiClient';
-import InboxPanel from './InboxPanel';
+import { apiGet, apiPost } from '../apiClient';
 import './ProfileView.css';
 
 const STATUS_PRESETS = [
@@ -9,6 +8,18 @@ const STATUS_PRESETS = [
 ];
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+function extractPrefs(p) {
+  return {
+    timezone: p.timezone || 'Asia/Jerusalem',
+    workingHours: p.workingHours || { start: '09:00', end: '18:00' },
+    workingDays: p.workingDays || [0, 1, 2, 3, 4],
+    lunchBreak: p.lunchBreak || { start: '12:00', duration: 60 },
+    notificationPrefs: p.notificationPrefs || { invites: true, reminders: true, digest: false },
+    showFairnessScore: p.showFairnessScore ?? true,
+    allowMessages: p.allowMessages ?? true,
+  };
+}
 
 const TIMEZONES = [
   'Pacific/Honolulu', 'America/Anchorage', 'America/Los_Angeles', 'America/Denver',
@@ -99,8 +110,6 @@ export default function ProfileView({
   onCalendarConnect,
   onCalendarDisconnect,
   onProfileUpdate,
-  onUnreadCountChange,
-  unreadCount: unreadCountProp = 0,
   initialTab,
 }) {
   const [profile, setProfile]         = useState(initialProfile);
@@ -112,19 +121,19 @@ export default function ProfileView({
   const [saveError, setSaveError]     = useState('');
   const [disconnectConfirm, setDisconnectConfirm] = useState(null);
   const [stats, setStats]             = useState(null);
-  const [icsUrl, setIcsUrl]           = useState(calendarStatus?.ics?.url || '');
-  const [icsEditing, setIcsEditing]   = useState(false);
-  const [icsSaving, setIcsSaving]     = useState(false);
-  const [icsSaveMsg, setIcsSaveMsg]   = useState('');
   const [showFairnessExplainer, setShowFairnessExplainer] = useState(false);
+  // Preferences dirty-state tracking (Task 1)
+  const [prefsDraft, setPrefsDraft]   = useState(() => extractPrefs(initialProfile));
+  const [savedPrefs, setSavedPrefs]   = useState(() => extractPrefs(initialProfile));
+  const [prefsSaving, setPrefsSaving] = useState(false);
+  const [prefsSaved, setPrefsSaved]   = useState(false);
+  const prefsDraftRef                 = useRef(prefsDraft);
   const [tzSearch, setTzSearch]       = useState('');
   const [tzOpen, setTzOpen]           = useState(false);
   const tzRef                         = useRef(null);
-  const scrollTimeout                 = useRef(null);
   const trackRef                      = useRef(null);
   const whDragRef                     = useRef(null);
   const workingHoursRef               = useRef(null);
-  const handleSavePrefRef             = useRef(null);
 
   const score      = Math.round(profile.fairness_score ?? 100);
   const scoreColor = score >= 80 ? '#34d399' : score >= 60 ? '#fbbf24' : '#f87171';
@@ -148,7 +157,10 @@ export default function ProfileView({
     setSaveError('');
     setIsUpdating(true);
     try {
-      const res = await apiPost('/api/profile/update', tempProfile);
+      const payload = Object.fromEntries(
+        Object.entries(tempProfile).filter(([, v]) => v !== null && v !== undefined)
+      );
+      const res = await apiPost('/api/profile/update', payload);
       if (res.status === 'success') {
         const updated = { ...profile, ...res.profile, displayName: res.profile.displayName };
         setProfile(updated);
@@ -162,24 +174,6 @@ export default function ProfileView({
     }
   };
 
-  const handleSavePref = async (updates) => {
-    try {
-      const merged = { ...profile, ...updates };
-      const res = await apiPost('/api/profile/update', merged);
-      if (res.status === 'success') {
-        // Functional update: merges API response on top of the *current* state,
-        // so any optimistic updates applied while the request was in-flight are preserved.
-        setProfile(p => {
-          const updated = { ...p, ...res.profile };
-          if (onProfileUpdate) onProfileUpdate(updated);
-          return updated;
-        });
-      }
-    } catch (err) {
-      console.error('Pref save failed:', err);
-    }
-  };
-
   const confirmDisconnect = () => {
     if (disconnectConfirm) {
       onCalendarDisconnect(disconnectConfirm);
@@ -187,32 +181,25 @@ export default function ProfileView({
     }
   };
 
-  const handleSaveIcsUrl = async () => {
-    setIcsSaving(true);
-    setIcsSaveMsg('');
+  const handleSaveAllPrefs = async () => {
+    setPrefsSaving(true);
     try {
-      await apiUpdateIcsUrl(icsUrl);
-      setIcsSaveMsg(icsUrl ? 'Connected' : 'Cleared');
-      setIcsEditing(false);
+      const merged = { ...profile, ...prefsDraft };
+      const res = await apiPost('/api/profile/update', merged);
+      if (res.status === 'success') {
+        const updated = { ...profile, ...res.profile };
+        setProfile(updated);
+        if (onProfileUpdate) onProfileUpdate(updated);
+        const newPrefs = extractPrefs(updated);
+        setPrefsDraft(newPrefs);
+        setSavedPrefs(newPrefs);
+        setPrefsSaved(true);
+        setTimeout(() => setPrefsSaved(false), 2000);
+      }
     } catch (err) {
-      setIcsSaveMsg('Save failed: ' + err.message);
+      console.error('Preferences save failed:', err);
     } finally {
-      setIcsSaving(false);
-    }
-  };
-
-  const handleDisconnectIcs = async () => {
-    setIcsSaving(true);
-    setIcsSaveMsg('');
-    try {
-      await apiUpdateIcsUrl('');
-      setIcsUrl('');
-      setIcsEditing(false);
-      setIcsSaveMsg('');
-    } catch (err) {
-      setIcsSaveMsg('Save failed: ' + err.message);
-    } finally {
-      setIcsSaving(false);
+      setPrefsSaving(false);
     }
   };
 
@@ -246,11 +233,10 @@ export default function ProfileView({
   const whStartPct     = (parseHour(workingHours.start) / 24) * 100;
   const whEndPct       = (parseHour(workingHours.end)   / 24) * 100;
   const notifPrefs     = profile.notificationPrefs || { invites: true, reminders: true, digest: false };
-  const unreadCount    = unreadCountProp;
 
   // Keep refs pointing at latest values so event listeners with [] deps stay fresh
   workingHoursRef.current = workingHours;
-  handleSavePrefRef.current = handleSavePref;
+  prefsDraftRef.current = prefsDraft;
 
   // Non-passive wheel listener so we can call e.preventDefault() and block page scroll
   useEffect(() => {
@@ -268,10 +254,7 @@ export default function ProfileView({
         const fmt = h => `${h.toString().padStart(2, '0')}:00`;
         const newWh = { start: fmt(curS + shift), end: fmt(curE + shift) };
         setProfile(p => ({ ...p, workingHours: newWh }));
-        clearTimeout(scrollTimeout.current);
-        scrollTimeout.current = setTimeout(() => {
-          handleSavePrefRef.current({ workingHours: newWh });
-        }, 500);
+        setPrefsDraft(d => ({ ...d, workingHours: newWh }));
       }
     };
     track.addEventListener('wheel', onWheel, { passive: false });
@@ -312,7 +295,7 @@ export default function ProfileView({
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
       if (whDragRef.current) {
-        handleSavePrefRef.current({ workingHours: whDragRef.current });
+        setPrefsDraft(d => ({ ...d, workingHours: whDragRef.current }));
         whDragRef.current = null;
       }
     };
@@ -325,7 +308,6 @@ export default function ProfileView({
     { id: 'profile',     label: 'Profile'     },
     { id: 'preferences', label: 'Preferences' },
     { id: 'calendar',    label: 'Calendar'    },
-    { id: 'inbox',       label: 'Inbox',      badge: unreadCount > 0 },
     { id: 'fairness',    label: 'Fairness'    },
   ];
 
@@ -341,7 +323,7 @@ export default function ProfileView({
               <button className="modal-close" onClick={() => setDisconnectConfirm(null)}>✕</button>
             </div>
             <div className="confirm-body">
-              <p>Disconnect {disconnectConfirm === 'google' ? 'Google Calendar' : 'Outlook'}? Your meetings will no longer sync.</p>
+              <p>Disconnect Google Calendar? Your meetings will no longer sync.</p>
               <div className="modal-actions">
                 <button className="btn-danger" onClick={confirmDisconnect}>Disconnect</button>
                 <button className="btn-cancel" onClick={() => setDisconnectConfirm(null)}>Keep Connected</button>
@@ -622,7 +604,7 @@ export default function ProfileView({
                           return (
                             <div
                               key={tz}
-                              onClick={() => { handleSavePref({ timezone: tz }); setTzOpen(false); }}
+                              onClick={() => { setProfile(p => ({ ...p, timezone: tz })); setPrefsDraft(d => ({ ...d, timezone: tz })); setTzOpen(false); }}
                               style={{
                                 padding: '0.5rem 0.75rem', cursor: 'pointer', fontSize: '0.82rem',
                                 background: isSelected ? 'var(--accent-dim)' : 'transparent',
@@ -652,7 +634,7 @@ export default function ProfileView({
                     className="pv-input-sub"
                     style={{ width: 'auto' }}
                     value={workingHours.start}
-                    onChange={e => handleSavePref({ workingHours: { ...workingHours, start: e.target.value } })}
+                    onChange={e => { const wh = { ...workingHours, start: e.target.value }; setProfile(p => ({ ...p, workingHours: wh })); setPrefsDraft(d => ({ ...d, workingHours: wh })); }}
                   />
                   <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>End</span>
                   <input
@@ -660,7 +642,7 @@ export default function ProfileView({
                     className="pv-input-sub"
                     style={{ width: 'auto' }}
                     value={workingHours.end}
-                    onChange={e => handleSavePref({ workingHours: { ...workingHours, end: e.target.value } })}
+                    onChange={e => { const wh = { ...workingHours, end: e.target.value }; setProfile(p => ({ ...p, workingHours: wh })); setPrefsDraft(d => ({ ...d, workingHours: wh })); }}
                   />
                 </div>
                 <div ref={trackRef} className="wh-track" style={{ marginTop: '0.75rem' }}>
@@ -700,7 +682,7 @@ export default function ProfileView({
                     onChange={e => {
                       const newLB = { ...lunchBreak, start: e.target.value };
                       setProfile(p => ({ ...p, lunchBreak: newLB }));
-                      handleSavePref({ lunchBreak: newLB });
+                      setPrefsDraft(d => ({ ...d, lunchBreak: newLB }));
                     }}
                   />
                   <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Duration</span>
@@ -711,7 +693,7 @@ export default function ProfileView({
                     onChange={e => {
                       const newLB = { ...lunchBreak, duration: parseInt(e.target.value, 10) };
                       setProfile(p => ({ ...p, lunchBreak: newLB }));
-                      handleSavePref({ lunchBreak: newLB });
+                      setPrefsDraft(d => ({ ...d, lunchBreak: newLB }));
                     }}
                   >
                     <option value={30}>30 min</option>
@@ -737,7 +719,7 @@ export default function ProfileView({
                             ? workingDays.filter(day => day !== i)
                             : [...workingDays, i].sort();
                           setProfile(p => ({ ...p, workingDays: newDays }));
-                          handleSavePref({ workingDays: newDays });
+                          setPrefsDraft(d => ({ ...d, workingDays: newDays }));
                         }}
                       >
                         {d}
@@ -757,20 +739,20 @@ export default function ProfileView({
                 label="Meeting invitations"
                 desc="Email me when someone invites me to a meeting"
                 on={notifPrefs.invites}
-                onChange={v => handleSavePref({ notificationPrefs: { ...notifPrefs, invites: v } })}
+                onChange={v => { const n = { ...notifPrefs, invites: v }; setProfile(p => ({ ...p, notificationPrefs: n })); setPrefsDraft(d => ({ ...d, notificationPrefs: n })); }}
               />
               <PrefRow
                 label="Meeting reminders"
                 desc="Email me reminders 1 hour before meetings"
                 on={notifPrefs.reminders}
-                onChange={v => handleSavePref({ notificationPrefs: { ...notifPrefs, reminders: v } })}
+                onChange={v => { const n = { ...notifPrefs, reminders: v }; setProfile(p => ({ ...p, notificationPrefs: n })); setPrefsDraft(d => ({ ...d, notificationPrefs: n })); }}
               />
               <div style={{ borderBottom: 'none' }}>
                 <PrefRow
                   label="Weekly fairness digest"
                   desc="Weekly email summary of your fairness score and activity"
                   on={notifPrefs.digest}
-                  onChange={v => handleSavePref({ notificationPrefs: { ...notifPrefs, digest: v } })}
+                  onChange={v => { const n = { ...notifPrefs, digest: v }; setProfile(p => ({ ...p, notificationPrefs: n })); setPrefsDraft(d => ({ ...d, notificationPrefs: n })); }}
                 />
               </div>
             </div>
@@ -783,19 +765,39 @@ export default function ProfileView({
               <PrefRow
                 label="Show fairness score publicly"
                 desc="Allow other users to see your fairness score on your public profile"
-                on={profile.showFairnessScore ?? true}
-                onChange={v => handleSavePref({ showFairnessScore: v })}
+                on={prefsDraft.showFairnessScore ?? true}
+                onChange={v => { setProfile(p => ({ ...p, showFairnessScore: v })); setPrefsDraft(d => ({ ...d, showFairnessScore: v })); }}
               />
               <div style={{ borderBottom: 'none' }}>
                 <PrefRow
                   label="Allow messages"
                   desc="Allow other users to send you kudos and nudges"
-                  on={profile.allowMessages ?? true}
-                  onChange={v => handleSavePref({ allowMessages: v })}
+                  on={prefsDraft.allowMessages ?? true}
+                  onChange={v => { setProfile(p => ({ ...p, allowMessages: v })); setPrefsDraft(d => ({ ...d, allowMessages: v })); }}
                 />
               </div>
             </div>
           </div>
+
+          {/* Save preferences button */}
+          {(() => {
+            const isDirty = JSON.stringify(prefsDraft) !== JSON.stringify(savedPrefs);
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', paddingTop: '0.25rem' }}>
+                <button
+                  className="pv-btn primary"
+                  style={{ minWidth: '120px' }}
+                  disabled={!isDirty || prefsSaving}
+                  onClick={handleSaveAllPrefs}
+                >
+                  {prefsSaving ? 'Saving…' : prefsSaved ? 'Saved ✓' : 'Save Preferences'}
+                </button>
+                {!isDirty && !prefsSaved && (
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>No unsaved changes</span>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -809,78 +811,10 @@ export default function ProfileView({
             onConnect={onCalendarConnect}
             onDisconnect={() => setDisconnectConfirm('google')}
           />
-          <CalendarCard
-            brand="microsoft"
-            name="Microsoft Outlook"
-            status={calendarStatus?.microsoft}
-            onConnect={onCalendarConnect}
-            onDisconnect={() => setDisconnectConfirm('microsoft')}
-          />
-          <div className="pv-card">
-            <h3>Outlook Calendar Feed</h3>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0 0 1rem', lineHeight: 1.6 }}>
-              No Azure app registration needed — paste your Outlook .ics feed URL to sync availability.
-            </p>
-            {icsUrl && !icsEditing ? (
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-                  <span style={{ color: 'var(--success)', fontWeight: 600, fontSize: '0.84rem' }}>✅ Outlook Calendar Connected</span>
-                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
-                    {icsUrl.length > 40 ? icsUrl.slice(0, 40) + '…' : icsUrl}
-                  </span>
-                </div>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <button className="cal-btn cal-btn-disconnect" onClick={() => { setIcsEditing(true); setIcsSaveMsg(''); }} disabled={icsSaving}>
-                    Change
-                  </button>
-                  <button className="cal-btn cal-btn-disconnect" onClick={handleDisconnectIcs} disabled={icsSaving}>
-                    {icsSaving ? '...' : 'Disconnect'}
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                <input
-                  className="pv-input-sub"
-                  style={{ flex: 1 }}
-                  placeholder="https://outlook.live.com/owa/calendar/…/calendar.ics"
-                  value={icsUrl}
-                  onChange={e => { setIcsUrl(e.target.value); setIcsSaveMsg(''); }}
-                />
-                <button className="cal-btn cal-btn-connect" onClick={handleSaveIcsUrl} disabled={icsSaving}>
-                  {icsSaving ? '...' : 'Save'}
-                </button>
-                {icsEditing && (
-                  <button className="cal-btn cal-btn-disconnect" onClick={() => { setIcsEditing(false); setIcsSaveMsg(''); }} disabled={icsSaving}>
-                    Cancel
-                  </button>
-                )}
-              </div>
-            )}
-            {icsSaveMsg && (
-              <span style={{ fontSize: '0.72rem', color: icsSaveMsg.startsWith('Save failed') ? 'var(--danger)' : 'var(--success)' }}>
-                {icsSaveMsg}
-              </span>
-            )}
-            <details style={{ marginTop: '0.75rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-              <summary style={{ cursor: 'pointer', userSelect: 'none' }}>How to get your Outlook .ics URL</summary>
-              <ol style={{ marginTop: '0.5rem', paddingLeft: '1.25rem', lineHeight: 1.7 }}>
-                <li>Open Outlook → Settings → View all Outlook settings</li>
-                <li>Go to Calendar → Shared calendars</li>
-                <li>Under "Publish a calendar", set permissions to "Can view all details"</li>
-                <li>Click Publish, then copy the ICS link</li>
-              </ol>
-            </details>
-          </div>
         </div>
       )}
 
-      {/* ──────────────── TAB 4: INBOX ──────────────── */}
-      {activeTab === 'inbox' && (
-        <InboxPanel onUnreadCountChange={onUnreadCountChange} />
-      )}
-
-      {/* ──────────────── TAB 5: FAIRNESS ──────────────── */}
+      {/* ──────────────── TAB 4: FAIRNESS ──────────────── */}
       {activeTab === 'fairness' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
           {/* Score card */}

@@ -1,13 +1,7 @@
-import { useState, useEffect } from 'react';
-import { apiPost } from '../apiClient';
+import { useState, useEffect, useRef } from 'react';
+import { apiPost, apiGet } from '../apiClient';
 import { CalendarPlus, CalendarDays, X } from 'lucide-react';
 import { useToast } from '../context/ToastContext.jsx';
-
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const validateEmails = (str) => {
-  const list = str.split(',').map(s => s.trim()).filter(Boolean);
-  return { list, invalid: list.filter(e => !EMAIL_REGEX.test(e)) };
-};
 
 /**
  * Global Create Meeting Modal.
@@ -23,10 +17,25 @@ export default function CreateMeetingModal({ prefill, onClose, onCreated, onRefr
   const [wizardStep, setWizardStep] = useState(1);
   const [wizardDatetime, setWizardDatetime] = useState(null);
   const [titleTouched, setTitleTouched] = useState(false);
-  const [emailError, setEmailError] = useState('');
   const [newMeeting, setNewMeeting] = useState({
-    title: '', durationMinutes: 60, participantEmails: '', daysForward: 7, description: '',
+    title: '', durationMinutes: 60, daysForward: 7, description: '',
   });
+
+  // User search state
+  const [allUsers, setAllUsers] = useState([]);
+  const [selectedUsers, setSelectedUsers] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const searchRef = useRef(null);
+  const dropdownRef = useRef(null);
+
+  // Load all registered users once on mount
+  useEffect(() => {
+    apiGet('/api/users').then(data => {
+      const list = Array.isArray(data) ? data : (data?.users ?? []);
+      setAllUsers(list);
+    }).catch(() => {});
+  }, []);
 
   // Apply prefill on mount
   useEffect(() => {
@@ -34,36 +43,66 @@ export default function CreateMeetingModal({ prefill, onClose, onCreated, onRefr
       if (typeof prefill === 'object' && prefill?.datetime) {
         setWizardDatetime(prefill.datetime);
       } else if (typeof prefill === 'string') {
-        setNewMeeting(prev => ({ ...prev, participantEmails: prefill }));
+        // Try to match a registered user by email
+        const match = allUsers.find(u => u.email === prefill || u.userId === prefill);
+        if (match) addUser(match);
       }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allUsers]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target) &&
+          searchRef.current && !searchRef.current.contains(e.target)) {
+        setDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
   }, []);
 
   // Escape key closes modal
   useEffect(() => {
-    const onKey = (e) => {
-      if (e.key === 'Escape') onClose();
-    };
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  const addUser = (user) => {
+    if (!selectedUsers.find(u => u.userId === user.userId)) {
+      setSelectedUsers(prev => [...prev, user]);
+    }
+    setSearchQuery('');
+    setDropdownOpen(false);
+  };
+
+  const removeUser = (userId) => {
+    setSelectedUsers(prev => prev.filter(u => u.userId !== userId));
+  };
+
+  const filteredUsers = searchQuery.trim()
+    ? allUsers.filter(u => {
+        if (selectedUsers.find(s => s.userId === u.userId)) return false;
+        const q = searchQuery.toLowerCase();
+        const name = (u.displayName || u.name || '').toLowerCase();
+        const email = (u.email || '').toLowerCase();
+        return name.includes(q) || email.includes(q);
+      }).slice(0, 8)
+    : [];
+
   const handleCreate = async (e) => {
     e.preventDefault();
-    const { list: emails, invalid } = validateEmails(newMeeting.participantEmails);
-    if (invalid.length > 0) {
-      setEmailError(`Invalid email${invalid.length > 1 ? 's' : ''}: ${invalid.join(', ')}`);
-      return;
-    }
-    setEmailError('');
+    if (selectedUsers.length === 0) return;
     setCreating(true);
     try {
       await apiPost('/api/meetings/create', {
         title: newMeeting.title,
         description: newMeeting.description || '',
         durationMinutes: Number(newMeeting.durationMinutes),
-        participantEmails: emails,
-        participantIds: [],
+        participantEmails: selectedUsers.map(u => u.email),
+        participantIds: selectedUsers.map(u => u.userId),
         daysForward: newMeeting.daysForward,
       });
       notify('Meeting created! AI is optimizing slots…', 'success');
@@ -132,13 +171,13 @@ export default function CreateMeetingModal({ prefill, onClose, onCreated, onRefr
                 </div>
               </div>
               <div className="modal-actions">
+                <button type="button" className="btn-cancel" onClick={onClose}>Cancel</button>
                 <button type="button" className="btn-submit"
                   onClick={() => {
                     if (!newMeeting.title.trim()) { setTitleTouched(true); return; }
                     setWizardStep(2);
                   }}
                 >Next →</button>
-                <button type="button" className="btn-cancel" onClick={onClose}>Cancel</button>
               </div>
             </div>
           )}
@@ -153,27 +192,83 @@ export default function CreateMeetingModal({ prefill, onClose, onCreated, onRefr
                 </div>
               )}
               <div className="form-group">
-                {(() => {
-                  const count = newMeeting.participantEmails.split(',').map(s => s.trim()).filter(Boolean).length;
-                  return (
-                    <label style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span>Invite Participants</span>
-                      {count > 0 && <span style={{ fontWeight: 400, color: 'var(--text-secondary)', fontSize: '0.75rem' }}>{count} participant{count !== 1 ? 's' : ''}</span>}
-                    </label>
-                  );
-                })()}
-                <input
-                  type="text" autoFocus required
-                  placeholder="alice@co.com, bob@co.com"
-                  value={newMeeting.participantEmails}
-                  onChange={e => { setNewMeeting({ ...newMeeting, participantEmails: e.target.value }); setEmailError(''); }}
-                  onKeyDown={e => e.key === 'Enter' && e.preventDefault()}
-                />
-                {emailError
-                  ? <span className="form-hint" style={{ color: '#f87171' }}>{emailError}</span>
-                  : <span className="form-hint">Comma-separated emails. They'll see this in their dashboard.</span>
-                }
+                <label style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Invite Participants</span>
+                  {selectedUsers.length > 0 && (
+                    <span style={{ fontWeight: 400, color: 'var(--text-secondary)', fontSize: '0.75rem' }}>
+                      {selectedUsers.length} participant{selectedUsers.length !== 1 ? 's' : ''}
+                    </span>
+                  )}
+                </label>
+
+                {/* Selected user chips */}
+                {selectedUsers.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginBottom: '0.5rem' }}>
+                    {selectedUsers.map(u => (
+                      <span key={u.userId} style={{
+                        display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
+                        padding: '0.2rem 0.55rem', borderRadius: '20px', fontSize: '0.78rem',
+                        background: 'var(--accent-dim)', color: 'var(--accent)',
+                        border: '1px solid rgba(99,102,241,0.3)',
+                      }}>
+                        {u.displayName || u.name || u.email}
+                        <button
+                          type="button"
+                          onClick={() => removeUser(u.userId)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', padding: 0, lineHeight: 1, fontSize: '0.9rem' }}
+                        >×</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Search input + dropdown */}
+                <div style={{ position: 'relative' }} ref={dropdownRef}>
+                  <input
+                    ref={searchRef}
+                    autoFocus
+                    type="text"
+                    placeholder="Search by name or email…"
+                    value={searchQuery}
+                    onChange={e => { setSearchQuery(e.target.value); setDropdownOpen(true); }}
+                    onFocus={() => searchQuery && setDropdownOpen(true)}
+                    onKeyDown={e => e.key === 'Enter' && e.preventDefault()}
+                  />
+                  {dropdownOpen && searchQuery.trim() && (
+                    <div style={{
+                      position: 'absolute', zIndex: 200, top: '100%', left: 0, right: 0,
+                      background: 'var(--bg-card)', border: '1px solid var(--border)',
+                      borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-raised)',
+                      marginTop: '2px', maxHeight: '220px', overflowY: 'auto',
+                    }}>
+                      {filteredUsers.length === 0 ? (
+                        <div style={{ padding: '0.75rem 1rem', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                          No registered users found
+                        </div>
+                      ) : filteredUsers.map(u => (
+                        <div
+                          key={u.userId}
+                          onMouseDown={e => { e.preventDefault(); addUser(u); }}
+                          style={{
+                            padding: '0.6rem 1rem', cursor: 'pointer', fontSize: '0.84rem',
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                            borderBottom: '1px solid var(--border)',
+                          }}
+                          onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-raised)'}
+                          onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                        >
+                          <span style={{ fontWeight: 500, color: 'var(--text-primary)' }}>
+                            {u.displayName || u.name || u.email}
+                          </span>
+                          <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>{u.email}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <span className="form-hint">Search registered users. They'll see this in their dashboard.</span>
               </div>
+
               <div className="form-group">
                 <label>Scheduling Horizon</label>
                 <div className="dur-pills">
@@ -189,16 +284,8 @@ export default function CreateMeetingModal({ prefill, onClose, onCreated, onRefr
               <div className="modal-actions">
                 <button type="button" className="btn-cancel" onClick={() => setWizardStep(1)}>← Back</button>
                 <button type="button" className="btn-submit"
-                  disabled={!newMeeting.participantEmails.trim()}
-                  onClick={() => {
-                    const { invalid } = validateEmails(newMeeting.participantEmails);
-                    if (invalid.length > 0) {
-                      setEmailError(`Invalid email${invalid.length > 1 ? 's' : ''}: ${invalid.join(', ')}`);
-                    } else {
-                      setEmailError('');
-                      setWizardStep(3);
-                    }
-                  }}
+                  disabled={selectedUsers.length === 0}
+                  onClick={() => setWizardStep(3)}
                 >Next →</button>
               </div>
             </div>
@@ -220,8 +307,8 @@ export default function CreateMeetingModal({ prefill, onClose, onCreated, onRefr
                 <div className="review-row">
                   <span className="review-label">Participants</span>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
-                    {newMeeting.participantEmails.split(',').map(e => e.trim()).filter(Boolean).map(e => (
-                      <span key={e} className="review-chip">{e}</span>
+                    {selectedUsers.map(u => (
+                      <span key={u.userId} className="review-chip">{u.displayName || u.name || u.email}</span>
                     ))}
                   </div>
                 </div>
