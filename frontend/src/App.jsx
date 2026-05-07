@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { Routes, Route, NavLink, useNavigate, useLocation, Navigate } from 'react-router-dom'
-import { LayoutDashboard, Calendar, CalendarCheck, Users, MessageSquare, User, Sun, Moon } from 'lucide-react'
+import { LayoutDashboard, Calendar, CalendarCheck, Users, User, Sun, Moon } from 'lucide-react'
 import { useToast } from './context/ToastContext.jsx'
 import './App.css'
 import MeetingDashboard from './components/MeetingDashboard';
@@ -11,7 +11,6 @@ import PublicProfile from './components/PublicProfile';
 import MeetingDetailModal from './components/MeetingDetailModal';
 import CommandPalette from './components/CommandPalette';
 import CreateMeetingModal from './components/CreateMeetingModal';
-import MessagesView from './components/MessagesView';
 import { apiGet, apiPost } from './apiClient';
 
 import { Amplify } from 'aws-amplify';
@@ -28,7 +27,7 @@ function AppContent() {
   const toast = useToast();
   const [profile, setProfile]             = useState(null);
   const [meetings, setMeetings]           = useState([]);
-  const [calendarStatus, setCalendarStatus] = useState({ google: { connected: false, email: '' }, microsoft: { connected: false, email: '' } });
+  const [calendarStatus, setCalendarStatus] = useState({ google: { connected: false, email: '' } });
   const [loading, setLoading]             = useState(true);
   const [error, setError]                 = useState(null);
   const [retryCount, setRetryCount]       = useState(0);
@@ -65,7 +64,7 @@ function AppContent() {
     const state = params.get('state');
     if (code && state) {
       const provider = state.split(':')[0];
-      if (provider === 'google' || provider === 'microsoft') {
+      if (provider === 'google') {
         // Clean the URL immediately so a page refresh doesn't re-trigger
         window.history.replaceState({}, '', window.location.pathname);
         return { code, state, provider };
@@ -81,7 +80,7 @@ function AppContent() {
     setError(null);
 
     const run = async () => {
-      // Process OAuth callback first (if the user just came back from Google/Microsoft)
+      // Process OAuth callback first (if the user just came back from Google)
       if (oauthPending?.oauthError && !oauthProcessed.current) {
         oauthProcessed.current = true;
         const desc = oauthPending.oauthErrDesc?.replace(/\+/g, ' ') || oauthPending.oauthError;
@@ -91,8 +90,7 @@ function AppContent() {
         oauthProcessed.current = true;
         try {
           await apiPost('/api/calendar/callback', oauthPending);
-          const label = oauthPending.provider === 'google' ? 'Google Calendar' : 'Microsoft Outlook';
-          toast(`${label} connected successfully!`, 'success');
+          toast('Google Calendar connected successfully!', 'success');
           navigate('/profile', { state: { initialTab: 'calendar' } });
         } catch (err) {
           console.error('OAuth callback exchange failed:', err);
@@ -179,7 +177,7 @@ function AppContent() {
     }
   }, [window.location.pathname]);
 
-  /** Open Google / Microsoft OAuth flow (redirects the page). */
+  /** Open Google Calendar OAuth flow (redirects the page). */
   const handleCalendarConnect = async (provider) => {
     try {
       const result = await apiGet(`/api/calendar/oauth_url?provider=${provider}`);
@@ -187,14 +185,10 @@ function AppContent() {
         window.location.href = result.url;
       }
     } catch (err) {
-      const label = provider === 'google' ? 'Google' : 'Microsoft';
       if (err.message?.toLowerCase().includes('not configured')) {
-        toast(
-          `${label} OAuth credentials not yet configured. Add ${provider === 'google' ? 'GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET' : 'MICROSOFT_CLIENT_ID + MICROSOFT_CLIENT_SECRET'} to the Lambda environment variables.`,
-          'info'
-        );
+        toast('Google OAuth credentials not yet configured. Add GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET to the Lambda environment variables.', 'info');
       } else {
-        toast(`Failed to connect ${label}. Please try again.`, 'error');
+        toast('Failed to connect Google Calendar. Please try again.', 'error');
         console.error('Failed to get OAuth URL:', err);
       }
     }
@@ -211,14 +205,26 @@ function AppContent() {
     }
   };
 
+  const isCalendarConnected = calendarStatus?.google?.connected === true;
+
   /** Navigate to /meetings with a pre-filled participant email. */
   const handleScheduleWith = (email) => {
+    if (!isCalendarConnected) {
+      toast('Connect your Google Calendar to create meetings.', 'info');
+      navigate('/profile', { state: { initialTab: 'calendar' } });
+      return;
+    }
     setMeetingPrefill(email);
     setShowGlobalCreate(true);
   };
 
   /** Calendar click-to-create: open global create modal without navigating. */
   const handleCreateAt = (isoDatetime) => {
+    if (!isCalendarConnected) {
+      toast('Connect your Google Calendar to create meetings.', 'info');
+      navigate('/profile', { state: { initialTab: 'calendar' } });
+      return;
+    }
     setMeetingPrefill({ datetime: isoDatetime });
     setShowGlobalCreate(true);
   };
@@ -249,7 +255,6 @@ function AppContent() {
     { id: 'calendar',  path: '/calendar',  label: 'Calendar',  icon: <Calendar size={16} /> },
     { id: 'meetings',  path: '/meetings',  label: 'Meetings',  icon: <CalendarCheck size={16} />, badge: meetingsBadge },
     { id: 'people',    path: '/people',    label: 'People',    icon: <Users size={16} /> },
-    { id: 'messages',  path: '/messages',  label: 'Messages',  icon: <MessageSquare size={16} />, badge: unreadCount || null },
     { id: 'profile',   path: '/profile',   label: 'Profile',   icon: <User size={16} /> },
   ];
 
@@ -366,6 +371,9 @@ function AppContent() {
                 activities={activities}
                 onNavigate={setActiveView}
                 needsAction={needsAction}
+                isCalendarConnected={isCalendarConnected}
+                onConnectCalendar={() => navigate('/profile', { state: { initialTab: 'calendar' } })}
+                onNewMeeting={() => { setMeetingPrefill(null); setShowGlobalCreate(true); }}
               />
             } />
 
@@ -391,7 +399,17 @@ function AppContent() {
                   currentUserId={profile.id}
                   onParticipantClick={handleParticipantClick}
                   lastRefreshed={lastRefreshed}
-                  onNewMeetingClick={() => { setMeetingPrefill(null); setShowGlobalCreate(true); }}
+                  isCalendarConnected={isCalendarConnected}
+                  onConnectCalendar={() => navigate('/profile', { state: { initialTab: 'calendar' } })}
+                  onNewMeetingClick={() => {
+                    if (!isCalendarConnected) {
+                      toast('Connect your Google Calendar to create meetings.', 'info');
+                      navigate('/profile', { state: { initialTab: 'calendar' } });
+                      return;
+                    }
+                    setMeetingPrefill(null);
+                    setShowGlobalCreate(true);
+                  }}
                 />
               </div>
             } />
@@ -403,16 +421,6 @@ function AppContent() {
                   onScheduleWith={handleScheduleWith}
                   onViewProfile={(userId) => handleParticipantClick(userId)}
                 />
-              </div>
-            } />
-
-            <Route path="/messages" element={
-              <div className="view-wrap">
-                <div className="view-header">
-                  <h2>Messages</h2>
-                  <p className="view-subtitle">Your inbox, kudos and notifications</p>
-                </div>
-                <MessagesView onUnreadCountChange={setUnreadCount} />
               </div>
             } />
 
@@ -555,7 +563,7 @@ function ActivityFeed({ activities }) {
   );
 }
 
-function DashboardView({ profile, meetings, activities, onNavigate, needsAction }) {
+function DashboardView({ profile, meetings, activities, onNavigate, needsAction, isCalendarConnected, onConnectCalendar, onNewMeeting }) {
   const myPending    = meetings.filter(m => m.status === 'pending' && m.userRole === 'organizer');
   const confirmed    = meetings.filter(m => m.status === 'confirmed');
   const total        = meetings.length;
@@ -604,10 +612,23 @@ function DashboardView({ profile, meetings, activities, onNavigate, needsAction 
           <h1 className="dash-greeting">Welcome back, {(profile.name || profile.displayName || 'there').split(' ')[0]}</h1>
           <p className="dash-subtitle">Your scheduling hub — analytics, meetings & insights</p>
         </div>
-        <button className="btn-primary" onClick={() => onNavigate('meetings')}>
-          + New Meeting
-        </button>
+        {isCalendarConnected ? (
+          <button className="btn-primary" onClick={onNewMeeting}>+ New Meeting</button>
+        ) : (
+          <button className="btn-primary" style={{ opacity: 0.5 }} onClick={onConnectCalendar} title="Connect your Google Calendar to create meetings">
+            + New Meeting
+          </button>
+        )}
       </div>
+      {!isCalendarConnected && (
+        <div className="insight-banner" style={{ marginBottom: '1rem', borderColor: 'rgba(96,165,250,0.25)', background: 'rgba(96,165,250,0.06)', cursor: 'pointer' }} onClick={onConnectCalendar}>
+          <span style={{ color: '#60a5fa' }}>📅</span>
+          <span>
+            <strong>Connect Google Calendar</strong> to create or approve meetings.{' '}
+            <span style={{ color: 'var(--accent)' }}>Go to Calendar settings →</span>
+          </span>
+        </div>
+      )}
 
       {/* Action banner */}
       {needsAction > 0 && (

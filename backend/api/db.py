@@ -38,7 +38,7 @@ def get_tz_offset_hours(tz_name: str) -> float:
 
 # --- DynamoDB connection ---
 DYNAMODB_TABLE_NAME = os.environ.get("TABLE_NAME", "SmartScheduler_V1")
-dynamodb = boto3.resource('dynamodb')
+dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
 table = dynamodb.Table(DYNAMODB_TABLE_NAME)
 
 
@@ -125,9 +125,10 @@ def update_profile(user_id: str, updates: dict):
     if not profile_data:
         return None
     
-    # Merge updates
+    # Merge updates — skip None values so a missing/null field in the
+    # payload never overwrites valid existing data in the DB.
     for k, v in updates.items():
-        if k in models.UserProfile.model_fields:
+        if k in models.UserProfile.model_fields and v is not None:
             profile_data[k] = v
     
     _put_item(f"USER#{user_id}", "PROFILE", profile_data)

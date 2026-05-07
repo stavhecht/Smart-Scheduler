@@ -21,7 +21,7 @@ const getInitials = (name) => name
   ? name.split(' ').filter(Boolean).map(n => n[0]).join('').slice(0, 2).toUpperCase()
   : '?';
 
-export default function MeetingDashboard({ meetings, onRefresh, currentUserId, onParticipantClick, lastRefreshed, onNewMeetingClick }) {
+export default function MeetingDashboard({ meetings, onRefresh, currentUserId, onParticipantClick, lastRefreshed, onNewMeetingClick, isCalendarConnected, onConnectCalendar }) {
   const notify = useToast();
   const [expandedId, setExpandedId]             = useState(null);
   const [loading, setLoading]                   = useState(false);
@@ -262,7 +262,13 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           <button className="btn-refresh" onClick={onRefresh} title="Refresh meetings"><RefreshCw size={14} /></button>
-          <button className="btn-new" onClick={onNewMeetingClick}>
+          <button
+            className="btn-new"
+            onClick={onNewMeetingClick}
+            disabled={!isCalendarConnected}
+            title={!isCalendarConnected ? 'Connect Google Calendar to create meetings' : undefined}
+            style={!isCalendarConnected ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
+          >
             + New Meeting
           </button>
         </div>
@@ -291,6 +297,17 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
           <option value="cancelled">Cancelled</option>
         </select>
       </div>
+
+      {/* Calendar connection required banner */}
+      {!isCalendarConnected && (
+        <div className="md-alert" style={{ borderColor: 'rgba(96,165,250,0.3)', background: 'rgba(96,165,250,0.06)', cursor: 'pointer' }} onClick={onConnectCalendar}>
+          <span>📅</span>
+          <span>
+            <strong>Connect Google Calendar</strong> to create or approve meetings.{' '}
+            <span style={{ color: 'var(--accent)' }}>Go to Calendar settings →</span>
+          </span>
+        </div>
+      )}
 
       {/* Action-needed banner */}
       {needsAction > 0 && (
@@ -452,6 +469,7 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
                 fmtTime={fmtTime}
                 fmtFull={fmtFull}
                 onParticipantClick={onParticipantClick}
+                isCalendarConnected={isCalendarConnected}
               />
             ))}
           </div>
@@ -471,7 +489,12 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
             <div className="empty-icon"><CalendarPlus size={48} strokeWidth={1} /></div>
             <p>No meetings yet. Create one to get started!</p>
             <p style={{ fontSize: '0.78rem', opacity: 0.5, marginTop: '-0.75rem' }}>The AI will optimise slots based on everyone's fairness score.</p>
-            <button className="btn-new-sm btn-new-sm-pulse" onClick={onNewMeetingClick}>
+            <button
+              className="btn-new-sm btn-new-sm-pulse"
+              onClick={onNewMeetingClick}
+              disabled={!isCalendarConnected}
+              style={!isCalendarConnected ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
+            >
               + Schedule a Meeting
             </button>
           </div>
@@ -566,7 +589,7 @@ function SlotTimeline({ slots, onBook }) {
     if (!dayMap[key]) dayMap[key] = [];
     dayMap[key].push({ slot, idx });
   });
-  const days = Object.keys(dayMap).sort().slice(0, 7);
+  const days = Object.keys(dayMap).sort();
 
   // Hour range
   let minHour = 23, maxHour = 8;
@@ -659,7 +682,7 @@ function MeetingCard({
   onEdit, onCancel, onReschedule, busyId, style,
   fmtDate, fmtTime, fmtFull,
   customPicker = {}, onCustomPickerChange, onScoreCustom, onBookCustom,
-  onParticipantClick,
+  onParticipantClick, isCalendarConnected,
 }) {
   const [slotView, setSlotView] = useState('timeline');
   const isOrganizer    = meeting.userRole === 'organizer';
@@ -721,8 +744,9 @@ function MeetingCard({
               <button
                 className="btn-accept"
                 onClick={e => { e.stopPropagation(); onAccept(); }}
-                disabled={busyId === meeting.requestId}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
+                disabled={busyId === meeting.requestId || !isCalendarConnected}
+                title={!isCalendarConnected ? 'Connect Google Calendar to approve meetings' : undefined}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', ...(!isCalendarConnected ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
               >
                 {busyId === meeting.requestId ? <><span className="btn-spinner" />Accepting…</> : '✓ Accept'}
               </button>
@@ -812,48 +836,46 @@ function MeetingCard({
                   onBook={slot => onBook(meeting.requestId, slot)}
                 />
               ) : (
-                /* List view (original) */
+                /* List view — sorted by fairness score descending, all slots shown */
                 (() => {
-                  const dayGroups = meeting.slots.reduce((acc, slot, idx) => {
-                    const day = fmtDate(slot.startIso);
-                    if (!acc[day]) acc[day] = [];
-                    acc[day].push({ slot, idx });
-                    return acc;
-                  }, {});
-                  return Object.entries(dayGroups).map(([day, items]) => (
-                    <div key={day}>
-                      <div className="slot-day-heading">{day}</div>
-                      <div className="slots-grid">
-                        {items.map(({ slot, idx }) => {
-                          const sc = Math.round(slot.score);
-                          const borderColor = sc >= 80 ? '#22c55e' : sc >= 60 ? '#f59e0b' : '#ef4444';
-                          const isTop = idx === 0;
-                          return (
-                            <div
-                              key={idx}
-                              className={`slot-card ${isTop ? 'top-pick' : ''}`}
-                              style={{ borderLeft: `3px solid ${borderColor}` }}
-                              onClick={() => onBook(meeting.requestId, slot)}
-                              title={slot.explanation}
-                            >
-                              {isTop && <div className="top-badge">⭐ Best Match</div>}
-                              <div className="slot-time">{fmtTime(slot.startIso)} – {fmtTime(slot.endIso)}</div>
-                              <div className="slot-score-row">
-                                <span className="slot-score-label">Fairness</span>
-                                <div className="slot-score-track">
-                                  <div className="slot-score-fill" style={{ width: `${Math.min(100, sc)}%`, background: borderColor }} />
-                                </div>
-                                <span className="slot-score-val" style={{ color: borderColor }}>{sc}%</span>
-                              </div>
-                              {isTop && slot.explanation && (
-                                <div className="slot-explain">{slot.explanation}</div>
-                              )}
+                  const sorted = [...meeting.slots].sort((a, b) => b.score - a.score);
+                  const qualityLabel = sc => sc >= 80 ? { text: 'Best', color: '#22c55e' } : sc >= 60 ? { text: 'Good', color: '#f59e0b' } : { text: 'Acceptable', color: '#ef4444' };
+                  return (
+                    <div className="slots-grid">
+                      {sorted.map((slot, rank) => {
+                        const sc = Math.round(slot.score);
+                        const borderColor = sc >= 80 ? '#22c55e' : sc >= 60 ? '#f59e0b' : '#ef4444';
+                        const quality = qualityLabel(sc);
+                        const isTop = rank === 0;
+                        return (
+                          <div
+                            key={rank}
+                            className={`slot-card ${isTop ? 'top-pick' : ''}`}
+                            style={{ borderLeft: `3px solid ${borderColor}` }}
+                            onClick={() => onBook(meeting.requestId, slot)}
+                            title={slot.explanation}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.2rem' }}>
+                              <div className="slot-time">{fmtDate(slot.startIso)} · {fmtTime(slot.startIso)} – {fmtTime(slot.endIso)}</div>
+                              <span style={{ fontSize: '0.68rem', fontWeight: 700, color: quality.color, background: quality.color + '1a', border: `1px solid ${quality.color}44`, borderRadius: '10px', padding: '0.1rem 0.5rem' }}>
+                                {isTop ? '⭐ ' : ''}{quality.text}
+                              </span>
                             </div>
-                          );
-                        })}
-                      </div>
+                            <div className="slot-score-row">
+                              <span className="slot-score-label">Fairness</span>
+                              <div className="slot-score-track">
+                                <div className="slot-score-fill" style={{ width: `${Math.min(100, sc)}%`, background: borderColor }} />
+                              </div>
+                              <span className="slot-score-val" style={{ color: borderColor }}>{sc}%</span>
+                            </div>
+                            {slot.explanation && (
+                              <div className="slot-explain">{slot.explanation}</div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
-                  ));
+                  );
                 })()
               )}
             </>
