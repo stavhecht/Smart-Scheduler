@@ -27,6 +27,9 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
   const touchStartX = useRef(null);
 
   const googleConnected = calendarStatus?.google?.connected;
+  // Keep a ref to weekOffset so the visibility handler can always read the latest value
+  const weekOffsetRef = useRef(weekOffset);
+  useEffect(() => { weekOffsetRef.current = weekOffset; }, [weekOffset]);
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < 600);
@@ -34,7 +37,7 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  /* ── Week dates ── */
+  /* ── Week dates (derived from weekOffset) ── */
   const todayBase = new Date();
   todayBase.setHours(0, 0, 0, 0);
   const dow    = todayBase.getDay();
@@ -62,20 +65,46 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
   const mobileDayLabel   = mobileDay.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   const mobileDayIsToday = mobileDay.toDateString() === new Date().toDateString();
 
-  /* ── Fetch Google Calendar events for the visible week ── */
+  /* ── Fetch Google Calendar events ── */
+  // Computes the ISO range for a given weekOffset and fetches events.
+  const fetchGcalEvents = async (offset) => {
+    const base = new Date();
+    base.setHours(0, 0, 0, 0);
+    const dayOfWeek = base.getDay();
+    const toMonday  = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const mon = new Date(base);
+    mon.setDate(base.getDate() + toMonday + offset * 7);
+    const end = new Date(mon);
+    end.setDate(mon.getDate() + 7);
+    const timeMin = mon.toISOString();
+    const timeMax = end.toISOString();
+    try {
+      const data = await apiGet(`/api/calendar/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`);
+      setGcalEvents(Array.isArray(data) ? data : []);
+    } catch {
+      setGcalEvents([]);
+    }
+  };
+
+  // Sync on mount, on week change, and when Google connection status changes
   useEffect(() => {
     if (!googleConnected) { setGcalEvents([]); return; }
-    // Fetch the full week: Mon 00:00 → Sun+1 00:00
-    const start = new Date(monday);
-    const end   = new Date(monday);
-    end.setDate(monday.getDate() + 7);
-    const timeMin = start.toISOString();
-    const timeMax = end.toISOString();
-    apiGet(`/api/calendar/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`)
-      .then(data => setGcalEvents(Array.isArray(data) ? data : []))
-      .catch(() => setGcalEvents([]));
+    fetchGcalEvents(weekOffset);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [weekOffset, googleConnected]);
+
+  // Re-sync whenever the user returns to this tab / page
+  useEffect(() => {
+    if (!googleConnected) return;
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        fetchGcalEvents(weekOffsetRef.current);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [googleConnected]);
 
   /* ── App meetings (all confirmed/pending with a slot) ── */
   const confirmed = meetings.filter(m =>
