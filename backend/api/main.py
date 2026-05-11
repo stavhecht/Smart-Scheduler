@@ -133,6 +133,8 @@ _mangum = Mangum(app)
 
 
 def handler(event, context):
+    print(f"[handler] event: {event}")
+    print(f"[handler] context: {context}")
     # Step Functions invocations have 'sfn_action' key
     if 'sfn_action' in event:
         return sfn_router(event, context)
@@ -321,6 +323,20 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
             except Exception as exc:
                 # If something goes wrong (e.g. bad legacy data), log and return empty list
                 print(f"[health] meetings action failed for user {user_id}: {exc}")
+                return []
+
+        # ── calendar_events ───────────────────────────────────────────────
+        if action == "calendar_events":
+            try:
+                params = json.loads(data) if data else {}
+                time_min = params.get('timeMin', '')
+                time_max = params.get('timeMax', '')
+                if not time_min or not time_max:
+                    return []
+                events = calendar_client.get_google_events(user_id, time_min, time_max)
+                return events
+            except Exception as exc:
+                print(f"[health] calendar_events failed for user {user_id}: {exc}")
                 return []
 
         # ── calendar_status ───────────────────────────────────────────────
@@ -873,7 +889,9 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
                 users = db.get_all_users(user_id)
                 return [
                     {
+                        "userId":        u.get('userId', ''),
                         "id":            u.get('userId', ''),
+                        "displayName":   u.get('displayName', ''),
                         "name":          u.get('displayName', ''),
                         "email":         u.get('email', ''),
                         "role":          u.get('role', ''),

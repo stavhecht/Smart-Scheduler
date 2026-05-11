@@ -84,6 +84,12 @@
   border: 1px solid rgba(129, 140, 248, 0.22);
 }
 
+.cv-legend-item.gcal {
+  background: rgba(52, 211, 153, 0.1);
+  color: #34d399;
+  border: 1px solid rgba(52, 211, 153, 0.22);
+}
+
 /* ── Scrollable area ── */
 .cv-scroll {
   overflow-y: auto;
@@ -388,4 +394,10 @@
   background: rgba(99, 102, 241, 0.08);
   color: #6366f1;
   border-color: rgba(99, 102, 241, 0.22);
+}
+
+[data-theme="light"] .cv-legend-item.gcal {
+  background: rgba(5, 150, 105, 0.08);
+  color: #059669;
+  border-color: rgba(5, 150, 105, 0.22);
 }
