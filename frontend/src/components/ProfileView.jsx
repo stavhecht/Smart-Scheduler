@@ -132,8 +132,6 @@ export default function ProfileView({
   const [tzOpen, setTzOpen]           = useState(false);
   const tzRef                         = useRef(null);
   const trackRef                      = useRef(null);
-  const whDragRef                     = useRef(null);
-  const workingHoursRef               = useRef(null);
 
   const score      = Math.round(profile.fairness_score ?? 100);
   const scoreColor = score >= 80 ? '#34d399' : score >= 60 ? '#fbbf24' : '#f87171';
@@ -227,15 +225,16 @@ export default function ProfileView({
   const completeness   = computeCompleteness(profile);
   const statusMsg      = profile.statusMessage || profile.status_message || '';
   const statusDotColor = getStatusDotColor(statusMsg);
-  const workingHours   = profile.workingHours || { start: '09:00', end: '18:00' };
-  const workingDays    = profile.workingDays || [0, 1, 2, 3, 4]; // Default Mon-Fri
-  const lunchBreak     = profile.lunchBreak  || { start: '12:00', duration: 60 };
-  const whStartPct     = (parseHour(workingHours.start) / 24) * 100;
-  const whEndPct       = (parseHour(workingHours.end)   / 24) * 100;
-  const notifPrefs     = profile.notificationPrefs || { invites: true, reminders: true, digest: false };
+  // Preferences display reads exclusively from prefsDraft so saving + remounting always
+  // reflects the last-saved state without any profile↔draft sync issues.
+  const workingHours = prefsDraft.workingHours || { start: '09:00', end: '18:00' };
+  const workingDays  = prefsDraft.workingDays  || [0, 1, 2, 3, 4];
+  const lunchBreak   = prefsDraft.lunchBreak   || { start: '12:00', duration: 60 };
+  const whStartPct   = (parseHour(workingHours.start) / 24) * 100;
+  const whEndPct     = (parseHour(workingHours.end)   / 24) * 100;
+  const notifPrefs   = prefsDraft.notificationPrefs || { invites: true, reminders: true, digest: false };
 
-  // Keep refs pointing at latest values so event listeners with [] deps stay fresh
-  workingHoursRef.current = workingHours;
+  // Keep ref pointing at latest prefsDraft so wheel/drag listeners with [] deps stay fresh
   prefsDraftRef.current = prefsDraft;
 
   // Non-passive wheel listener so we can call e.preventDefault() and block page scroll
@@ -244,7 +243,7 @@ export default function ProfileView({
     if (!track) return;
     const onWheel = (e) => {
       e.preventDefault();
-      const wh = workingHoursRef.current;
+      const wh = prefsDraftRef.current.workingHours || { start: '09:00', end: '18:00' };
       const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY;
       if (Math.abs(delta) < 2) return;
       const shift = delta > 0 ? 1 : -1;
@@ -253,23 +252,23 @@ export default function ProfileView({
       if (curS + shift >= 0 && curE + shift <= 24) {
         const fmt = h => `${h.toString().padStart(2, '0')}:00`;
         const newWh = { start: fmt(curS + shift), end: fmt(curE + shift) };
-        setProfile(p => ({ ...p, workingHours: newWh }));
         setPrefsDraft(d => ({ ...d, workingHours: newWh }));
       }
     };
     track.addEventListener('wheel', onWheel, { passive: false });
     return () => track.removeEventListener('wheel', onWheel);
-  }, []); // safe — reads workingHours / handleSavePref via refs
+  }, []);
 
   // Drag handler: 'start' handle | 'end' handle | 'move' (whole bar)
   const handleBarMouseDown = (e, dragType) => {
     e.preventDefault();
     const track = trackRef.current;
     if (!track) return;
-    const rect   = track.getBoundingClientRect();
-    const startX = e.clientX;
-    const startS = parseHour(workingHoursRef.current.start);
-    const startE = parseHour(workingHoursRef.current.end);
+    const rect     = track.getBoundingClientRect();
+    const startX   = e.clientX;
+    const wh0      = prefsDraftRef.current.workingHours || { start: '09:00', end: '18:00' };
+    const startS   = parseHour(wh0.start);
+    const startE   = parseHour(wh0.end);
     const duration = startE - startS;
     const fmt = h => `${h.toString().padStart(2, '0')}:00`;
 
@@ -287,17 +286,12 @@ export default function ProfileView({
         const newS = Math.max(0, Math.min(24 - duration, startS + hourDelta));
         newWh = { start: fmt(newS), end: fmt(newS + duration) };
       }
-      whDragRef.current = newWh;
-      setProfile(p => ({ ...p, workingHours: newWh }));
+      setPrefsDraft(d => ({ ...d, workingHours: newWh }));
     };
 
     const onUp = () => {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
-      if (whDragRef.current) {
-        setPrefsDraft(d => ({ ...d, workingHours: whDragRef.current }));
-        whDragRef.current = null;
-      }
     };
 
     document.addEventListener('mousemove', onMove);
@@ -578,7 +572,7 @@ export default function ProfileView({
                     onClick={() => { setTzOpen(o => !o); setTzSearch(''); }}
                     style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
                   >
-                    <span>{profile.timezone || 'Asia/Jerusalem'}</span>
+                    <span>{prefsDraft.timezone || 'Asia/Jerusalem'}</span>
                     <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>{tzOpen ? '▲' : '▼'}</span>
                   </div>
                   {tzOpen && (
@@ -600,11 +594,11 @@ export default function ProfileView({
                       />
                       <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
                         {TIMEZONES.filter(tz => tz.toLowerCase().includes(tzSearch.toLowerCase())).map(tz => {
-                          const isSelected = tz === (profile.timezone || 'Asia/Jerusalem');
+                          const isSelected = tz === (prefsDraft.timezone || 'Asia/Jerusalem');
                           return (
                             <div
                               key={tz}
-                              onClick={() => { setProfile(p => ({ ...p, timezone: tz })); setPrefsDraft(d => ({ ...d, timezone: tz })); setTzOpen(false); }}
+                              onClick={() => { setPrefsDraft(d => ({ ...d, timezone: tz })); setTzOpen(false); }}
                               style={{
                                 padding: '0.5rem 0.75rem', cursor: 'pointer', fontSize: '0.82rem',
                                 background: isSelected ? 'var(--accent-dim)' : 'transparent',
@@ -634,7 +628,7 @@ export default function ProfileView({
                     className="pv-input-sub"
                     style={{ width: 'auto' }}
                     value={workingHours.start}
-                    onChange={e => { const wh = { ...workingHours, start: e.target.value }; setProfile(p => ({ ...p, workingHours: wh })); setPrefsDraft(d => ({ ...d, workingHours: wh })); }}
+                    onChange={e => { setPrefsDraft(d => ({ ...d, workingHours: { ...d.workingHours, start: e.target.value } })); }}
                   />
                   <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>End</span>
                   <input
@@ -642,7 +636,7 @@ export default function ProfileView({
                     className="pv-input-sub"
                     style={{ width: 'auto' }}
                     value={workingHours.end}
-                    onChange={e => { const wh = { ...workingHours, end: e.target.value }; setProfile(p => ({ ...p, workingHours: wh })); setPrefsDraft(d => ({ ...d, workingHours: wh })); }}
+                    onChange={e => { setPrefsDraft(d => ({ ...d, workingHours: { ...d.workingHours, end: e.target.value } })); }}
                   />
                 </div>
                 <div ref={trackRef} className="wh-track" style={{ marginTop: '0.75rem' }}>
@@ -680,9 +674,7 @@ export default function ProfileView({
                     style={{ width: 'auto' }}
                     value={lunchBreak.start}
                     onChange={e => {
-                      const newLB = { ...lunchBreak, start: e.target.value };
-                      setProfile(p => ({ ...p, lunchBreak: newLB }));
-                      setPrefsDraft(d => ({ ...d, lunchBreak: newLB }));
+                      setPrefsDraft(d => ({ ...d, lunchBreak: { ...d.lunchBreak, start: e.target.value } }));
                     }}
                   />
                   <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Duration</span>
@@ -691,9 +683,7 @@ export default function ProfileView({
                     style={{ width: 'auto' }}
                     value={lunchBreak.duration}
                     onChange={e => {
-                      const newLB = { ...lunchBreak, duration: parseInt(e.target.value, 10) };
-                      setProfile(p => ({ ...p, lunchBreak: newLB }));
-                      setPrefsDraft(d => ({ ...d, lunchBreak: newLB }));
+                      setPrefsDraft(d => ({ ...d, lunchBreak: { ...d.lunchBreak, duration: parseInt(e.target.value, 10) } }));
                     }}
                   >
                     <option value={30}>30 min</option>
@@ -718,7 +708,6 @@ export default function ProfileView({
                           const newDays = isActive
                             ? workingDays.filter(day => day !== i)
                             : [...workingDays, i].sort();
-                          setProfile(p => ({ ...p, workingDays: newDays }));
                           setPrefsDraft(d => ({ ...d, workingDays: newDays }));
                         }}
                       >
@@ -739,20 +728,20 @@ export default function ProfileView({
                 label="Meeting invitations"
                 desc="Email me when someone invites me to a meeting"
                 on={notifPrefs.invites}
-                onChange={v => { const n = { ...notifPrefs, invites: v }; setProfile(p => ({ ...p, notificationPrefs: n })); setPrefsDraft(d => ({ ...d, notificationPrefs: n })); }}
+                onChange={v => { setPrefsDraft(d => ({ ...d, notificationPrefs: { ...d.notificationPrefs, invites: v } })); }}
               />
               <PrefRow
                 label="Meeting reminders"
                 desc="Email me reminders 1 hour before meetings"
                 on={notifPrefs.reminders}
-                onChange={v => { const n = { ...notifPrefs, reminders: v }; setProfile(p => ({ ...p, notificationPrefs: n })); setPrefsDraft(d => ({ ...d, notificationPrefs: n })); }}
+                onChange={v => { setPrefsDraft(d => ({ ...d, notificationPrefs: { ...d.notificationPrefs, reminders: v } })); }}
               />
               <div style={{ borderBottom: 'none' }}>
                 <PrefRow
                   label="Weekly fairness digest"
                   desc="Weekly email summary of your fairness score and activity"
                   on={notifPrefs.digest}
-                  onChange={v => { const n = { ...notifPrefs, digest: v }; setProfile(p => ({ ...p, notificationPrefs: n })); setPrefsDraft(d => ({ ...d, notificationPrefs: n })); }}
+                  onChange={v => { setPrefsDraft(d => ({ ...d, notificationPrefs: { ...d.notificationPrefs, digest: v } })); }}
                 />
               </div>
             </div>
@@ -766,14 +755,14 @@ export default function ProfileView({
                 label="Show fairness score publicly"
                 desc="Allow other users to see your fairness score on your public profile"
                 on={prefsDraft.showFairnessScore ?? true}
-                onChange={v => { setProfile(p => ({ ...p, showFairnessScore: v })); setPrefsDraft(d => ({ ...d, showFairnessScore: v })); }}
+                onChange={v => { setPrefsDraft(d => ({ ...d, showFairnessScore: v })); }}
               />
               <div style={{ borderBottom: 'none' }}>
                 <PrefRow
                   label="Allow messages"
                   desc="Allow other users to send you kudos and nudges"
                   on={prefsDraft.allowMessages ?? true}
-                  onChange={v => { setProfile(p => ({ ...p, allowMessages: v })); setPrefsDraft(d => ({ ...d, allowMessages: v })); }}
+                  onChange={v => { setPrefsDraft(d => ({ ...d, allowMessages: v })); }}
                 />
               </div>
             </div>

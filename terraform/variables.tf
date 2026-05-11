@@ -22,6 +22,7 @@ variable "google_client_id" {
 
 variable "google_client_secret" {
   type    = string
+  sensitive = true
   default = ""
 }
 
@@ -38,5 +39,5 @@ variable "microsoft_client_secret" {
 variable "frontend_url" {
   description = "Amplify frontend URL (used for CORS and Lambda FRONTEND_URL env var)"
   type        = string
-  default     = "https://main.dswqybh1v4bo.amplifyapp.com"
+  default     = "https://main.dndn8x61u1xu5.amplifyapp.com"
 }

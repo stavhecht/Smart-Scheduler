@@ -388,8 +388,11 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
                     )
                     if resp['status'] == 'FAILED':
                         raise Exception(resp.get('error', 'Workflow failed'))
-                except Exception:
-                    _run_local_scheduling(meeting_data, user_id, meeting.requestId)
+                except Exception as sfn_exc:
+                    try:
+                        _run_local_scheduling(meeting_data, user_id, meeting.requestId)
+                    except Exception as local_exc:
+                        print(f"[create_meeting] local scheduling failed for {meeting.requestId}: {local_exc}")
                 return meeting.model_dump(mode="json")
             else:
                 return db.create_meeting_with_simulation(meeting_data, user_id)
@@ -918,7 +921,7 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
         import traceback
         traceback.print_exc()
         print(f"[health] unexpected error at action={action}: {exc}")
-        return {"status": "error", "action": action, "message": "Internal error, please try again"}
+        return {"status": "error", "action": action, "message": f"Internal error: {exc}"}
 
 
 
@@ -1037,7 +1040,10 @@ def create_meeting(meeting_data: models.MeetingCreateSchema, request: Request):
                 raise Exception(response.get('error', 'Workflow failed'))
         except Exception as e:
             logger.warning(f"Step Functions failed for {meeting.requestId}, falling back to local scheduling: {e}")
-            _run_local_scheduling(meeting_data, user_id, meeting.requestId)
+            try:
+                _run_local_scheduling(meeting_data, user_id, meeting.requestId)
+            except Exception as local_exc:
+                logger.warning(f"Local scheduling also failed for {meeting.requestId}: {local_exc}")
 
         return meeting
     else:

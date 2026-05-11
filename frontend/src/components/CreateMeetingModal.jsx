@@ -109,7 +109,7 @@ export default function CreateMeetingModal({ prefill, onClose, onCreated, onRefr
       onRefresh?.();
       onCreated?.();
     } catch (err) {
-      notify('Failed to create meeting', 'error');
+      notify(err?.message || 'Failed to create meeting', 'error');
       console.error(err);
     } finally {
       setCreating(false);
