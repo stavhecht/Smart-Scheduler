@@ -385,6 +385,7 @@ function AppContent() {
                 </div>
                 <CalendarView
                   meetings={meetings}
+                  calendarStatus={calendarStatus}
                   onMeetingClick={(m) => setSelectedMeeting(m)}
                   onCreateAt={handleCreateAt}
                 />
