@@ -76,6 +76,13 @@ export async function apiGet(path) {
     if (path === '/api/meetings') return apiProxy('meetings');
     if (path === '/api/calendar/status') return apiProxy('calendar_status');
 
+    // /api/calendar/events?timeMin=...&timeMax=...
+    const calEventsMatch = path.match(/^\/api\/calendar\/events\?(.+)$/);
+    if (calEventsMatch) {
+        const p = new URLSearchParams(calEventsMatch[1]);
+        return apiProxy('calendar_events', { timeMin: p.get('timeMin'), timeMax: p.get('timeMax') });
+    }
+
     // /api/meetings/<id>/log
     const logMatch = path.match(/^\/api\/meetings\/([^/]+)\/log$/);
     if (logMatch) return apiProxy(`meeting_log:${logMatch[1]}`);
@@ -151,7 +158,7 @@ export async function apiScoreSlot(startIso, durationMinutes, participantIds = [
     return apiProxy('score_slot', { startIso, durationMinutes, participantIds });
 }
 
-/** Save (or clear) the user's Outlook .ics calendar feed URL. */
+/** Save (or clear) the user's .ics calendar feed URL. */
 export async function apiUpdateIcsUrl(icsUrl) {
     return apiProxy('update_ics_url', { icsUrl });
 }

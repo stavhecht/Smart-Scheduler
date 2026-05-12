@@ -59,30 +59,7 @@
   color: rgba(255, 255, 255, 0.72);
 }
 
-.cv-legend {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.75rem;
-}
 
-.cv-legend-item {
-  padding: 0.18rem 0.6rem;
-  border-radius: 20px;
-  font-weight: 600;
-}
-
-.cv-legend-item.organizer {
-  background: rgba(56, 189, 248, 0.1);
-  color: #38bdf8;
-  border: 1px solid rgba(56, 189, 248, 0.22);
-}
-
-.cv-legend-item.participant {
-  background: rgba(129, 140, 248, 0.1);
-  color: #818cf8;
-  border: 1px solid rgba(129, 140, 248, 0.22);
-}
 
 /* ── Scrollable area ── */
 .cv-scroll {
@@ -378,14 +355,3 @@
   color: var(--text-primary);
 }
 
-[data-theme="light"] .cv-legend-item.organizer {
-  background: rgba(37, 99, 235, 0.08);
-  color: #2563eb;
-  border-color: rgba(37, 99, 235, 0.22);
-}
-
-[data-theme="light"] .cv-legend-item.participant {
-  background: rgba(99, 102, 241, 0.08);
-  color: #6366f1;
-  border-color: rgba(99, 102, 241, 0.22);
-}

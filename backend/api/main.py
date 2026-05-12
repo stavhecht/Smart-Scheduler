@@ -133,6 +133,8 @@ _mangum = Mangum(app)
 
 
 def handler(event, context):
+    print(f"[handler] event: {event}")
+    print(f"[handler] context: {context}")
     # Step Functions invocations have 'sfn_action' key
     if 'sfn_action' in event:
         return sfn_router(event, context)
@@ -209,9 +211,12 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
                     "status_message": profile.statusMessage,
                     "statusMessage":  profile.statusMessage,
                     "timezone":       profile.timezone,
-                    "workingHours":   profile.workingHours,
-                    "workingDays":    profile.workingDays,
-                    "lunchHour":      profile.lunchHour,
+                    "workingHours":      profile.workingHours,
+                    "workingDays":       profile.workingDays,
+                    "lunchBreak":        profile.lunchBreak,
+                    "notificationPrefs": profile.notificationPrefs,
+                    "showFairnessScore": profile.showFairnessScore,
+                    "allowMessages":     profile.allowMessages,
                     "fairness_score": float(fairness.fairnessScore) if fairness else 100.0,
                     "details": {
                         "meetings_this_week":      metrics.get("meetings_this_week", 0),
@@ -320,6 +325,20 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
                 print(f"[health] meetings action failed for user {user_id}: {exc}")
                 return []
 
+        # ── calendar_events ───────────────────────────────────────────────
+        if action == "calendar_events":
+            try:
+                params = json.loads(data) if data else {}
+                time_min = params.get('timeMin', '')
+                time_max = params.get('timeMax', '')
+                if not time_min or not time_max:
+                    return []
+                events = calendar_client.get_google_events(user_id, time_min, time_max)
+                return events
+            except Exception as exc:
+                print(f"[health] calendar_events failed for user {user_id}: {exc}")
+                return []
+
         # ── calendar_status ───────────────────────────────────────────────
         if action == "calendar_status":
             try:
@@ -385,8 +404,11 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
                     )
                     if resp['status'] == 'FAILED':
                         raise Exception(resp.get('error', 'Workflow failed'))
-                except Exception:
-                    _run_local_scheduling(meeting_data, user_id, meeting.requestId)
+                except Exception as sfn_exc:
+                    try:
+                        _run_local_scheduling(meeting_data, user_id, meeting.requestId)
+                    except Exception as local_exc:
+                        print(f"[create_meeting] local scheduling failed for {meeting.requestId}: {local_exc}")
                 return meeting.model_dump(mode="json")
             else:
                 return db.create_meeting_with_simulation(meeting_data, user_id)
@@ -867,7 +889,9 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
                 users = db.get_all_users(user_id)
                 return [
                     {
+                        "userId":        u.get('userId', ''),
                         "id":            u.get('userId', ''),
+                        "displayName":   u.get('displayName', ''),
                         "name":          u.get('displayName', ''),
                         "email":         u.get('email', ''),
                         "role":          u.get('role', ''),
@@ -915,7 +939,7 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
         import traceback
         traceback.print_exc()
         print(f"[health] unexpected error at action={action}: {exc}")
-        return {"status": "error", "action": action, "message": "Internal error, please try again"}
+        return {"status": "error", "action": action, "message": f"Internal error: {exc}"}
 
 
 
@@ -1034,7 +1058,10 @@ def create_meeting(meeting_data: models.MeetingCreateSchema, request: Request):
                 raise Exception(response.get('error', 'Workflow failed'))
         except Exception as e:
             logger.warning(f"Step Functions failed for {meeting.requestId}, falling back to local scheduling: {e}")
-            _run_local_scheduling(meeting_data, user_id, meeting.requestId)
+            try:
+                _run_local_scheduling(meeting_data, user_id, meeting.requestId)
+            except Exception as local_exc:
+                logger.warning(f"Local scheduling also failed for {meeting.requestId}: {local_exc}")
 
         return meeting
     else:
