@@ -52,7 +52,7 @@ class FairnessEngine:
             score += suffering * 3.0
         except (TypeError, ValueError):
             pass
-            
+
         return max(0.0, min(100.0, score))
 
     # ---------------------------------------------------------------------------
@@ -75,7 +75,7 @@ class FairnessEngine:
         self,
         slot_dt: datetime,
         participant_states: List[dict],
-        duration_minutes: int,
+        _duration_minutes: int,
         tz_offset_hours: float = 0.0,
         participant_tz_offsets: Optional[List[float]] = None,
         participant_working_days: Optional[List[List[int]]] = None,
@@ -190,7 +190,7 @@ class FairnessEngine:
     def _ai_explain(self, hour: int, day: int, score: float, p_states: List[dict]) -> str:
         """Generates a pseudo-intelligent explanation for the score."""
         days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-        
+
         # Dynamic context
         is_weekend = day >= 4
         is_off_hours = hour < 9 or hour > 17
@@ -211,7 +211,7 @@ class FairnessEngine:
             return "Adequate slot: Meets core requirements while maintaining fair distribution of weekly load."
         elif is_weekend:
             return f"Social boundary warning: High-impact {days[day]} slot. Recommended only for high-priority syncs."
-        
+
         return "Sub-optimal: Significant load variance detected. Suggest exploring alternative windows."
 
     # ---------------------------------------------------------------------------
