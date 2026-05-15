@@ -18,8 +18,7 @@ resource "aws_lambda_function" "api_handler" {
       FRONTEND_URL   = var.frontend_url
       GOOGLE_CLIENT_ID     = var.google_client_id
       GOOGLE_CLIENT_SECRET = var.google_client_secret
-      MICROSOFT_CLIENT_ID  = var.microsoft_client_id
-      MICROSOFT_CLIENT_SECRET = var.microsoft_client_secret
+      OPENAI_API_KEY       = var.openai_api_key
     }
   }
 
