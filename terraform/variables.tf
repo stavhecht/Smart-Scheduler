@@ -26,16 +26,10 @@ variable "google_client_secret" {
   default = ""
 }
 
-variable "microsoft_client_id" {
+variable "openai_api_key" {
   type    = string
   default = ""
 }
-
-variable "microsoft_client_secret" {
-  type    = string
-  default = ""
-}
-
 variable "frontend_url" {
   description = "Amplify frontend URL (used for CORS and Lambda FRONTEND_URL env var)"
   type        = string

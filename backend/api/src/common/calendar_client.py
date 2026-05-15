@@ -1,5 +1,5 @@
 """
-calendar_client.py — Google Calendar OAuth integration.
+calendar_client — Google Calendar OAuth integration.
 
 Uses only Python stdlib (urllib.request / urllib.parse / json) so the Lambda
 ZIP stays small.  No google-auth, no msal, no requests/httpx.
@@ -21,7 +21,9 @@ import urllib.parse
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Dict
 
-import db   # local module
+from src.database.repository import CalendarRepository as _CalRepo
+
+_cal_repo = _CalRepo()
 
 # ---------------------------------------------------------------------------
 # Config (from Lambda environment variables)
@@ -94,7 +96,7 @@ def get_google_auth_url(user_id: str) -> str:
     """Build the Google OAuth2 authorization URL and store state nonce."""
     import secrets
     state = secrets.token_urlsafe(24)
-    db.save_oauth_state(user_id, 'google', state)
+    _cal_repo.save_oauth_state(user_id, 'google', state)
 
     params = urllib.parse.urlencode({
         'client_id':     GOOGLE_CLIENT_ID,
@@ -140,7 +142,7 @@ def get_google_user_email(access_token: str) -> str:
 
 def _ensure_fresh_google_token(user_id: str) -> Optional[str]:
     """Return a valid access token, refreshing if needed. None if not connected."""
-    tokens = db.get_oauth_tokens(user_id, 'google')
+    tokens = _cal_repo.get_oauth_tokens(user_id, 'google')
     if not tokens:
         return None
 
@@ -155,7 +157,7 @@ def _ensure_fresh_google_token(user_id: str) -> Optional[str]:
             refreshed = refresh_google_token(refresh_token)
             access_token = refreshed['access_token']
             new_expires = datetime.fromtimestamp(time.time() + refreshed.get('expires_in', 3600)).isoformat()
-            db.save_oauth_tokens(user_id, 'google', {
+            _cal_repo.save_oauth_tokens(user_id, 'google', {
                 'access_token':  access_token,
                 'refresh_token': refresh_token,   # Google doesn't always return a new one
                 'expires_at':    new_expires,
@@ -164,7 +166,7 @@ def _ensure_fresh_google_token(user_id: str) -> Optional[str]:
             })
     except Exception as e:
         print(f"[calendar] Google token refresh failed for {user_id}: {e} — deleting stale tokens so user is prompted to reconnect")
-        db.delete_oauth_tokens(user_id, 'google')
+        _cal_repo.delete_oauth_tokens(user_id, 'google')
         return None
 
     return access_token
@@ -382,7 +384,7 @@ def get_user_busy_slots(user_id: str, date_start: datetime, date_end: datetime) 
     events = get_google_events(user_id, time_min, time_max)
     if events:
         return events
-    ics_url = db.get_user_ics_url(user_id)
+    ics_url = _cal_repo.get_ics_url(user_id)
     if ics_url:
         return get_ics_events(ics_url, time_min, time_max)
     return []
@@ -397,7 +399,7 @@ def write_meeting_to_calendars(creator_id: str, participant_ids: List[str],
     all_ids = list({creator_id} | set(participant_ids))
     attendee_emails = []
     for uid in all_ids:
-        tokens_g = db.get_oauth_tokens(uid, 'google')
+        tokens_g = _cal_repo.get_oauth_tokens(uid, 'google')
         email = (tokens_g or {}).get('calendarEmail', '')
         if email:
             attendee_emails.append(email)
@@ -406,7 +408,7 @@ def write_meeting_to_calendars(creator_id: str, participant_ids: List[str],
     failed_ids: List[str] = []
     for uid in all_ids:
         try:
-            if db.get_oauth_tokens(uid, 'google'):
+            if _cal_repo.get_oauth_tokens(uid, 'google'):
                 eid = create_google_event(uid, title, start_iso, end_iso, attendee_emails)
                 if eid:
                     event_ids[uid] = f"google:{eid}"
