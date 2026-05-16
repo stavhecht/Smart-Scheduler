@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { apiGet, apiRegisterCalendarWatch, apiCheckCalendarSync } from '../apiClient';
 import './CalendarView.css';
 
@@ -313,7 +314,7 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
 
     // Align vertically with the top of the event, clamped to viewport
     const tooltipTop = Math.max(GAP, Math.min(evRect.top, window.innerHeight - TH - GAP));
-    return (
+    return createPortal(
       <div className="cv-tooltip" style={{ top: tooltipTop, left: tooltipLeft }}>
         <div className="cv-tt-title" style={{ borderLeft: `3px solid ${colors.border}`, paddingLeft: 8 }}>
           {ev.title}
@@ -338,7 +339,8 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
             Open in Google Calendar ↗
           </a>
         )}
-      </div>
+      </div>,
+      document.body
     );
   };
 
@@ -405,11 +407,11 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
 
           {/* Day columns */}
           {displayDays.map(day => (
-            <div key={day.name} className="cv-day-col">
+            <div key={day.name} className={`cv-day-col${day.isToday ? ' today-col' : ''}`}>
               <div className={`cv-day-header ${day.isToday ? 'today' : ''}`}>
                 <span className="cv-day-name">{day.name}</span>
                 <span className={`cv-day-num ${day.isToday ? 'today-num' : ''}`}>
-                  {day.isToday ? day.date.getDate() : day.label}
+                  {day.label}
                 </span>
               </div>
 
