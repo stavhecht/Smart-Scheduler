@@ -14,23 +14,25 @@ const ROLE_COLOR = {
 };
 const PENDING_COLOR = { bg: 'rgba(251,191,36,0.18)', border: '#fbbf24', text: '#78350f' };
 
-// Maps Google Calendar colorId values (1–11) to visual styles
+// Maps Google Calendar colorId values (1–11) to visual styles.
+// Text colors are light so they're readable on dark-mode semi-transparent backgrounds.
+// Light mode overrides dark text via [data-theme="light"] .cv-event-gcal in CSS.
 const GCAL_COLOR_MAP = {
-  '':   { bg: 'rgba(52,211,153,0.22)',  border: '#34d399', text: '#064e3b' }, // default
-  '1':  { bg: 'rgba(121,134,203,0.22)', border: '#7986cb', text: '#1a237e' }, // Lavender
-  '2':  { bg: 'rgba(51,182,121,0.22)',  border: '#33b679', text: '#065030' }, // Sage
-  '3':  { bg: 'rgba(142,36,170,0.22)',  border: '#8e24aa', text: '#3e0054' }, // Grape
-  '4':  { bg: 'rgba(230,124,115,0.22)', border: '#e67c73', text: '#7a1a12' }, // Flamingo
-  '5':  { bg: 'rgba(246,191,38,0.22)',  border: '#f6bf26', text: '#6b4800' }, // Banana
-  '6':  { bg: 'rgba(244,81,30,0.22)',   border: '#f4511e', text: '#7a1c00' }, // Tangerine
-  '7':  { bg: 'rgba(3,155,229,0.22)',   border: '#039be5', text: '#003d5c' }, // Peacock
-  '8':  { bg: 'rgba(63,81,181,0.22)',   border: '#3f51b5', text: '#0e1a60' }, // Blueberry
-  '9':  { bg: 'rgba(11,128,67,0.22)',   border: '#0b8043', text: '#023318' }, // Basil
-  '10': { bg: 'rgba(213,0,0,0.22)',     border: '#d50000', text: '#5a0000' }, // Tomato
-  '11': { bg: 'rgba(97,97,97,0.22)',    border: '#616161', text: '#1a1a1a' }, // Graphite
+  '':   { bg: 'rgba(52,211,153,0.20)',  border: '#34d399', text: '#6ee7b7' }, // default green
+  '1':  { bg: 'rgba(121,134,203,0.20)', border: '#7986cb', text: '#c7d2fe' }, // Lavender
+  '2':  { bg: 'rgba(51,182,121,0.20)',  border: '#33b679', text: '#6ee7b7' }, // Sage
+  '3':  { bg: 'rgba(192,86,234,0.20)',  border: '#c056ea', text: '#e9d5ff' }, // Grape
+  '4':  { bg: 'rgba(230,124,115,0.20)', border: '#e67c73', text: '#fca5a5' }, // Flamingo
+  '5':  { bg: 'rgba(246,191,38,0.20)',  border: '#f6bf26', text: '#fde68a' }, // Banana
+  '6':  { bg: 'rgba(244,81,30,0.20)',   border: '#f4511e', text: '#fdba74' }, // Tangerine
+  '7':  { bg: 'rgba(3,155,229,0.20)',   border: '#039be5', text: '#7dd3fc' }, // Peacock
+  '8':  { bg: 'rgba(99,102,241,0.20)',  border: '#6366f1', text: '#c7d2fe' }, // Blueberry
+  '9':  { bg: 'rgba(52,211,153,0.20)',  border: '#34d399', text: '#a7f3d0' }, // Basil
+  '10': { bg: 'rgba(239,68,68,0.20)',   border: '#ef4444', text: '#fca5a5' }, // Tomato
+  '11': { bg: 'rgba(156,163,175,0.20)', border: '#9ca3af', text: '#e5e7eb' }, // Graphite
 };
 // ICS calendar gets a distinct purple tint to differentiate from Google events
-const ICS_COLOR = { bg: 'rgba(168,85,247,0.22)', border: '#a855f7', text: '#3b0764' };
+const ICS_COLOR = { bg: 'rgba(168,85,247,0.20)', border: '#a855f7', text: '#e9d5ff' };
 
 const hasTime = (iso) => iso && iso.includes('T');
 
@@ -45,11 +47,12 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
   const [isMobile, setIsMobile]     = useState(() => window.innerWidth < 600);
   const [gcalEvents, setGcalEvents]   = useState([]);
   const [gcalLoading, setGcalLoading] = useState(false);
-  const [tooltip, setTooltip]         = useState(null); // { ev, evRect }
+  const [tooltip, setTooltip]         = useState(null); // { ev, el }
   const [webhookActive, setWebhookActive] = useState(false);
   const nowRef           = useRef(null);
   const touchStartX      = useRef(null);
   const lastChangeToken  = useRef(null); // last seen changeToken from check_calendar_sync
+  const tooltipDomRef    = useRef(null); // direct ref to tooltip DOM node for scroll repositioning
 
   const googleConnected = calendarStatus?.google?.connected;
   const icsConnected    = calendarStatus?.ics?.connected;
@@ -71,6 +74,23 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
     const close = (e) => { if (!e.target.closest('.cv-tooltip')) setTooltip(null); };
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
+  }, [tooltip]);
+
+  // Keep tooltip pinned next to its event element while the page scrolls
+  useEffect(() => {
+    if (!tooltip) return;
+    const TW = 306, TH = 260, GAP = 10;
+    const reposition = () => {
+      if (!tooltip.el || !tooltipDomRef.current) return;
+      const r = tooltip.el.getBoundingClientRect();
+      const spaceRight = window.innerWidth - r.right;
+      const left = spaceRight >= TW + GAP ? r.right + GAP : Math.max(GAP, r.left - TW - GAP);
+      const top  = Math.max(GAP, Math.min(r.top, window.innerHeight - TH - GAP));
+      tooltipDomRef.current.style.top  = `${top}px`;
+      tooltipDomRef.current.style.left = `${left}px`;
+    };
+    window.addEventListener('scroll', reposition, { passive: true });
+    return () => window.removeEventListener('scroll', reposition);
   }, [tooltip]);
 
   /* ── Week dates (derived from weekOffset) ── */
@@ -301,21 +321,17 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
     const colors = gcalColor(ev);
     const sourceLabel = ev.source === 'ics' ? 'ICS Calendar' : 'Google Calendar';
 
-    const TW = 306; // tooltip width (matches max-width in CSS)
-    const TH = 260; // approx tooltip height
-    const GAP = 10;
-    const { evRect } = tooltip;
+    const TW = 306, TH = 260, GAP = 10;
+    const r = tooltip.el.getBoundingClientRect();
 
     // Prefer showing to the right of the event; fall back to the left
-    const spaceRight = window.innerWidth - evRect.right;
-    let tooltipLeft = spaceRight >= TW + GAP
-      ? evRect.right + GAP
-      : Math.max(GAP, evRect.left - TW - GAP);
+    const spaceRight = window.innerWidth - r.right;
+    const tooltipLeft = spaceRight >= TW + GAP ? r.right + GAP : Math.max(GAP, r.left - TW - GAP);
 
     // Align vertically with the top of the event, clamped to viewport
-    const tooltipTop = Math.max(GAP, Math.min(evRect.top, window.innerHeight - TH - GAP));
+    const tooltipTop = Math.max(GAP, Math.min(r.top, window.innerHeight - TH - GAP));
     return createPortal(
-      <div className="cv-tooltip" style={{ top: tooltipTop, left: tooltipLeft }}>
+      <div className="cv-tooltip" ref={tooltipDomRef} style={{ top: tooltipTop, left: tooltipLeft }}>
         <div className="cv-tt-title" style={{ borderLeft: `3px solid ${colors.border}`, paddingLeft: 8 }}>
           {ev.title}
         </div>
@@ -460,11 +476,9 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
                       onClick={(e) => {
                         e.stopPropagation();
                         if (isGcal) {
-                          const r = e.currentTarget.getBoundingClientRect();
+                          const el = e.currentTarget;
                           setTooltip(prev =>
-                            prev?.ev._id === ev._id
-                              ? null
-                              : { ev, evRect: { top: r.top, left: r.left, right: r.right, height: r.height } }
+                            prev?.ev._id === ev._id ? null : { ev, el }
                           );
                         } else {
                           setTooltip(null);
