@@ -44,7 +44,7 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
   const [isMobile, setIsMobile]     = useState(() => window.innerWidth < 600);
   const [gcalEvents, setGcalEvents]   = useState([]);
   const [gcalLoading, setGcalLoading] = useState(false);
-  const [tooltip, setTooltip]         = useState(null); // { ev, x, y }
+  const [tooltip, setTooltip]         = useState(null); // { ev, evRect }
   const [webhookActive, setWebhookActive] = useState(false);
   const nowRef           = useRef(null);
   const touchStartX      = useRef(null);
@@ -80,7 +80,7 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
   const monday = new Date(todayBase);
   monday.setDate(todayBase.getDate() + toMon + weekOffset * 7);
 
-  const weekDays = Array.from({ length: 5 }, (_, i) => {
+  const weekDays = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
     return {
@@ -91,7 +91,7 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
     };
   });
 
-  const weekLabel = `${weekDays[0].date.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} – ${weekDays[4].date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`;
+  const weekLabel = `${weekDays[0].date.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} – ${weekDays[6].date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`;
 
   /* ── Mobile single-day ── */
   const mobileDay = new Date();
@@ -299,8 +299,20 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
     const ev = tooltip.ev;
     const colors = gcalColor(ev);
     const sourceLabel = ev.source === 'ics' ? 'ICS Calendar' : 'Google Calendar';
-    const tooltipLeft = Math.min(tooltip.x, window.innerWidth - 310);
-    const tooltipTop  = Math.min(tooltip.y, window.innerHeight - 260);
+
+    const TW = 306; // tooltip width (matches max-width in CSS)
+    const TH = 260; // approx tooltip height
+    const GAP = 10;
+    const { evRect } = tooltip;
+
+    // Prefer showing to the right of the event; fall back to the left
+    const spaceRight = window.innerWidth - evRect.right;
+    let tooltipLeft = spaceRight >= TW + GAP
+      ? evRect.right + GAP
+      : Math.max(GAP, evRect.left - TW - GAP);
+
+    // Align vertically with the top of the event, clamped to viewport
+    const tooltipTop = Math.max(GAP, Math.min(evRect.top, window.innerHeight - TH - GAP));
     return (
       <div className="cv-tooltip" style={{ top: tooltipTop, left: tooltipLeft }}>
         <div className="cv-tt-title" style={{ borderLeft: `3px solid ${colors.border}`, paddingLeft: 8 }}>
@@ -446,10 +458,11 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
                       onClick={(e) => {
                         e.stopPropagation();
                         if (isGcal) {
+                          const r = e.currentTarget.getBoundingClientRect();
                           setTooltip(prev =>
                             prev?.ev._id === ev._id
                               ? null
-                              : { ev, x: e.clientX + 12, y: e.clientY - 10 }
+                              : { ev, evRect: { top: r.top, left: r.left, right: r.right, height: r.height } }
                           );
                         } else {
                           setTooltip(null);
