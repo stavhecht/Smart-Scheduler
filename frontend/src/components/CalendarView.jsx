@@ -46,7 +46,6 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
   const [dayOffset, setDayOffset]   = useState(0);
   const [isMobile, setIsMobile]     = useState(() => window.innerWidth < 600);
   const [gcalEvents, setGcalEvents]   = useState([]);
-  const [gcalLoading, setGcalLoading] = useState(false);
   const [tooltip, setTooltip]         = useState(null); // { ev, el }
   const [webhookActive, setWebhookActive] = useState(false);
   const nowRef           = useRef(null);
@@ -114,7 +113,7 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
     };
   });
 
-  const weekLabel = `${weekDays[0].date.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} – ${weekDays[6].date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`;
+  const weekLabel = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).formatRange(weekDays[0].date, weekDays[6].date);
 
   /* ── Mobile single-day ── */
   const mobileDay = new Date();
@@ -139,14 +138,11 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
     end.setDate(mon.getDate() + 7);
     const timeMin = mon.toISOString();
     const timeMax = end.toISOString();
-    setGcalLoading(true);
     try {
       const data = await apiGet(`/api/calendar/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`);
       setGcalEvents(Array.isArray(data) ? data : []);
     } catch {
       setGcalEvents([]);
-    } finally {
-      setGcalLoading(false);
     }
   };
 
@@ -373,7 +369,6 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
           <button className="cv-btn" onClick={() => isMobile ? setDayOffset(d => d + 1) : setWeekOffset(w => w + 1)}>Next ›</button>
         </div>
         <span className="cv-week-label">{isMobile ? mobileDayLabel : weekLabel}</span>
-        {gcalLoading && <span className="cv-sync-indicator">⟳ Syncing…</span>}
       </div>
 
       {/* ── All-day events strip (shown only when there are all-day events in view) ── */}
