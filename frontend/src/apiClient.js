@@ -167,3 +167,22 @@ export async function apiUpdateIcsUrl(icsUrl) {
 export async function apiMarkMessagesRead() {
     return apiProxy('mark_messages_read');
 }
+
+/** Register (or renew) a Google Calendar push-notification watch channel. */
+export async function apiRegisterCalendarWatch() {
+    return apiProxy('register_calendar_watch');
+}
+
+/**
+ * Returns { changeToken } — an opaque string that increments each time Google
+ * fires a webhook notification. The frontend compares this against its cached
+ * value to decide whether to re-fetch calendar events.
+ */
+export async function apiCheckCalendarSync() {
+    return apiProxy('check_calendar_sync');
+}
+
+/** Stop the active watch channel (called automatically on Google Calendar disconnect). */
+export async function apiStopCalendarWatch() {
+    return apiProxy('stop_calendar_watch');
+}

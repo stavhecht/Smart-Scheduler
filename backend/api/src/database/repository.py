@@ -522,3 +522,45 @@ class CalendarRepository:
             return None
         self._db.delete(f"USER#{user_id}", f"OAUTH_STATE#{state}")
         return item.get("provider")
+
+    # --- Watch channel (Google Calendar push notifications) ---
+
+    def save_watch_channel(self, user_id: str, channel_id: str, resource_id: str, expires_at: str) -> None:
+        """Store the active watch channel and create a reverse-lookup record."""
+        self._db.put(f"USER#{user_id}", "GCAL_WATCH", {
+            "channelId":   channel_id,
+            "resourceId":  resource_id,
+            "expiresAt":   expires_at,
+            "changeToken": "0",
+        })
+        # Reverse lookup so the webhook handler can resolve channelId → userId
+        self._db.put(f"GCAL_CHANNEL#{channel_id}", "LOOKUP", {
+            "userId":     user_id,
+            "channelId":  channel_id,
+            "resourceId": resource_id,
+        })
+
+    def get_watch_channel(self, user_id: str) -> Optional[dict]:
+        return self._db.get(f"USER#{user_id}", "GCAL_WATCH")
+
+    def delete_watch_channel(self, user_id: str) -> None:
+        channel = self.get_watch_channel(user_id)
+        if channel:
+            self._db.delete(f"GCAL_CHANNEL#{channel['channelId']}", "LOOKUP")
+        self._db.delete(f"USER#{user_id}", "GCAL_WATCH")
+
+    def get_user_id_by_channel(self, channel_id: str) -> Optional[str]:
+        item = self._db.get(f"GCAL_CHANNEL#{channel_id}", "LOOKUP")
+        return item.get("userId") if item else None
+
+    def bump_change_token(self, user_id: str) -> None:
+        """Increment changeToken so the frontend's sync poll detects a new webhook notification."""
+        channel = self.get_watch_channel(user_id)
+        if not channel:
+            return
+        channel["changeToken"] = str(int(time.time() * 1000))
+        self._db.put(f"USER#{user_id}", "GCAL_WATCH", channel)
+
+    def get_change_token(self, user_id: str) -> str:
+        channel = self.get_watch_channel(user_id)
+        return (channel or {}).get("changeToken", "0")
