@@ -184,14 +184,10 @@
   border-top: 3px solid var(--accent-color);
 }
 
-/* Filled pill badge on the date number */
+/* Bold accent color on today's date label — no pill, header background is the visual cue */
 .today-num {
-  display: inline-block;
-  background: var(--accent-color) !important;
-  color: #002233 !important;
-  border-radius: 999px;
-  padding: 1px 8px;
   font-weight: 700;
+  color: var(--accent-color) !important;
 }
 
 /* Subtle column-body tint so the whole column reads as "today" */
@@ -211,8 +207,6 @@
   font-weight: 600;
   color: rgba(255, 255, 255, 0.62);
 }
-
-.today-num { color: var(--accent-color) !important; }
 
 /* Body */
 .cv-day-body {
@@ -412,8 +406,7 @@
 }
 
 [data-theme="light"] .today-num {
-  background: #2563eb !important;
-  color: #fff !important;
+  color: #2563eb !important;
 }
 
 [data-theme="light"] .today-col .cv-day-body {
@@ -455,8 +448,8 @@
   border-top-color: rgba(0, 0, 0, 0.06);
 }
 
-[data-theme="light"] .cv-ev-title {
-  color: var(--text-primary);
+[data-theme="light"] .cv-event-gcal {
+  color: rgba(0, 0, 0, 0.78) !important;
 }
 
 [data-theme="light"] .cv-allday-strip {
