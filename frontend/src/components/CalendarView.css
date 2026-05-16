@@ -6,7 +6,7 @@
   background: var(--bg-card);
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 18px;
-  overflow: hidden;
+  overflow: clip; /* clips children to border-radius without creating a scroll container (keeps sticky working) */
   position: relative;
 }
 
@@ -117,10 +117,9 @@
 
 
 
-/* ── Scrollable area ── */
+/* No internal scroll — the calendar expands fully and the page scrolls */
 .cv-scroll {
-  overflow-y: auto;
-  max-height: 540px;
+  overflow: visible;
 }
 
 /* ── Grid ── */
@@ -199,7 +198,7 @@
 /* Body */
 .cv-day-body {
   position: relative;
-  height: 600px; /* 10 hours × 60px */
+  height: 900px; /* 15 hours (7 am–10 pm) × 60px */
 }
 
 .cv-hour-cell {

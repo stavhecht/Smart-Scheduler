@@ -3,7 +3,7 @@ import { apiGet, apiRegisterCalendarWatch, apiCheckCalendarSync } from '../apiCl
 import './CalendarView.css';
 
 const HOUR_START  = 7;
-const HOUR_END    = 21;
+const HOUR_END    = 22;
 const TOTAL_HOURS = HOUR_END - HOUR_START;
 const hours = Array.from({ length: TOTAL_HOURS }, (_, i) => HOUR_START + i);
 
