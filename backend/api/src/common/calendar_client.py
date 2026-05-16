@@ -32,6 +32,9 @@ _cal_repo = _CalRepo()
 FRONTEND_URL         = os.environ.get('FRONTEND_URL', 'https://main.dswqybh1v4bo.amplifyapp.com')
 GOOGLE_CLIENT_ID     = os.environ.get('GOOGLE_CLIENT_ID', '')
 GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
+# Public HTTPS base URL of this Lambda (used as the webhook callback base).
+# Must be set in Lambda environment; left blank in local dev so webhook registration is skipped.
+WEBHOOK_BASE_URL     = os.environ.get('WEBHOOK_BASE_URL', '')
 
 # Redirect URI — localhost:5173 in dev, production FRONTEND_URL otherwise
 if os.environ.get('ENVIRONMENT') == 'development':
@@ -183,6 +186,7 @@ def get_google_events(user_id: str, time_min: str, time_max: str) -> List[dict]:
             'timeMax':      time_max,
             'singleEvents': 'true',
             'orderBy':      'startTime',
+            'maxResults':   '250',
         })
         url = f"{GOOGLE_CALENDAR}/calendars/primary/events?{params}"
         resp = _http_get(url, headers={'Authorization': f'Bearer {token}'})
@@ -190,10 +194,21 @@ def get_google_events(user_id: str, time_min: str, time_max: str) -> List[dict]:
         for ev in resp.get('items', []):
             start = ev.get('start', {}).get('dateTime') or ev.get('start', {}).get('date', '')
             end   = ev.get('end',   {}).get('dateTime') or ev.get('end',   {}).get('date', '')
+            attendees = [
+                a.get('email', '') for a in ev.get('attendees', [])
+                if a.get('email') and not a.get('self')
+            ]
             events.append({
-                'summary': ev.get('summary', 'Busy'),
-                'start':   start,
-                'end':     end,
+                'id':          ev.get('id', ''),
+                'summary':     ev.get('summary', 'Busy'),
+                'start':       start,
+                'end':         end,
+                'description': ev.get('description', ''),
+                'location':    ev.get('location', ''),
+                'colorId':     ev.get('colorId', ''),
+                'attendees':   attendees,
+                'htmlLink':    ev.get('htmlLink', ''),
+                'source':      'google',
             })
         return events
     except Exception:
@@ -457,6 +472,56 @@ def update_google_event(user_id: str, event_id: str, title: str,
         with urllib.request.urlopen(req, timeout=10):
             return True
     except Exception:
+        return False
+
+
+def register_google_watch(user_id: str, channel_id: str) -> Optional[dict]:
+    """
+    Register a push-notification watch on the user's primary calendar.
+    Returns the watch resource dict (id, resourceId, expiration) or None on failure.
+    Silently skips if WEBHOOK_BASE_URL is not configured (local dev).
+    """
+    if not WEBHOOK_BASE_URL:
+        return None
+    token = _ensure_fresh_google_token(user_id)
+    if not token:
+        return None
+    callback_url = f"{WEBHOOK_BASE_URL}/webhook/google-calendar"
+    try:
+        body = json.dumps({
+            "id":      channel_id,
+            "type":    "web_hook",
+            "address": callback_url,
+        }).encode()
+        url = f"{GOOGLE_CALENDAR}/calendars/primary/events/watch"
+        req = urllib.request.Request(url, data=body, method='POST')
+        req.add_header('Authorization', f'Bearer {token}')
+        req.add_header('Content-Type', 'application/json')
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode())
+    except Exception as e:
+        print(f"[calendar] register_google_watch failed for {user_id}: {e}")
+        return None
+
+
+def stop_google_watch(user_id: str, channel_id: str, resource_id: str) -> bool:
+    """Stop an active push-notification watch channel."""
+    token = _ensure_fresh_google_token(user_id)
+    if not token or not channel_id:
+        return False
+    try:
+        body = json.dumps({"id": channel_id, "resourceId": resource_id}).encode()
+        url = "https://www.googleapis.com/calendar/v3/channels/stop"
+        req = urllib.request.Request(url, data=body, method='POST')
+        req.add_header('Authorization', f'Bearer {token}')
+        req.add_header('Content-Type', 'application/json')
+        with urllib.request.urlopen(req, timeout=10):
+            return True
+    except urllib.error.HTTPError as e:
+        # 404 = channel already gone; 204 = success (some clients throw on non-200)
+        return e.code in (204, 404)
+    except Exception as e:
+        print(f"[calendar] stop_google_watch failed for {user_id}: {e}")
         return False
 
 

@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { apiGet } from '../apiClient';
+import { apiGet, apiRegisterCalendarWatch, apiCheckCalendarSync } from '../apiClient';
 import './CalendarView.css';
 
-/* Hours displayed: 7am – 9pm */
 const HOUR_START  = 7;
 const HOUR_END    = 21;
 const TOTAL_HOURS = HOUR_END - HOUR_START;
@@ -13,21 +12,49 @@ const ROLE_COLOR = {
   participant: { bg: 'rgba(129,140,248,0.78)', border: '#818cf8', text: '#1a1a40' },
 };
 const PENDING_COLOR = { bg: 'rgba(251,191,36,0.18)', border: '#fbbf24', text: '#78350f' };
-const GCAL_COLOR    = { bg: 'rgba(52,211,153,0.22)', border: '#34d399', text: '#064e3b' };
 
-/* Returns true for all-day Google events (date-only string, no time) */
+// Maps Google Calendar colorId values (1–11) to visual styles
+const GCAL_COLOR_MAP = {
+  '':   { bg: 'rgba(52,211,153,0.22)',  border: '#34d399', text: '#064e3b' }, // default
+  '1':  { bg: 'rgba(121,134,203,0.22)', border: '#7986cb', text: '#1a237e' }, // Lavender
+  '2':  { bg: 'rgba(51,182,121,0.22)',  border: '#33b679', text: '#065030' }, // Sage
+  '3':  { bg: 'rgba(142,36,170,0.22)',  border: '#8e24aa', text: '#3e0054' }, // Grape
+  '4':  { bg: 'rgba(230,124,115,0.22)', border: '#e67c73', text: '#7a1a12' }, // Flamingo
+  '5':  { bg: 'rgba(246,191,38,0.22)',  border: '#f6bf26', text: '#6b4800' }, // Banana
+  '6':  { bg: 'rgba(244,81,30,0.22)',   border: '#f4511e', text: '#7a1c00' }, // Tangerine
+  '7':  { bg: 'rgba(3,155,229,0.22)',   border: '#039be5', text: '#003d5c' }, // Peacock
+  '8':  { bg: 'rgba(63,81,181,0.22)',   border: '#3f51b5', text: '#0e1a60' }, // Blueberry
+  '9':  { bg: 'rgba(11,128,67,0.22)',   border: '#0b8043', text: '#023318' }, // Basil
+  '10': { bg: 'rgba(213,0,0,0.22)',     border: '#d50000', text: '#5a0000' }, // Tomato
+  '11': { bg: 'rgba(97,97,97,0.22)',    border: '#616161', text: '#1a1a1a' }, // Graphite
+};
+// ICS calendar gets a distinct purple tint to differentiate from Google events
+const ICS_COLOR = { bg: 'rgba(168,85,247,0.22)', border: '#a855f7', text: '#3b0764' };
+
 const hasTime = (iso) => iso && iso.includes('T');
+
+function gcalColor(ev) {
+  if (ev.source === 'ics') return ICS_COLOR;
+  return GCAL_COLOR_MAP[ev.colorId || ''] ?? GCAL_COLOR_MAP[''];
+}
 
 export default function CalendarView({ meetings, calendarStatus, onMeetingClick, onCreateAt }) {
   const [weekOffset, setWeekOffset] = useState(0);
   const [dayOffset, setDayOffset]   = useState(0);
   const [isMobile, setIsMobile]     = useState(() => window.innerWidth < 600);
-  const [gcalEvents, setGcalEvents] = useState([]);
-  const nowRef      = useRef(null);
-  const touchStartX = useRef(null);
+  const [gcalEvents, setGcalEvents]   = useState([]);
+  const [gcalLoading, setGcalLoading] = useState(false);
+  const [tooltip, setTooltip]         = useState(null); // { ev, x, y }
+  const [webhookActive, setWebhookActive] = useState(false);
+  const nowRef           = useRef(null);
+  const touchStartX      = useRef(null);
+  const lastChangeToken  = useRef(null); // last seen changeToken from check_calendar_sync
 
   const googleConnected = calendarStatus?.google?.connected;
-  // Keep a ref to weekOffset so the visibility handler can always read the latest value
+  const icsConnected    = calendarStatus?.ics?.connected;
+  const anyCalConnected = googleConnected || icsConnected;
+
+  // Keep a ref to weekOffset so the visibility handler and poll interval always read the latest value
   const weekOffsetRef = useRef(weekOffset);
   useEffect(() => { weekOffsetRef.current = weekOffset; }, [weekOffset]);
 
@@ -36,6 +63,14 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
+
+  // Close tooltip when clicking outside of it
+  useEffect(() => {
+    if (!tooltip) return;
+    const close = (e) => { if (!e.target.closest('.cv-tooltip')) setTooltip(null); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [tooltip]);
 
   /* ── Week dates (derived from weekOffset) ── */
   const todayBase = new Date();
@@ -65,8 +100,11 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
   const mobileDayLabel   = mobileDay.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   const mobileDayIsToday = mobileDay.toDateString() === new Date().toDateString();
 
-  /* ── Fetch Google Calendar events ── */
-  // Computes the ISO range for a given weekOffset and fetches events.
+  const displayDays = isMobile
+    ? [{ date: mobileDay, name: 'Today', label: mobileDayLabel, isToday: mobileDayIsToday }]
+    : weekDays;
+
+  /* ── Fetch Google/ICS Calendar events ── */
   const fetchGcalEvents = async (offset) => {
     const base = new Date();
     base.setHours(0, 0, 0, 0);
@@ -78,40 +116,78 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
     end.setDate(mon.getDate() + 7);
     const timeMin = mon.toISOString();
     const timeMax = end.toISOString();
+    setGcalLoading(true);
     try {
       const data = await apiGet(`/api/calendar/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`);
       setGcalEvents(Array.isArray(data) ? data : []);
     } catch {
       setGcalEvents([]);
+    } finally {
+      setGcalLoading(false);
     }
   };
 
-  // Sync on mount, on week change, and when Google connection status changes
+  // Fetch on mount / week change / connection change; poll every 30 s as fallback
   useEffect(() => {
-    if (!googleConnected) { setGcalEvents([]); return; }
+    if (!anyCalConnected) { setGcalEvents([]); return; }
     fetchGcalEvents(weekOffset);
+    const id = setInterval(() => fetchGcalEvents(weekOffsetRef.current), 30_000);
+    return () => clearInterval(id);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [weekOffset, googleConnected]);
+  }, [weekOffset, anyCalConnected]);
 
-  // Re-sync whenever the user returns to this tab / page
+  // Re-sync when the user returns to this tab
   useEffect(() => {
-    if (!googleConnected) return;
+    if (!anyCalConnected) return;
     const onVisible = () => {
-      if (document.visibilityState === 'visible') {
-        fetchGcalEvents(weekOffsetRef.current);
-      }
+      if (document.visibilityState === 'visible') fetchGcalEvents(weekOffsetRef.current);
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anyCalConnected]);
+
+  // Register a Google Calendar push-notification watch channel once connected.
+  // Falls back gracefully if WEBHOOK_BASE_URL isn't configured on the backend.
+  useEffect(() => {
+    if (!googleConnected) { setWebhookActive(false); return; }
+    apiRegisterCalendarWatch()
+      .then(res => setWebhookActive(res?.status === 'registered' || res?.status === 'active'))
+      .catch(() => setWebhookActive(false));
   }, [googleConnected]);
 
-  /* ── App meetings (all confirmed/pending with a slot) ── */
+  // When webhooks are active, poll check_calendar_sync every 5 s.
+  // A changeToken change means Google fired a notification → re-fetch immediately.
+  useEffect(() => {
+    if (!webhookActive) return;
+    const id = setInterval(async () => {
+      try {
+        const { changeToken } = await apiCheckCalendarSync();
+        if (lastChangeToken.current !== null && changeToken !== lastChangeToken.current) {
+          fetchGcalEvents(weekOffsetRef.current);
+        }
+        lastChangeToken.current = changeToken;
+      } catch { /* ignore — 30 s poll is still running as fallback */ }
+    }, 5_000);
+    return () => clearInterval(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [webhookActive]);
+
+  /* ── App meetings (confirmed/pending with a booked slot) ── */
   const confirmed = meetings.filter(m =>
     (m.status === 'confirmed' || m.status === 'pending') && m.selectedSlotStart
   );
 
-  /* ── Build event list for a given day ── */
+  /* ── All-day events for a given day (Google date-only events) ── */
+  const getAllDayEvents = (dayDate) =>
+    gcalEvents.filter(ev => {
+      if (hasTime(ev.start)) return false;
+      const evStart = new Date(ev.start + 'T00:00:00');
+      const evEnd   = ev.end ? new Date(ev.end + 'T00:00:00') : new Date(evStart.getTime() + 86_400_000);
+      return evStart <= dayDate && evEnd > dayDate;
+    });
+
+  /* ── Timed events (with overlap column assignments) for a given day ── */
   const getEvents = (dayDate) => {
     const appEvents = confirmed
       .filter(m => new Date(m.selectedSlotStart).toDateString() === dayDate.toDateString())
@@ -138,36 +214,41 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
       })
       .filter(e => e.visible);
 
-    // Google Calendar events — skip all-day events (no time component)
     const gEvents = gcalEvents
       .filter(ev => hasTime(ev.start))
       .filter(ev => new Date(ev.start).toDateString() === dayDate.toDateString())
       .map(ev => {
         const start = new Date(ev.start);
-        const end   = ev.end && hasTime(ev.end) ? new Date(ev.end) : new Date(start.getTime() + 60 * 60 * 1000);
+        const end   = ev.end && hasTime(ev.end) ? new Date(ev.end) : new Date(start.getTime() + 3_600_000);
         const h    = start.getHours() + start.getMinutes() / 60;
         const endH = end.getHours()   + end.getMinutes()   / 60;
-        // If event spans midnight, cap at HOUR_END
-        const effectiveEnd   = endH <= h ? HOUR_END : endH;
-        const clampedStart   = Math.max(h, HOUR_START);
-        const clampedEnd     = Math.min(effectiveEnd, HOUR_END);
+        const effectiveEnd = endH <= h ? HOUR_END : endH;
+        const clampedStart = Math.max(h, HOUR_START);
+        const clampedEnd   = Math.min(effectiveEnd, HOUR_END);
         return {
-          _id:       `gcal-${ev.start}-${ev.summary}`,
-          _type:     'gcal',
-          _startH:   h,
-          _endH:     effectiveEnd,
-          topPct:    ((clampedStart - HOUR_START) / TOTAL_HOURS) * 100,
-          heightPct: ((clampedEnd - clampedStart) / TOTAL_HOURS) * 100,
-          startStr:  start.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-          title:     ev.summary || 'Busy',
-          visible:   clampedEnd > clampedStart,
+          _id:         `gcal-${ev.id || ev.start}-${ev.summary}`,
+          _type:       'gcal',
+          _startH:     h,
+          _endH:       effectiveEnd,
+          topPct:      ((clampedStart - HOUR_START) / TOTAL_HOURS) * 100,
+          heightPct:   ((clampedEnd - clampedStart) / TOTAL_HOURS) * 100,
+          startStr:    start.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+          endStr:      end.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+          title:       ev.summary || 'Busy',
+          description: ev.description || '',
+          location:    ev.location || '',
+          colorId:     ev.colorId || '',
+          attendees:   ev.attendees || [],
+          htmlLink:    ev.htmlLink || '',
+          source:      ev.source || 'google',
+          visible:     clampedEnd > clampedStart,
         };
       })
       .filter(e => e.visible);
 
     const raw = [...appEvents, ...gEvents];
 
-    // Overlap detection → assign column indices
+    // Assign overlap columns
     const overlaps = (a, b) => a._startH < b._endH && b._startH < a._endH;
     const assigned = raw.map(() => ({ colIndex: 0, totalCols: 1 }));
     for (let i = 0; i < raw.length; i++) {
@@ -177,11 +258,10 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
         assigned[raw.indexOf(ev)] = { colIndex: ci, totalCols: cluster.length };
       });
     }
-
     return raw.map((ev, i) => ({ ...ev, ...assigned[i] }));
   };
 
-  /* ── Now line ── */
+  /* ── Now indicator ── */
   const now       = new Date();
   const nowHour   = now.getHours() + now.getMinutes() / 60;
   const nowTopPct = ((nowHour - HOUR_START) / TOTAL_HOURS) * 100;
@@ -193,9 +273,62 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
 
   const thisWeekHasEvents = confirmed.some(m =>
     weekDays.some(day => new Date(m.selectedSlotStart).toDateString() === day.date.toDateString())
-  ) || gcalEvents.some(ev =>
-    hasTime(ev.start) && weekDays.some(day => new Date(ev.start).toDateString() === day.date.toDateString())
+  ) || gcalEvents.some(ev => {
+    if (hasTime(ev.start)) {
+      return weekDays.some(day => new Date(ev.start).toDateString() === day.date.toDateString());
+    }
+    return weekDays.some(day => {
+      const evStart = new Date(ev.start + 'T00:00:00');
+      const evEnd   = ev.end ? new Date(ev.end + 'T00:00:00') : new Date(evStart.getTime() + 86_400_000);
+      return evStart <= day.date && evEnd > day.date;
+    });
+  });
+
+  const showAllDayStrip = gcalEvents.some(ev =>
+    !hasTime(ev.start) &&
+    displayDays.some(day => {
+      const evStart = new Date(ev.start + 'T00:00:00');
+      const evEnd   = ev.end ? new Date(ev.end + 'T00:00:00') : new Date(evStart.getTime() + 86_400_000);
+      return evStart <= day.date && evEnd > day.date;
+    })
   );
+
+  /* ── Tooltip renderer ── */
+  const renderTooltip = () => {
+    if (!tooltip) return null;
+    const ev = tooltip.ev;
+    const colors = gcalColor(ev);
+    const sourceLabel = ev.source === 'ics' ? 'ICS Calendar' : 'Google Calendar';
+    const tooltipLeft = Math.min(tooltip.x, window.innerWidth - 310);
+    const tooltipTop  = Math.min(tooltip.y, window.innerHeight - 260);
+    return (
+      <div className="cv-tooltip" style={{ top: tooltipTop, left: tooltipLeft }}>
+        <div className="cv-tt-title" style={{ borderLeft: `3px solid ${colors.border}`, paddingLeft: 8 }}>
+          {ev.title}
+        </div>
+        <div className="cv-tt-row">
+          🕐 {ev.startStr}{ev.endStr ? ` – ${ev.endStr}` : ''}
+        </div>
+        {ev.location && <div className="cv-tt-row">📍 {ev.location}</div>}
+        {ev.description && (
+          <div className="cv-tt-row cv-tt-desc">
+            {ev.description.length > 120 ? ev.description.slice(0, 120) + '…' : ev.description}
+          </div>
+        )}
+        {ev.attendees?.length > 0 && (
+          <div className="cv-tt-row">
+            👥 {ev.attendees.slice(0, 3).join(', ')}{ev.attendees.length > 3 ? ` +${ev.attendees.length - 3} more` : ''}
+          </div>
+        )}
+        <div className="cv-tt-role">{sourceLabel}</div>
+        {ev.htmlLink && (
+          <a className="cv-tt-link" href={ev.htmlLink} target="_blank" rel="noreferrer">
+            Open in Google Calendar ↗
+          </a>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="cv-wrap">
@@ -208,7 +341,32 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
           <button className="cv-btn" onClick={() => isMobile ? setDayOffset(d => d + 1) : setWeekOffset(w => w + 1)}>Next ›</button>
         </div>
         <span className="cv-week-label">{isMobile ? mobileDayLabel : weekLabel}</span>
+        {gcalLoading && <span className="cv-sync-indicator">⟳ Syncing…</span>}
       </div>
+
+      {/* ── All-day events strip (shown only when there are all-day events in view) ── */}
+      {showAllDayStrip && (
+        <div className="cv-allday-strip">
+          <div className="cv-allday-gutter" />
+          {displayDays.map(day => (
+            <div key={day.name} className="cv-allday-cell">
+              {getAllDayEvents(day.date).map(ev => {
+                const colors = gcalColor(ev);
+                return (
+                  <div
+                    key={`allday-${ev.id || ev.start}-${ev.summary}`}
+                    className="cv-allday-chip"
+                    style={{ background: colors.bg, borderLeft: `3px solid ${colors.border}`, color: colors.text }}
+                    title={ev.summary || 'All day'}
+                  >
+                    {ev.summary || 'All day'}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* ── Scrollable grid ── */}
       <div
@@ -234,10 +392,7 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
           </div>
 
           {/* Day columns */}
-          {(isMobile
-            ? [{ date: mobileDay, name: 'Today', label: mobileDayLabel, isToday: mobileDayIsToday }]
-            : weekDays
-          ).map(day => (
+          {displayDays.map(day => (
             <div key={day.name} className="cv-day-col">
               <div className={`cv-day-header ${day.isToday ? 'today' : ''}`}>
                 <span className="cv-day-name">{day.name}</span>
@@ -252,6 +407,7 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
                 onClick={(e) => {
                   if (!onCreateAt) return;
                   if (e.target.classList.contains('cv-event') || e.target.classList.contains('cv-ev-title') || e.target.classList.contains('cv-ev-time')) return;
+                  setTooltip(null);
                   const rect = e.currentTarget.getBoundingClientRect();
                   const hourFrac = ((e.clientY - rect.top) / rect.height) * TOTAL_HOURS + HOUR_START;
                   const snapped  = Math.floor(hourFrac * 2) / 2;
@@ -271,7 +427,7 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
                 {getEvents(day.date).map(ev => {
                   const isGcal    = ev._type === 'gcal';
                   const isPending = !isGcal && ev.status === 'pending';
-                  const colors    = isGcal ? GCAL_COLOR : isPending ? PENDING_COLOR : (ROLE_COLOR[ev.userRole] || ROLE_COLOR.organizer);
+                  const colors    = isGcal ? gcalColor(ev) : isPending ? PENDING_COLOR : (ROLE_COLOR[ev.userRole] || ROLE_COLOR.organizer);
                   const colW      = 100 / ev.totalCols;
                   return (
                     <div
@@ -285,9 +441,21 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
                         background: colors.bg,
                         borderLeft: `3px solid ${colors.border}`,
                         color:      colors.text,
-                        cursor:     isGcal ? 'default' : 'pointer',
+                        cursor:     'pointer',
                       }}
-                      onClick={(e) => { e.stopPropagation(); if (!isGcal) onMeetingClick?.(ev.meeting); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (isGcal) {
+                          setTooltip(prev =>
+                            prev?.ev._id === ev._id
+                              ? null
+                              : { ev, x: e.clientX + 12, y: e.clientY - 10 }
+                          );
+                        } else {
+                          setTooltip(null);
+                          onMeetingClick?.(ev.meeting);
+                        }
+                      }}
                     >
                       <span className="cv-ev-title">{ev.title}</span>
                       {ev.heightPct > 3 && <span className="cv-ev-time">{ev.startStr}</span>}
@@ -299,6 +467,9 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
           ))}
         </div>
       </div>
+
+      {/* ── Tooltip (fixed, click-triggered) ── */}
+      {renderTooltip()}
 
       {/* ── Empty state ── */}
       {confirmed.length === 0 && gcalEvents.length === 0 && (

@@ -80,12 +80,37 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
 # REST API endpoints (secondary path — JWT authorizer on API Gateway)
 # ---------------------------------------------------------------------------
 
-from src.database.repository import MeetingRepository, UserRepository
+from src.database.repository import MeetingRepository, UserRepository, CalendarRepository as _CalendarRepo
+
+_wh_cal_repo = _CalendarRepo()
 from src.handlers.api import meetings as _mtg_handlers
 from src.handlers.api import profile as _prf_handlers
 
 _user_repo = UserRepository()
 _meeting_repo = MeetingRepository()
+
+
+@app.post("/webhook/google-calendar")
+async def google_calendar_webhook(request: Request):
+    """
+    Public endpoint — no JWT required. Receives push notifications from Google
+    Calendar and bumps the user's changeToken so the frontend's sync poll detects
+    the change within ~5 s and re-fetches events.
+    """
+    resource_state = request.headers.get("X-Goog-Resource-State", "")
+    channel_id     = request.headers.get("X-Goog-Channel-ID", "")
+
+    # Google sends an initial "sync" notification when the watch is first registered.
+    # Just acknowledge it — there are no actual changes yet.
+    if resource_state == "sync":
+        return {"status": "ok"}
+
+    if channel_id:
+        user_id = _wh_cal_repo.get_user_id_by_channel(channel_id)
+        if user_id:
+            _wh_cal_repo.bump_change_token(user_id)
+
+    return {"status": "ok"}
 
 
 @app.get("/api/profile", response_model=dict)
