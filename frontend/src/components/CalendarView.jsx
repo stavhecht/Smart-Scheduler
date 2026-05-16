@@ -113,7 +113,7 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
     };
   });
 
-  const weekLabel = `${weekDays[0].date.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} – ${weekDays[6].date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`;
+  const weekLabel = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).formatRange(weekDays[0].date, weekDays[6].date);
 
   /* ── Mobile single-day ── */
   const mobileDay = new Date();
