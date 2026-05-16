@@ -76,7 +76,9 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
     return () => document.removeEventListener('mousedown', close);
   }, [tooltip]);
 
-  // Keep tooltip pinned next to its event element while the page scrolls
+  // Keep tooltip pinned next to its event element while the page scrolls.
+  // scroll events don't bubble, so capture:true on document catches scrolling
+  // in any container (e.g. .main-content with overflow-y:auto).
   useEffect(() => {
     if (!tooltip) return;
     const TW = 306, TH = 260, GAP = 10;
@@ -89,8 +91,8 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
       tooltipDomRef.current.style.top  = `${top}px`;
       tooltipDomRef.current.style.left = `${left}px`;
     };
-    window.addEventListener('scroll', reposition, { passive: true });
-    return () => window.removeEventListener('scroll', reposition);
+    document.addEventListener('scroll', reposition, { passive: true, capture: true });
+    return () => document.removeEventListener('scroll', reposition, { capture: true });
   }, [tooltip]);
 
   /* ── Week dates (derived from weekOffset) ── */
