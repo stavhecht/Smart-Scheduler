@@ -245,7 +245,8 @@ function AppContent() {
 
   /* Badge counts */
   const needsAction = meetings.filter(
-    m => m.userRole === 'participant' && m.status === 'confirmed' &&
+    m => m.userRole === 'participant' &&
+         (m.status === 'confirmed' || m.status === 'pending') &&
          !(m.acceptedBy || []).includes(profile?.id)
   ).length;
   const meetingsBadge = (meetings.filter(m => m.status === 'pending' && m.userRole === 'organizer').length + needsAction) || null;
