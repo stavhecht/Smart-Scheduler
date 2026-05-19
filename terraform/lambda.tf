@@ -18,8 +18,8 @@ resource "aws_lambda_function" "api_handler" {
       FRONTEND_URL   = var.frontend_url
       GOOGLE_CLIENT_ID     = var.google_client_id
       GOOGLE_CLIENT_SECRET = var.google_client_secret
-      MICROSOFT_CLIENT_ID  = var.microsoft_client_id
-      MICROSOFT_CLIENT_SECRET = var.microsoft_client_secret
+      OPENAI_API_KEY       = var.openai_api_key
+      WEBHOOK_BASE_URL     = aws_apigatewayv2_api.api_gateway.api_endpoint
     }
   }
 
@@ -90,6 +90,13 @@ resource "aws_apigatewayv2_route" "protected" {
 resource "aws_apigatewayv2_route" "health" {
   api_id    = aws_apigatewayv2_api.api_gateway.id
   route_key = "GET /health"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+}
+
+# --- Public Route (no auth – Google Calendar push notifications) ---
+resource "aws_apigatewayv2_route" "gcal_webhook" {
+  api_id    = aws_apigatewayv2_api.api_gateway.id
+  route_key = "POST /webhook/google-calendar"
   target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
 }
 
