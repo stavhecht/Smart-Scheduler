@@ -5,35 +5,47 @@ echo "=========================================="
 
 cd "$(dirname "$0")"
 
-# Load .env variables
+export PATH="/Applications/Docker.app/Contents/Resources/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+
+# Load .env so variables are available to this script too
 if [ -f .env ]; then
-    set -a
-    source .env
-    set +a
+    set -a; source .env; set +a
     echo "Loaded .env"
 else
-    echo "Warning: .env not found — backend may be missing credentials"
+    echo "Warning: .env not found"
 fi
 
-# Override for local dev
 export ENVIRONMENT=development
 export FRONTEND_URL=http://localhost:5173
 
-# Start backend with uvicorn in background
-echo "[1/2] Starting Backend (uvicorn)..."
-cd backend/api
-uvicorn main:app --reload --port 8000 &
-BACKEND_PID=$!
-cd ../..
+# Determine docker compose command
+if docker compose version >/dev/null 2>&1; then
+    DOCKER_COMPOSE_CMD="docker compose"
+elif command -v docker-compose >/dev/null 2>&1; then
+    DOCKER_COMPOSE_CMD="docker-compose"
+else
+    echo "Error: Docker not found. Please install Docker Desktop."
+    exit 1
+fi
+
+# Ensure Docker is running
+if ! docker info >/dev/null 2>&1; then
+    echo "Starting Docker Desktop..."
+    open -a Docker
+    count=0
+    while ! docker info >/dev/null 2>&1; do
+        sleep 5; count=$((count+1))
+        echo "Waiting for Docker... ($count/20)"
+        [ $count -ge 20 ] && echo "Timed out." && exit 1
+    done
+    echo "Docker is up!"
+fi
+
+echo "[1/2] Starting Backend (Docker)..."
+$DOCKER_COMPOSE_CMD down
+$DOCKER_COMPOSE_CMD up --build -d api
 
 echo "[2/2] Starting Frontend (Vite)..."
 cd frontend
-if [ ! -d "node_modules" ]; then
-    echo "Installing frontend dependencies..."
-    npm install
-fi
-
+[ ! -d "node_modules" ] && npm install
 npm run dev
-
-# Kill backend when frontend exits
-kill $BACKEND_PID 2>/dev/null

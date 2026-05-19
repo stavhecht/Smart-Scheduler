@@ -141,12 +141,13 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
     if (!editModal) return;
     setLoading(true);
     try {
-      await apiPost(`/api/meetings/${editModal.requestId}/edit`, {
+      const result = await apiPost(`/api/meetings/${editModal.requestId}/edit`, {
         title: editModal.title,
         description: editModal.description ?? '',
         durationMinutes: Number(editModal.durationMinutes),
+        daysForward: Number(editModal.daysForward),
       });
-      notify('Meeting updated!', 'success');
+      notify(result?.slotsRegenerated ? 'Meeting updated — regenerating slots…' : 'Meeting updated!', 'success');
       setEditModal(null);
       onRefresh();
     } catch {
@@ -356,6 +357,21 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
                 </div>
               </div>
               <div className="form-group">
+                <label>Scheduling Horizon</label>
+                <div className="dur-pills">
+                  {[{ label: '3 days', value: 3 }, { label: '1 week', value: 7 }, { label: '2 weeks', value: 14 }, { label: '1 month', value: 30 }].map(opt => (
+                    <button
+                      key={opt.value} type="button"
+                      className={`dur-pill ${editModal.daysForward === opt.value ? 'active' : ''}`}
+                      onClick={() => setEditModal({ ...editModal, daysForward: opt.value })}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                {editModal.isPending && <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)', margin: '0.3rem 0 0' }}>Changing duration or horizon will regenerate slots.</p>}
+              </div>
+              <div className="form-group">
                 <label>Agenda / Notes</label>
                 <textarea
                   rows={3}
@@ -511,9 +527,9 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
                 onToggle={() => toggle(m.requestId)}
                 onAccept={() => {}}
                 onBook={handleBook}
-                onEdit={() => setEditModal({ requestId: m.requestId, title: m.title, durationMinutes: m.durationMinutes, description: m.description || '' })}
+                onEdit={() => setEditModal({ requestId: m.requestId, title: m.title, durationMinutes: m.durationMinutes, description: m.description || '', daysForward: m.daysForward || 7, isPending: m.status === 'pending' })}
                 onCancel={() => setCancelConfirmId(m.requestId)}
-                onReschedule={m.status === 'confirmed' ? () => setRescheduleConfirmId(m.requestId) : null}
+                onReschedule={() => setRescheduleConfirmId(m.requestId)}
                 fmtDate={fmtDate}
                 fmtTime={fmtTime}
                 fmtFull={fmtFull}

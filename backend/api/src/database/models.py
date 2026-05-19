@@ -97,6 +97,7 @@ class MeetingEditSchema(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     durationMinutes: Optional[int] = None
+    daysForward: Optional[int] = Field(default=None, ge=1, le=90)
 
 
 class SuggestedTimeSlot(BaseDBModel):

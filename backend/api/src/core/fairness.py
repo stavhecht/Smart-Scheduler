@@ -242,7 +242,7 @@ class FairnessEngine:
         now_utc = datetime.utcnow()
         current = date_start.replace(hour=9, minute=0, second=0, microsecond=0)
 
-        while current <= date_end and len(slots) < 12:
+        while current <= date_end:
             if current.weekday() in allowed_days:
                 for local_hour in hours:
                     # Convert local hour → UTC hour for the stored slot
