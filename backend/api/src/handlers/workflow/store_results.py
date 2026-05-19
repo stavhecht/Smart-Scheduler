@@ -8,11 +8,13 @@ from scored_slots.
 Input:  payload with request_id, scored_slots, and optionally final_slots
 Output: adds stored_slots_count
 """
+import logging
 from datetime import datetime
 
 from src.database import models
 from src.database.repository import MeetingRepository
 
+logger = logging.getLogger(__name__)
 _meeting_repo = MeetingRepository()
 
 
@@ -27,6 +29,7 @@ def handler(payload: dict) -> dict:
     except Exception:
         days_forward = 7
     slot_count = min(30, max(8, days_forward * 3))
+    logger.info(f"store_results: scored={len(scored_slots)} days_forward={days_forward} slot_count={slot_count} has_final={'final_slots' in payload}")
     best_slots = (
         payload["final_slots"]
         if "final_slots" in payload
