@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
-import { apiGet, apiPost } from '../apiClient';
+import { apiGet } from '../apiClient';
 import { Users, Copy, Check, CalendarPlus, Search } from 'lucide-react';
-import { useToast } from '../context/ToastContext.jsx';
 import './PeopleView.css';
 
 const getInitials = (name) =>
@@ -13,14 +12,11 @@ const getScoreColor = (score) =>
 const APP_URL = 'https://main.d1omo55pxwqk6g.amplifyapp.com';
 
 export default function PeopleView({ meetings, onScheduleWith, onViewProfile }) {
-  const showToast = useToast();
   const [users, setUsers]           = useState([]);
   const [loading, setLoading]       = useState(true);
   const [search, setSearch]         = useState('');
   const [deptFilter, setDeptFilter] = useState('all');
   const [inviteCopied, setInviteCopied] = useState(false);
-  const [sendingKudosId, setSendingKudosId] = useState(null);
-  const [kudosSentId, setKudosSentId]   = useState(null);
 
   useEffect(() => {
     setLoading(true);
@@ -69,23 +65,6 @@ export default function PeopleView({ meetings, onScheduleWith, onViewProfile }) 
     }
     return list;
   }, [users, search, deptFilter]);
-
-  const handleKudos = async (user) => {
-    setSendingKudosId(user.id);
-    try {
-      await apiPost(`/api/profile/${user.id}/message`, {
-        content: 'Sent you some kudos! 🌟',
-        type: 'kudos',
-      });
-      showToast(`Kudos sent to ${user.name}!`, 'success');
-      setKudosSentId(user.id);
-      setTimeout(() => setKudosSentId(null), 1500);
-    } catch {
-      showToast('Failed to send kudos — please try again.', 'error');
-    } finally {
-      setSendingKudosId(null);
-    }
-  };
 
   return (
     <div className="pv-people-wrap">
@@ -210,13 +189,6 @@ export default function PeopleView({ meetings, onScheduleWith, onViewProfile }) 
                     </div>
                   </div>
                   <div className="people-card-actions">
-                    <button
-                      className="people-btn kudos-btn"
-                      onClick={() => handleKudos(u)}
-                      disabled={sendingKudosId === u.id}
-                    >
-                      {kudosSentId === u.id ? <><Check size={13} /> Sent!</> : sendingKudosId === u.id ? 'Sending…' : '★ Kudos'}
-                    </button>
                     <button
                       className="people-btn schedule-btn"
                       onClick={() => { if (onScheduleWith) onScheduleWith(u.email); }}
