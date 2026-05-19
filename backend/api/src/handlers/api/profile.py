@@ -41,7 +41,6 @@ def handle_profile(identity: dict) -> dict:
             "lunchBreak": profile.lunchBreak,
             "notificationPrefs": profile.notificationPrefs,
             "showFairnessScore": profile.showFairnessScore,
-            "allowMessages": profile.allowMessages,
             "fairness_score": float(fairness.fairnessScore) if fairness else 100.0,
             "details": {
                 "meetings_this_week": metrics.get("meetings_this_week", 0),
@@ -70,38 +69,6 @@ def handle_update_profile(identity: dict, data: str | None) -> dict:
         updates = json.loads(data)
         updated = _user_repo.update_profile(identity["user_id"], updates)
         return {"status": "success", "profile": updated.model_dump(mode="json")}
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-
-
-def handle_get_messages(identity: dict) -> list:
-    try:
-        msgs = _user_repo.get_messages(identity["user_id"])
-        return [m.model_dump(mode="json") for m in msgs]
-    except Exception:
-        return []
-
-
-def handle_mark_messages_read(identity: dict) -> dict:
-    try:
-        _user_repo.mark_messages_read(identity["user_id"])
-        return {"status": "success"}
-    except Exception:
-        return {"status": "error"}
-
-
-def handle_send_message(identity: dict, action: str, data: str | None) -> dict:
-    to_uid = action.split(":", 1)[1]
-    if not data:
-        raise HTTPException(status_code=400, detail="Missing message content")
-    try:
-        payload = json.loads(data)
-        msg = _user_repo.send_message(
-            identity["user_id"], to_uid,
-            payload.get("content", ""),
-            payload.get("type", "general"),
-        )
-        return {"status": "success", "messageId": msg.messageId}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 

@@ -46,7 +46,7 @@ def run_simulation(
     tz_offset = get_tz_offset_hours(creator_tz)
 
     participant_tz_offsets = [get_tz_offset_hours(p.get("timezone", "UTC")) for p in participant_profiles] or None
-    participant_working_days = [p.get("workingDays", [0, 1, 2, 3, 4]) for p in participant_profiles] or None
+    participant_working_days = [p.get("workingDays", list(range(7))) for p in participant_profiles] or None
     participant_lunch_breaks = [p.get("lunchBreak") for p in participant_profiles] or None
 
     wh_list = get_working_hours_list(participant_profiles)
@@ -110,7 +110,9 @@ def run_simulation(
         end_dt = slot_dt + timedelta(minutes=meeting.durationMinutes)
         all_scored.append({"startIso": slot_dt.isoformat() + "Z", "endIso": end_dt.isoformat() + "Z", **result})
 
-    best_slots = engine.reshuffle(all_scored) if engine.needs_optimization(all_scored) else engine.select_best_slots(all_scored, count=8)
+    days_forward = max(1, (meeting.dateRangeEnd - meeting.dateRangeStart).days)
+    slot_count = min(30, max(8, days_forward * 3))
+    best_slots = engine.reshuffle(all_scored, count=slot_count) if engine.needs_optimization(all_scored) else engine.select_best_slots(all_scored, count=slot_count)
 
     for slot_data in best_slots:
         slot = models.SuggestedTimeSlot(

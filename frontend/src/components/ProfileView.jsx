@@ -17,7 +17,6 @@ function extractPrefs(p) {
     lunchBreak: p.lunchBreak || { start: '12:00', duration: 60 },
     notificationPrefs: p.notificationPrefs || { invites: true, reminders: true, digest: false },
     showFairnessScore: p.showFairnessScore ?? true,
-    allowMessages: p.allowMessages ?? true,
   };
 }
 
@@ -757,14 +756,6 @@ export default function ProfileView({
                 on={prefsDraft.showFairnessScore ?? true}
                 onChange={v => { setPrefsDraft(d => ({ ...d, showFairnessScore: v })); }}
               />
-              <div style={{ borderBottom: 'none' }}>
-                <PrefRow
-                  label="Allow messages"
-                  desc="Allow other users to send you kudos and nudges"
-                  on={prefsDraft.allowMessages ?? true}
-                  onChange={v => { setPrefsDraft(d => ({ ...d, allowMessages: v })); }}
-                />
-              </div>
             </div>
           </div>
 

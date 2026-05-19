@@ -359,7 +359,7 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
               <div className="form-group">
                 <label>Scheduling Horizon</label>
                 <div className="dur-pills">
-                  {[{ label: '3 days', value: 3 }, { label: '1 week', value: 7 }, { label: '2 weeks', value: 14 }, { label: '1 month', value: 30 }].map(opt => (
+                  {[{ label: '3 days', value: 3 }, { label: '1 week', value: 7 }, { label: '2 weeks', value: 14 }].map(opt => (
                     <button
                       key={opt.value} type="button"
                       className={`dur-pill ${editModal.daysForward === opt.value ? 'active' : ''}`}

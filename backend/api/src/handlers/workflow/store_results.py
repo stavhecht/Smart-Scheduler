@@ -21,10 +21,16 @@ def handler(payload: dict) -> dict:
     scored_slots = payload.get("scored_slots", [])
 
     from src.core.fairness import engine
+    from datetime import datetime as _dt
+    try:
+        days_forward = max(1, (_dt.fromisoformat(payload["date_range_end"]) - _dt.fromisoformat(payload["date_range_start"])).days)
+    except Exception:
+        days_forward = 7
+    slot_count = min(30, max(8, days_forward * 3))
     best_slots = (
         payload["final_slots"]
         if "final_slots" in payload
-        else engine.select_best_slots(scored_slots, count=8)
+        else engine.select_best_slots(scored_slots, count=slot_count)
     )
 
     for slot_data in best_slots:

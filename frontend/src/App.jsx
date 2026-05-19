@@ -33,7 +33,6 @@ function AppContent() {
   const [retryCount, setRetryCount]       = useState(0);
   const [targetProfile, setTargetProfile] = useState(null); // for viewing other user profiles
   const [sidebarOpen, setSidebarOpen]     = useState(false);
-  const [unreadCount, setUnreadCount]     = useState(0);
   const [theme, setTheme]                 = useState(() => localStorage.getItem('theme') || 'dark');
   const [meetingPrefill, setMeetingPrefill] = useState(null); // email string to prefill
   const [showGlobalCreate, setShowGlobalCreate] = useState(false); // global create modal (from calendar / people / ⌘K)
@@ -439,8 +438,6 @@ function AppContent() {
                   onCalendarConnect={handleCalendarConnect}
                   onCalendarDisconnect={handleCalendarDisconnect}
                   onProfileUpdate={setProfile}
-                  onUnreadCountChange={setUnreadCount}
-                  unreadCount={unreadCount}
                   initialTab={location.state?.initialTab}
                 />
               </div>
