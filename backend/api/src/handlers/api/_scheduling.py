@@ -47,8 +47,7 @@ def run_or_schedule(
     or runs the scheduling pipeline in-process (local / fallback).
     """
     account_id = os.environ.get("AWS_ACCOUNT_ID", "")
-    if not account_id:
-        # Local dev: run the full simulation in-process
+    if not account_id or os.environ.get("ENVIRONMENT") == "development":
         from src.handlers.api._local_sim import run_simulation
         return run_simulation(meeting_data, user_id)
 
