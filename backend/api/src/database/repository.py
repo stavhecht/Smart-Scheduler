@@ -386,6 +386,7 @@ class MeetingRepository:
         title: Optional[str] = None,
         duration_minutes: Optional[int] = None,
         description: Optional[str] = None,
+        days_forward: Optional[int] = None,
     ) -> Optional[dict]:
         meeting = self.get_meta(request_id)
         if not meeting:
@@ -400,6 +401,9 @@ class MeetingRepository:
         if description is not None and description != meeting.get("description", ""):
             changes["description"] = {"from": meeting.get("description", ""), "to": description}
             meeting["description"] = description
+        if days_forward is not None and days_forward != meeting.get("daysForward", 7):
+            changes["daysForward"] = {"from": meeting.get("daysForward", 7), "to": days_forward}
+            meeting["daysForward"] = days_forward
         if not changes:
             return meeting
         meeting["updatedAt"] = datetime.now().isoformat()
