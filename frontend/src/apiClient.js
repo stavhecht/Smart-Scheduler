@@ -91,8 +91,6 @@ export async function apiGet(path) {
     const oauthUrlMatch = path.match(/^\/api\/calendar\/oauth_url\?provider=(.+)$/);
     if (oauthUrlMatch) return apiProxy(`oauth_url:${oauthUrlMatch[1]}`);
 
-    if (path === '/api/profile/messages') return apiProxy('get_messages');
-
     if (path === '/api/profile/stats') return apiProxy('profile_stats');
 
     if (path === '/api/activity') return apiProxy('activity_feed');
@@ -146,10 +144,6 @@ export async function apiPost(path, body) {
     // /api/profile/update
     if (path === '/api/profile/update') return apiProxy('update_profile', body);
 
-    // /api/profile/<userId>/message
-    const messageMatch = path.match(/^\/api\/profile\/([^/]+)\/message$/);
-    if (messageMatch) return apiProxy(`send_message:${messageMatch[1]}`, body);
-
     return apiProxy(path, body);
 }
 
@@ -161,11 +155,6 @@ export async function apiScoreSlot(startIso, durationMinutes, participantIds = [
 /** Save (or clear) the user's .ics calendar feed URL. */
 export async function apiUpdateIcsUrl(icsUrl) {
     return apiProxy('update_ics_url', { icsUrl });
-}
-
-/** Mark all messages in the current user's inbox as read. */
-export async function apiMarkMessagesRead() {
-    return apiProxy('mark_messages_read');
 }
 
 /** Register (or renew) a Google Calendar push-notification watch channel. */

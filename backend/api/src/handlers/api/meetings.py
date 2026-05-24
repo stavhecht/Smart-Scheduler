@@ -181,12 +181,35 @@ def handle_edit(identity: dict, action: str, data: str | None) -> dict:
         raise HTTPException(status_code=403, detail="Only the organizer can edit a meeting")
     if meeting.get("status") == "cancelled":
         raise HTTPException(status_code=400, detail="Cannot edit a cancelled meeting")
+
+    duration_changed = payload.durationMinutes is not None and payload.durationMinutes != meeting.get("durationMinutes")
+    horizon_changed = payload.daysForward is not None and payload.daysForward != meeting.get("daysForward", 7)
+    needs_regen = (duration_changed or horizon_changed) and meeting.get("status") == "pending"
+
+    if payload.daysForward is not None:
+        meeting["daysForward"] = payload.daysForward
+
     updated = _meeting_repo.edit(
         request_id, user_id,
         title=payload.title,
         duration_minutes=payload.durationMinutes,
         description=payload.description,
+        days_forward=payload.daysForward,
     )
+
+    if needs_regen and updated:
+        days_forward = updated.get("daysForward", 7)
+        now = datetime.now()
+        updated.update({
+            "dateRangeStart": now.isoformat(),
+            "dateRangeEnd": (now + timedelta(days=days_forward)).isoformat(),
+        })
+        _meeting_repo.update_meta(request_id, updated)
+        _meeting_repo.delete_slots(request_id)
+        from src.handlers.api._scheduling import build_reschedule_payload, run_local_steps
+        sched_payload = build_reschedule_payload(updated, user_id, request_id, days_forward)
+        run_local_steps(sched_payload)
+
     if updated and updated.get("status") == "confirmed":
         external_ids = updated.get("externalEventIds") or {}
         if external_ids:
@@ -202,7 +225,7 @@ def handle_edit(identity: dict, action: str, data: str | None) -> dict:
                     )
             except Exception:
                 pass
-    return {"status": "success", "meeting": updated}
+    return {"status": "success", "meeting": updated, "slotsRegenerated": needs_regen}
 
 
 def handle_book_custom(identity: dict, action: str, data: str | None) -> dict:

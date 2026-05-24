@@ -237,12 +237,12 @@ class FairnessEngine:
                        the class default WORKING_HOURS.
         """
         hours = working_hours if working_hours else self.WORKING_HOURS
-        allowed_days = set(working_days) if working_days else set(range(5))  # default Mon–Fri
+        allowed_days = set(working_days) if working_days is not None else set(range(7))
         slots: List[datetime] = []
         now_utc = datetime.utcnow()
         current = date_start.replace(hour=9, minute=0, second=0, microsecond=0)
 
-        while current <= date_end and len(slots) < 12:
+        while current.date() <= date_end.date():
             if current.weekday() in allowed_days:
                 for local_hour in hours:
                     # Convert local hour → UTC hour for the stored slot
@@ -304,16 +304,15 @@ class FairnessEngine:
         avg = sum(s['score'] for s in scored_slots) / len(scored_slots)
         return avg < self.OPTIMIZATION_THRESHOLD
 
-    def reshuffle(self, all_scored_slots: List[dict]) -> List[dict]:
+    def reshuffle(self, all_scored_slots: List[dict], count: int = 8) -> List[dict]:
         """
         Dynamic Reshuffling Engine:
         Filters out low-quality slots and re-selects the best available options.
         Called when the initial selection average score is below the threshold.
         """
-        # Filter: keep only viable candidates (score >= 60)
         viable = [s for s in all_scored_slots if s['score'] >= 60]
-        pool = viable if viable else all_scored_slots  # Fallback to full pool
-        return self.select_best_slots(pool, count=8)
+        pool = viable if viable else all_scored_slots
+        return self.select_best_slots(pool, count=count)
 
     # ---------------------------------------------------------------------------
     # Fairness score update on booking

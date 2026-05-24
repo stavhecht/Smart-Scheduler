@@ -3,64 +3,49 @@ echo "=========================================="
 echo "      Smart Scheduler - Dev Starter"
 echo "=========================================="
 
-# Ensure we are in the script's directory
 cd "$(dirname "$0")"
 
-# Ensure docker and npm are in path for Mac local environments
 export PATH="/Applications/Docker.app/Contents/Resources/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
 
-# 1. Determine which docker compose command to use
+# Load .env so variables are available to this script too
+if [ -f .env ]; then
+    set -a; source .env; set +a
+    echo "Loaded .env"
+else
+    echo "Warning: .env not found"
+fi
+
+export ENVIRONMENT=development
+export FRONTEND_URL=http://localhost:5173
+
+# Determine docker compose command
 if docker compose version >/dev/null 2>&1; then
     DOCKER_COMPOSE_CMD="docker compose"
 elif command -v docker-compose >/dev/null 2>&1; then
     DOCKER_COMPOSE_CMD="docker-compose"
 else
-    echo "Error: Neither 'docker compose' nor 'docker-compose' found."
-    echo "Please install Docker Desktop."
+    echo "Error: Docker not found. Please install Docker Desktop."
     exit 1
 fi
 
-echo "Using: $DOCKER_COMPOSE_CMD"
-
-# 2. Check if Docker is running
+# Ensure Docker is running
 if ! docker info >/dev/null 2>&1; then
-    echo "Docker is not running. Attempting to start Docker Desktop..."
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        open -a Docker
-    else
-        echo "Please start Docker manually and run this script again."
-        exit 1
-    fi
-    
-    echo "Waiting for Docker to start... (this may take a minute)"
-    # Wait loop
+    echo "Starting Docker Desktop..."
+    open -a Docker
     count=0
     while ! docker info >/dev/null 2>&1; do
-        sleep 5
-        count=$((count+1))
+        sleep 5; count=$((count+1))
         echo "Waiting for Docker... ($count/20)"
-        if [ $count -ge 20 ]; then
-            echo "Timed out waiting for Docker to respond. Please start it manually and try again."
-            exit 1
-        fi
+        [ $count -ge 20 ] && echo "Timed out." && exit 1
     done
-    echo "Docker is up and running!"
+    echo "Docker is up!"
 fi
 
-echo "[1/3] Stopping old containers..."
+echo "[1/2] Starting Backend (Docker)..."
 $DOCKER_COMPOSE_CMD down
-
-echo "[2/3] Starting Backend (Docker)..."
-# Start backend in detached mode (-d)
 $DOCKER_COMPOSE_CMD up --build -d api
 
-echo "[3/3] Starting Frontend (Vite)..."
+echo "[2/2] Starting Frontend (Vite)..."
 cd frontend
-# Ensure dependencies are installed
-if [ ! -d "node_modules" ]; then
-    echo "Installing frontend dependencies..."
-    npm install
-fi
-
-# Run the frontend
+[ ! -d "node_modules" ] && npm install
 npm run dev

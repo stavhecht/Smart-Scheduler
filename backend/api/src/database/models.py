@@ -53,7 +53,6 @@ class UserProfile(BaseDBModel):
         default_factory=lambda: {"invites": True, "reminders": True, "digest": False}
     )
     showFairnessScore: bool = True
-    allowMessages: bool = True
     createdAt: datetime = Field(default_factory=datetime.now)
 
 
@@ -97,6 +96,7 @@ class MeetingEditSchema(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     durationMinutes: Optional[int] = None
+    daysForward: Optional[int] = Field(default=None, ge=1, le=90)
 
 
 class SuggestedTimeSlot(BaseDBModel):
@@ -125,12 +125,3 @@ class MeetingLogEntry(BaseDBModel):
     changes: Optional[Dict[str, Any]] = None
 
 
-class ProfileMessage(BaseDBModel):
-    messageId: str
-    fromUserId: str
-    toUserId: str
-    fromDisplayName: str = ""
-    content: str
-    messageType: str = "general"
-    createdAt: datetime = Field(default_factory=datetime.now)
-    isRead: bool = False

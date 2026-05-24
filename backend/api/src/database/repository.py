@@ -57,14 +57,14 @@ def get_working_hours_list(participant_profiles: List[dict]) -> List[int]:
 def get_working_days_intersection(participant_profiles: List[dict]) -> List[int]:
     """Intersection of participants' working days."""
     if not participant_profiles:
-        return [0, 1, 2, 3, 4]
+        return list(range(7))
     try:
         common = set(range(7))
         for p in participant_profiles:
-            common &= set(p.get("workingDays", [0, 1, 2, 3, 4]))
-        return sorted(common) if common else [0, 1, 2, 3, 4]
+            common &= set(p.get("workingDays", list(range(7))))
+        return sorted(common) if common else list(range(7))
     except Exception:
-        return [0, 1, 2, 3, 4]
+        return list(range(7))
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +84,7 @@ class UserRepository:
                 userId=user_id, email=email, displayName=display_name,
                 timezone="Asia/Jerusalem",
                 workingHours={"start": "09:00", "end": "18:00"},
-                workingDays=[0, 1, 2, 3, 4],
+                workingDays=list(range(7)),
             ).model_dump(mode="json"),
         )
         self._db.put(
@@ -192,49 +192,6 @@ class UserRepository:
             if m and m.get("status") == "confirmed":
                 recent_titles.append(m.get("title", ""))
         return {"count": len(shared_ids), "recentTitles": recent_titles[:3]}
-
-    def send_message(
-        self, from_uid: str, to_uid: str, content: str, msg_type: str = "general"
-    ) -> models.ProfileMessage:
-        from_profile = self.get_profile(from_uid)
-        from_name = from_profile.displayName if from_profile else from_uid[:8]
-        msg_id = f"msg_{uuid.uuid4().hex[:8]}"
-        msg = models.ProfileMessage(
-            messageId=msg_id, fromUserId=from_uid, toUserId=to_uid,
-            fromDisplayName=from_name, content=content, messageType=msg_type,
-        )
-        self._db.put(
-            f"USER#{to_uid}",
-            f"MSG#{msg.createdAt.isoformat()}#{msg_id}",
-            msg.model_dump(mode="json"),
-        )
-        return msg
-
-    def get_messages(self, user_id: str, limit: int = 20) -> List[models.ProfileMessage]:
-        items = self._db.query_prefix(f"USER#{user_id}", "MSG#")
-        msgs = []
-        for item in items:
-            try:
-                msgs.append(models.ProfileMessage(**item))
-            except Exception:
-                pass
-        msgs.sort(key=lambda x: x.createdAt, reverse=True)
-        return msgs[:limit]
-
-    def mark_messages_read(self, user_id: str) -> None:
-        items = self._db.query_prefix(f"USER#{user_id}", "MSG#")
-        for item in items:
-            if not item.get("isRead", False):
-                sk = item.get("SK", "")
-                if sk:
-                    try:
-                        self._db.table.update_item(
-                            Key={"PK": f"USER#{user_id}", "SK": sk},
-                            UpdateExpression="SET isRead = :r",
-                            ExpressionAttributeValues={":r": True},
-                        )
-                    except Exception:
-                        pass
 
     def get_stats(self, user_id: str, meetings: List[models.MeetingRequest]) -> dict:
         total_organised = sum(1 for m in meetings if m.creatorUserId == user_id)
@@ -386,6 +343,7 @@ class MeetingRepository:
         title: Optional[str] = None,
         duration_minutes: Optional[int] = None,
         description: Optional[str] = None,
+        days_forward: Optional[int] = None,
     ) -> Optional[dict]:
         meeting = self.get_meta(request_id)
         if not meeting:
@@ -400,6 +358,9 @@ class MeetingRepository:
         if description is not None and description != meeting.get("description", ""):
             changes["description"] = {"from": meeting.get("description", ""), "to": description}
             meeting["description"] = description
+        if days_forward is not None and days_forward != meeting.get("daysForward", 7):
+            changes["daysForward"] = {"from": meeting.get("daysForward", 7), "to": days_forward}
+            meeting["daysForward"] = days_forward
         if not changes:
             return meeting
         meeting["updatedAt"] = datetime.now().isoformat()

@@ -3,6 +3,7 @@ import { apiPost, apiScoreSlot } from '../apiClient';
 import { Mail, CalendarPlus, Pencil, Trash2, RefreshCw, Ban, X, Search, CalendarDays, ClipboardList } from 'lucide-react';
 import { useToast } from '../context/ToastContext.jsx';
 import './MeetingDashboard.css';
+import './CalendarView.css';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const validateEmails = (str) => {
@@ -140,12 +141,13 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
     if (!editModal) return;
     setLoading(true);
     try {
-      await apiPost(`/api/meetings/${editModal.requestId}/edit`, {
+      const result = await apiPost(`/api/meetings/${editModal.requestId}/edit`, {
         title: editModal.title,
         description: editModal.description ?? '',
         durationMinutes: Number(editModal.durationMinutes),
+        daysForward: Number(editModal.daysForward),
       });
-      notify('Meeting updated!', 'success');
+      notify(result?.slotsRegenerated ? 'Meeting updated — regenerating slots…' : 'Meeting updated!', 'success');
       setEditModal(null);
       onRefresh();
     } catch {
@@ -355,6 +357,21 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
                 </div>
               </div>
               <div className="form-group">
+                <label>Scheduling Horizon</label>
+                <div className="dur-pills">
+                  {[{ label: '3 days', value: 3 }, { label: '1 week', value: 7 }, { label: '2 weeks', value: 14 }].map(opt => (
+                    <button
+                      key={opt.value} type="button"
+                      className={`dur-pill ${editModal.daysForward === opt.value ? 'active' : ''}`}
+                      onClick={() => setEditModal({ ...editModal, daysForward: opt.value })}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                {editModal.isPending && <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)', margin: '0.3rem 0 0' }}>Changing duration or horizon will regenerate slots.</p>}
+              </div>
+              <div className="form-group">
                 <label>Agenda / Notes</label>
                 <textarea
                   rows={3}
@@ -510,9 +527,9 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
                 onToggle={() => toggle(m.requestId)}
                 onAccept={() => {}}
                 onBook={handleBook}
-                onEdit={() => setEditModal({ requestId: m.requestId, title: m.title, durationMinutes: m.durationMinutes, description: m.description || '' })}
+                onEdit={() => setEditModal({ requestId: m.requestId, title: m.title, durationMinutes: m.durationMinutes, description: m.description || '', daysForward: m.daysForward || 7, isPending: m.status === 'pending' })}
                 onCancel={() => setCancelConfirmId(m.requestId)}
-                onReschedule={m.status === 'confirmed' ? () => setRescheduleConfirmId(m.requestId) : null}
+                onReschedule={() => setRescheduleConfirmId(m.requestId)}
                 fmtDate={fmtDate}
                 fmtTime={fmtTime}
                 fmtFull={fmtFull}
@@ -574,102 +591,91 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
   );
 }
 
-/* ─────────────────────────────────────────────
-   SlotTimeline — visual day-grid for AI slots
-───────────────────────────────────────────── */
-function SlotTimeline({ slots, onBook }) {
-  const HOUR_PX = 54;
+/* SlotCalendar — full-week calendar reusing cv-* classes from CalendarView.css */
+const CAL_HOURS = Array.from({ length: 15 }, (_, i) => 7 + i); // 7 am – 10 pm
+
+function SlotCalendar({ slots, onBook }) {
   const scoreColor = sc => sc >= 80 ? '#22c55e' : sc >= 60 ? '#f59e0b' : '#ef4444';
 
-  // Group by local date
-  const dayMap = {};
-  slots.forEach((slot, idx) => {
-    const d   = new Date(slot.startIso);
-    const key = d.toLocaleDateString('en-CA'); // YYYY-MM-DD
-    if (!dayMap[key]) dayMap[key] = [];
-    dayMap[key].push({ slot, idx });
-  });
-  const days = Object.keys(dayMap).sort();
+  const initialOffset = useMemo(() => {
+    if (!slots.length) return 0;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const toMon = today.getDay() === 0 ? -6 : 1 - today.getDay();
+    const monday = new Date(today); monday.setDate(today.getDate() + toMon);
+    const first = new Date(slots[0].startIso); first.setHours(0, 0, 0, 0);
+    return Math.floor((first - monday) / (7 * 864e5));
+  }, [slots]);
 
-  // Hour range
-  let minHour = 23, maxHour = 8;
-  slots.forEach(s => {
-    const start = new Date(s.startIso);
-    const end   = new Date(s.endIso);
-    minHour = Math.min(minHour, start.getHours());
-    maxHour = Math.max(maxHour, end.getHours() + (end.getMinutes() > 0 ? 1 : 0));
-  });
-  const totalHours = Math.max(1, maxHour - minHour);
-  const gridH      = totalHours * HOUR_PX;
+  const [weekOffset, setWeekOffset] = useState(initialOffset);
 
-  const fmtHour = h => {
-    const d = new Date(); d.setHours(h, 0, 0, 0);
-    return d.toLocaleTimeString([], { hour: 'numeric' });
-  };
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const monday = new Date(today);
+  monday.setDate(today.getDate() + (today.getDay() === 0 ? -6 : 1 - today.getDay()) + weekOffset * 7);
+
+  const weekDays = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(monday); d.setDate(monday.getDate() + i);
+    return { date: d, name: d.toLocaleDateString('en-US', { weekday: 'short' }), label: d.toLocaleDateString('en-US', { day: 'numeric', month: 'short' }), isToday: d.toDateString() === new Date().toDateString() };
+  });
+
+  const weekLabel = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).formatRange(weekDays[0].date, weekDays[6].date);
+  const topSlotIso = slots.length ? slots[0].startIso : null;
+
+  const getSlotsForDay = (dayDate) => slots
+    .filter(s => new Date(s.startIso).toDateString() === dayDate.toDateString())
+    .map(s => {
+      const start = new Date(s.startIso), end = new Date(s.endIso);
+      const h = start.getHours() + start.getMinutes() / 60;
+      const endH = end.getHours() + end.getMinutes() / 60;
+      const cs = Math.max(h, 7), ce = Math.min(endH, 22);
+      return { s, topPct: (cs - 7) / 15 * 100, heightPct: Math.max((ce - cs) / 15 * 100, 2), startStr: start.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }), sc: Math.round(s.score), isTop: s.startIso === topSlotIso, visible: ce > cs };
+    })
+    .filter(e => e.visible);
+
+  const hasSlots = weekDays.some(day => getSlotsForDay(day.date).length > 0);
 
   return (
-    <div className="slot-timeline">
-      {/* Column headers */}
-      <div className="slt-header">
-        <div className="slt-gutter" />
-        {days.map(day => {
-          const d = new Date(day + 'T12:00:00');
-          return (
-            <div key={day} className="slt-day-header">
-              <span className="slt-weekday">{d.toLocaleDateString([], { weekday: 'short' })}</span>
-              <span className="slt-date">{d.toLocaleDateString([], { month: 'short', day: 'numeric' })}</span>
-            </div>
-          );
-        })}
+    <div className="cv-wrap" style={{ marginTop: '0.5rem' }}>
+      <div className="cv-header">
+        <div className="cv-nav">
+          <button className="cv-btn" onClick={() => setWeekOffset(w => w - 1)}>‹ Prev</button>
+          <button className="cv-today-btn" onClick={() => setWeekOffset(initialOffset)}>Slots week</button>
+          <button className="cv-btn" onClick={() => setWeekOffset(w => w + 1)}>Next ›</button>
+        </div>
+        <span className="cv-week-label">{weekLabel}</span>
       </div>
-
-      {/* Grid body */}
-      <div className="slt-body">
-        {/* Time gutter */}
-        <div className="slt-gutter" style={{ position: 'relative', height: gridH }}>
-          {Array.from({ length: totalHours + 1 }, (_, i) => (
-            <div key={i} className="slt-hour-label" style={{ top: i * HOUR_PX - 7 }}>
-              {fmtHour(minHour + i)}
+      <div className="cv-scroll">
+        <div className="cv-grid">
+          <div className="cv-time-col">
+            <div className="cv-corner" />
+            {CAL_HOURS.map(h => <div key={h} className="cv-hour-label">{h}:00</div>)}
+          </div>
+          {weekDays.map(day => (
+            <div key={day.name} className={`cv-day-col${day.isToday ? ' today-col' : ''}`}>
+              <div className={`cv-day-header${day.isToday ? ' today' : ''}`}>
+                <span className="cv-day-name">{day.name}</span>
+                <span className={`cv-day-num${day.isToday ? ' today-num' : ''}`}>{day.label}</span>
+              </div>
+              <div className="cv-day-body">
+                {CAL_HOURS.map(h => <div key={h} className="cv-hour-cell" />)}
+                {getSlotsForDay(day.date).map((e, i) => {
+                  const color = scoreColor(e.sc);
+                  return (
+                    <div key={i} className="cv-event"
+                      style={{ top: `calc(${e.topPct}% + 1px)`, height: `calc(${e.heightPct}% - 2px)`, left: '2px', right: '2px', background: `${color}1a`, borderLeft: `3px solid ${color}`, color, cursor: 'pointer' }}
+                      onClick={() => onBook(e.s)}
+                      title={`${e.sc}% fairness${e.s.explanation ? ' — ' + e.s.explanation : ''}`}
+                    >
+                      <span className="cv-ev-title">{e.isTop ? '⭐ ' : ''}{e.startStr}</span>
+                      <span className="cv-ev-time">{e.sc}% fair</span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           ))}
         </div>
-
-        {/* Day columns */}
-        {days.map(day => (
-          <div key={day} className="slt-day-col" style={{ height: gridH }}>
-            {/* Grid lines */}
-            {Array.from({ length: totalHours + 1 }, (_, i) => (
-              <div key={i} className="slt-grid-line" style={{ top: i * HOUR_PX }} />
-            ))}
-            {/* Slot blocks */}
-            {(dayMap[day] || []).map(({ slot, idx }) => {
-              const start    = new Date(slot.startIso);
-              const end      = new Date(slot.endIso);
-              const startMin = start.getHours() * 60 + start.getMinutes();
-              const endMin   = end.getHours()   * 60 + end.getMinutes();
-              const topPx    = (startMin - minHour * 60) / 60 * HOUR_PX;
-              const heightPx = Math.max(22, (endMin - startMin) / 60 * HOUR_PX - 2);
-              const sc       = Math.round(slot.score);
-              const color    = scoreColor(sc);
-              const isTop    = idx === 0;
-              return (
-                <div
-                  key={idx}
-                  className={`slt-slot${isTop ? ' slt-top' : ''}`}
-                  style={{ top: topPx, height: heightPx, borderLeft: `3px solid ${color}`, background: `${color}1a` }}
-                  onClick={() => onBook(slot)}
-                  title={`${sc}% fairness${slot.explanation ? ' — ' + slot.explanation : ''}`}
-                >
-                  <span className="slt-slot-time">
-                    {start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                  <span className="slt-slot-score" style={{ color }}>{isTop ? '⭐ ' : ''}{sc}%</span>
-                </div>
-              );
-            })}
-          </div>
-        ))}
       </div>
+      {!hasSlots && <div className="cv-empty"><span>📭</span><span>No slots this week — use the arrows to navigate.</span></div>}
     </div>
   );
 }
@@ -831,7 +837,7 @@ function MeetingCard({
               </div>
 
               {slotView === 'timeline' ? (
-                <SlotTimeline
+                <SlotCalendar
                   slots={meeting.slots}
                   onBook={slot => onBook(meeting.requestId, slot)}
                 />

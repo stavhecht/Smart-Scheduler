@@ -1,14 +1,9 @@
 import { useState, useEffect } from 'react';
-import { apiGet, apiPost } from '../apiClient';
-import { X, Users, Check, Star, Bell, CalendarPlus } from 'lucide-react';
-import { useToast } from '../context/ToastContext.jsx';
+import { apiGet } from '../apiClient';
+import { X, Users, CalendarPlus } from 'lucide-react';
 import './PublicProfile.css';
 
 export default function PublicProfile({ profile, onClose, onScheduleWith, currentUserId }) {
-  const showToast = useToast();
-  const [message, setMessage] = useState('');
-  const [sending, setSending] = useState(false);
-  const [sentType, setSentType] = useState(null); // 'kudos' | 'nudge' — for success flash
   const [sharedMeetings, setSharedMeetings] = useState(null);
 
   useEffect(() => {
@@ -18,28 +13,6 @@ export default function PublicProfile({ profile, onClose, onScheduleWith, curren
         .catch(() => {});
     }
   }, [profile?.id, currentUserId]);
-
-  const handleSendMessage = async (type = 'general') => {
-    if (!message.trim() && type === 'general') return;
-    setSending(true);
-    try {
-      const content = type === 'kudos' ? "Sent you some kudos! 🌟" : type === 'nudge' ? "Hey, just checking in on our meeting! 🔔" : message;
-      await apiPost(`/api/profile/${profile.id}/message`, { content, type });
-      if (type === 'general') {
-        setMessage('');
-      }
-      const label = type.charAt(0).toUpperCase() + type.slice(1);
-      showToast(`${label} sent!`);
-      if (type === 'kudos' || type === 'nudge') {
-        setSentType(type);
-        setTimeout(() => setSentType(null), 2000);
-      }
-    } catch (err) {
-      showToast('Failed to send: ' + err.message, 'error');
-    } finally {
-      setSending(false);
-    }
-  };
 
   const displayName = profile.name || profile.displayName || '';
   const initials = displayName
@@ -93,43 +66,19 @@ export default function PublicProfile({ profile, onClose, onScheduleWith, curren
             </div>
           </section>
 
-          <section className="pp-section">
-            <label>QUICK ACTIONS</label>
-            <div className="pp-quick-actions">
-              <button className="pp-action-btn" onClick={() => handleSendMessage('kudos')} disabled={sending}>
-                {sentType === 'kudos' ? <><Check size={13} /> Kudos sent!</> : <><Star size={13} /> Send Kudos</>}
-              </button>
-              <button className="pp-action-btn" onClick={() => handleSendMessage('nudge')} disabled={sending}>
-                {sentType === 'nudge' ? <><Check size={13} /> Nudge sent!</> : <><Bell size={13} /> Nudge</>}
-              </button>
-              {onScheduleWith && (
+          {onScheduleWith && (
+            <section className="pp-section">
+              <label>QUICK ACTIONS</label>
+              <div className="pp-quick-actions">
                 <button
                   className="pp-action-btn pp-schedule-btn"
                   onClick={() => { onClose(); onScheduleWith(profile.email); }}
                 >
                   <CalendarPlus size={13} style={{ marginRight: '0.3rem', verticalAlign: 'middle' }} />Schedule Meeting
                 </button>
-              )}
-            </div>
-          </section>
-
-          <section className="pp-section">
-            <label>SEND A MESSAGE</label>
-            <div className="pp-message-box">
-              <textarea 
-                placeholder="Write something..." 
-                value={message}
-                onChange={e => setMessage(e.target.value)}
-              />
-              <button 
-                className="pp-send-btn" 
-                onClick={() => handleSendMessage('general')}
-                disabled={sending || !message.trim()}
-              >
-                {sending ? '...' : 'Send Message'}
-              </button>
-            </div>
-          </section>
+              </div>
+            </section>
+          )}
         </div>
       </div>
     </div>
