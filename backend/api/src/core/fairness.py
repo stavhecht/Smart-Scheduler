@@ -7,6 +7,7 @@ Implements:
 3. Dynamic Reshuffling Engine that activates when average scores are too low
 """
 
+import math
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
@@ -93,7 +94,7 @@ class FairnessEngine:
         try:
             start_hour = int(str(lunch_break.get('start', '12:00')).split(':')[0])
             duration   = int(lunch_break.get('duration', 60))
-            end_hour   = start_hour + max(1, duration // 60)
+            end_hour   = start_hour + max(1, math.ceil(duration / 60))
             return start_hour <= hour < end_hour
         except (ValueError, TypeError):
             return False
@@ -184,7 +185,7 @@ class FairnessEngine:
                 for p in participant_states
             ]
             variance = (max(p_scores) - min(p_scores)) if len(p_scores) > 1 else 0.0
-            fairness_impact_score = max(0.0, 15.0 - variance * 0.5)
+            fairness_impact_score = max(-10.0, 15.0 - variance * 0.5)
 
             final_score = time_score - load_penalty + momentum_bonus + fairness_impact_score
         else:
@@ -275,13 +276,14 @@ class FairnessEngine:
         while current.date() <= date_end.date():
             if current.weekday() in allowed_days:
                 for local_hour in hours:
-                    # Convert local hour → UTC hour for the stored slot
-                    utc_hour = local_hour - int(tz_offset_hours)
-                    candidate = current.replace(hour=utc_hour % 24, minute=0)
-                    # If UTC hour wraps to next day, adjust date accordingly
-                    if utc_hour < 0:
+                    # Convert local hour → UTC using full fractional offset (e.g. UTC+5:30)
+                    utc_total_min = local_hour * 60 - round(tz_offset_hours * 60)
+                    utc_h = (utc_total_min // 60) % 24
+                    utc_m = utc_total_min % 60
+                    candidate = current.replace(hour=utc_h, minute=utc_m)
+                    if utc_total_min < 0:
                         candidate -= timedelta(days=1)
-                    elif utc_hour >= 24:
+                    elif utc_total_min >= 1440:
                         candidate += timedelta(days=1)
                     if candidate > now_utc:
                         slots.append(candidate)

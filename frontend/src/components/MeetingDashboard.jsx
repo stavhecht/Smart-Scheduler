@@ -54,7 +54,7 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
 
   // Split meetings by status then role
   const activeMeetings    = filteredMeetings.filter(m => m.status !== 'cancelled');
-  const cancelledMeetings = meetings.filter(m => m.status === 'cancelled');
+  const cancelledMeetings = filteredMeetings.filter(m => m.status === 'cancelled');
   const myActiveMeetings  = activeMeetings.filter(m => m.userRole === 'organizer');
 
   // Sort invitations so "needs action" ones appear first
@@ -150,8 +150,8 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
       notify(result?.slotsRegenerated ? 'Meeting updated — regenerating slots…' : 'Meeting updated!', 'success');
       setEditModal(null);
       onRefresh();
-    } catch {
-      notify('Failed to update meeting', 'error');
+    } catch (err) {
+      notify(err.message || 'Failed to update meeting', 'error');
     } finally {
       setLoading(false);
     }
@@ -166,8 +166,8 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
       setCancelConfirmId(null);
       setExpandedId(null);
       onRefresh();
-    } catch {
-      notify('Failed to cancel meeting', 'error');
+    } catch (err) {
+      notify(err.message || 'Failed to cancel meeting', 'error');
     } finally {
       setLoading(false);
     }
@@ -182,8 +182,8 @@ export default function MeetingDashboard({ meetings, onRefresh, currentUserId, o
       setRescheduleConfirmId(null);
       setExpandedId(null);
       onRefresh();
-    } catch {
-      notify('Failed to reschedule', 'error');
+    } catch (err) {
+      notify(err.message || 'Failed to reschedule', 'error');
     } finally {
       setLoading(false);
     }
