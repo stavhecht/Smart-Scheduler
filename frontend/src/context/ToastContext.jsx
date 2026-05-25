@@ -19,13 +19,14 @@ export function ToastProvider({ children }) {
     const id = ++counter.current;
     setToasts(prev => [...prev, { id, msg, type, exiting: false }]);
 
-    // Auto-remove after 4s (with 300ms exit animation buffer)
+    // Auto-remove based on message length (min 4s, ~50ms per char)
+    const delay = Math.max(4000, msg.length * 50);
     setTimeout(() => {
       setToasts(prev => prev.map(t => t.id === id ? { ...t, exiting: true } : t));
       setTimeout(() => {
         setToasts(prev => prev.filter(t => t.id !== id));
       }, 300);
-    }, 4000);
+    }, delay);
   }, []);
 
   const dismiss = useCallback((id) => {

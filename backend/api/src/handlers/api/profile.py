@@ -101,7 +101,7 @@ def handle_public_profile(identity: dict, action: str) -> dict:
         "department": target.department,
         "skills": target.skills,
         "status": target.statusMessage,
-        "score": float(fairness.fairnessScore) if fairness else 100.0,
+        "score": float(fairness.fairnessScore) if (fairness and target.showFairnessScore) else None,
     }
 
 

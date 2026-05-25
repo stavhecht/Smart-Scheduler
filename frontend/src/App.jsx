@@ -39,6 +39,7 @@ function AppContent() {
   const [selectedMeeting, setSelectedMeeting] = useState(null); // for MeetingDetailModal
   const [showPalette, setShowPalette]         = useState(false);
   const [activities, setActivities]           = useState([]);
+  const [users, setUsers]                     = useState([]);
   // helper so child components can still call setActiveView('meetings') etc.
   const setActiveView = (view) => navigate(`/${view === 'dashboard' ? '' : view}`);
   const oauthProcessed = useRef(false);
@@ -167,14 +168,20 @@ function AppContent() {
     return () => document.removeEventListener('keydown', onKey);
   }, []);
 
+  /** Lazy-load users list once (for CommandPalette people search). */
+  useEffect(() => {
+    if (!profile || users.length > 0) return;
+    apiGet('/api/users').then(data => setUsers(Array.isArray(data) ? data : [])).catch(() => {});
+  }, [profile?.id]);
+
   /** Refresh meetings whenever the calendar route becomes active. */
   useEffect(() => {
-    if (window.location.pathname === '/calendar' && profile) {
+    if (location.pathname === '/calendar' && profile) {
       apiGet('/api/meetings')
         .then(data => setMeetings(Array.isArray(data) ? data : (data?.meetings ?? [])))
         .catch(err => console.error('Calendar refresh failed', err));
     }
-  }, [window.location.pathname]);
+  }, [location.pathname, profile?.id]);
 
   /** Open Google Calendar OAuth flow (redirects the page). */
   const handleCalendarConnect = async (provider) => {
@@ -467,7 +474,7 @@ function AppContent() {
           onNewMeeting={() => { setMeetingPrefill(null); setShowGlobalCreate(true); setShowPalette(false); }}
           signOut={signOut}
           meetings={meetings}
-          users={[]}
+          users={users}
         />
       )}
 
@@ -493,7 +500,7 @@ function AppContent() {
           }}
           onDecline={async (requestId) => {
             try { await apiPost(`/api/meetings/${requestId}/decline`, {}); await refreshAll(); }
-            catch (err) { console.error('Decline failed:', err); }
+            catch (err) { console.error('Decline failed:', err); toast('Failed to decline meeting', 'error'); }
           }}
           onCancel={() => {
             setSelectedMeeting(null);

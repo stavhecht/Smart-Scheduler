@@ -48,19 +48,18 @@ There are also secondary REST endpoints (`/api/profile`, `/api/meetings`, etc.) 
 
 ### Backend Package Structure (`backend/api/src/`)
 
-The backend was refactored from flat files (`db.py`, `models.py`, `fairness_engine.py`) into a structured package:
-
 ```
 src/
 ├── common/
-│   ├── auth.py          # Token validation (validate_access_token, get_current_user_from_request)
-│   ├── dynamo.py        # DynamoDB client singleton (get_db())
-│   └── timezone.py      # get_tz_offset_hours()
+│   ├── auth.py              # Token validation (validate_access_token, get_current_user_from_request)
+│   ├── calendar_client.py   # Google Calendar OAuth2 + Outlook .ics integration
+│   ├── dynamo.py            # DynamoDB client singleton (get_db())
+│   └── timezone.py          # get_tz_offset_hours()
 ├── core/
-│   └── fairness.py      # FairnessEngine class + global `engine` singleton
+│   └── fairness.py          # FairnessEngine class + global `engine` singleton
 ├── database/
-│   ├── models.py        # Pydantic models (UserProfile, MeetingRequest, SlotOption, etc.)
-│   └── repository.py    # UserRepository, MeetingRepository, CalendarRepository
+│   ├── models.py            # Pydantic models (UserProfile, MeetingRequest, SlotOption, etc.)
+│   └── repository.py        # UserRepository, MeetingRepository, CalendarRepository
 └── handlers/
     ├── api/
     │   ├── dispatcher.py    # Routes action strings → handler functions
@@ -124,6 +123,18 @@ State is lifted to `AppContent` in `App.jsx`. No global store — all data flows
 - `showGlobalCreate` / `meetingPrefill` — global create modal triggered from calendar, people view, or `⌘K` palette.
 - `selectedMeeting` — drives `MeetingDetailModal`.
 - OAuth callback params captured in `useState` initializer on mount (before React Router cleans the URL).
+
+Key components in `frontend/src/components/`:
+- `MeetingDashboard.jsx` — main scheduling UI (meeting list, status, actions)
+- `MeetingDetailModal.jsx` — detail/action modal for a single meeting
+- `CreateMeetingModal.jsx` — meeting creation flow with slot selection
+- `CalendarView.jsx` — calendar display
+- `PeopleView.jsx` — user directory / people search
+- `ProfileView.jsx` — current user profile & fairness metrics
+- `PublicProfile.jsx` — public-facing profile view
+- `CommandPalette.jsx` — `⌘K` global command palette
+
+`frontend/src/context/ToastContext.jsx` provides a global toast notification context.
 
 ### Calendar Integration (`src/common/calendar_client.py`)
 

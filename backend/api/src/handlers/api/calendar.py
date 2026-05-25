@@ -61,7 +61,7 @@ def handle_oauth_url(identity: dict, action: str) -> dict:
             )
         return {"url": calendar_client.get_google_auth_url(identity["user_id"]), "provider": "google"}
     if provider == "microsoft":
-        if not calendar_client.MS_CLIENT_ID:
+        if not getattr(calendar_client, 'MS_CLIENT_ID', ''):
             raise HTTPException(
                 status_code=503,
                 detail="Microsoft Calendar not configured. Set MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET in Lambda environment.",
@@ -100,7 +100,7 @@ def handle_oauth_callback(identity: dict, action: str, data: str | None) -> dict
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Token exchange failed: {exc}")
         calendar_email = calendar_client.get_google_user_email(tokens.get("access_token", ""))
-        expires_at = datetime.utcnow() + timedelta(seconds=tokens.get("expires_in", 3600))
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=tokens.get("expires_in", 3600))
         _cal_repo.save_oauth_tokens(user_id, "google", {
             "access_token": tokens.get("access_token", ""),
             "refresh_token": tokens.get("refresh_token", ""),
@@ -116,7 +116,7 @@ def handle_oauth_callback(identity: dict, action: str, data: str | None) -> dict
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Token exchange failed: {exc}")
         calendar_email = calendar_client.get_microsoft_user_email(tokens.get("access_token", ""))
-        expires_at = datetime.utcnow() + timedelta(seconds=tokens.get("expires_in", 3600))
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=tokens.get("expires_in", 3600))
         _cal_repo.save_oauth_tokens(user_id, "microsoft", {
             "access_token": tokens.get("access_token", ""),
             "refresh_token": tokens.get("refresh_token", ""),
@@ -160,7 +160,9 @@ def handle_register_watch(identity: dict) -> dict:
     if existing:
         expires_at = existing.get("expiresAt", "")
         try:
-            exp = datetime.fromisoformat(expires_at)
+            exp = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
             if datetime.now(timezone.utc) < exp - timedelta(hours=24):
                 return {"status": "active", "expiresAt": expires_at}
         except Exception:
