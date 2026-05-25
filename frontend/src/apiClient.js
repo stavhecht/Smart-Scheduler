@@ -119,6 +119,10 @@ export async function apiPost(path, body) {
     const bookMatch = path.match(/^\/api\/meetings\/([^/]+)\/book\/(.+)$/);
     if (bookMatch) return apiProxy(`book:${bookMatch[1]}:${decodeURIComponent(bookMatch[2])}`);
 
+    // /api/meetings/<id>/decline
+    const declineMatch = path.match(/^\/api\/meetings\/([^/]+)\/decline$/);
+    if (declineMatch) return apiProxy(`decline:${declineMatch[1]}`);
+
     // /api/meetings/<id>/cancel
     const cancelMatch = path.match(/^\/api\/meetings\/([^/]+)\/cancel$/);
     if (cancelMatch) return apiProxy(`cancel:${cancelMatch[1]}`);
