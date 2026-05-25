@@ -35,23 +35,50 @@ class FairnessEngine:
     # Individual user fairness score
     # ---------------------------------------------------------------------------
 
-    def calculate_user_score(self, metrics: dict) -> float:
+    def calculate_user_score(self, metrics: dict, last_updated: Optional[str] = None) -> float:
         """
         Calculate a single user's fairness score from their meeting history.
         Score range: 0 (overloaded/unfair) to 100 (well-balanced).
-        Handles Decimal values from DynamoDB.
+
+        Score increases when:
+        - suffering_score > 0 (took inconvenient slots — +3 each)
+        - prime_slots_accepted accumulates (took fair slots — +1 per 3)
+        - time passes without meetings (passive recovery — up to +15)
+        - recent cancellations expire after 30 days
+
+        Score decreases when:
+        - meetings_this_week grows (+meetings load)
+        - recent cancellations exist
         """
         score = 100.0
         try:
             meetings_this_week = float(metrics.get('meetings_this_week', 0))
-            cancellations = float(metrics.get('cancellations_last_month', 0))
-            suffering = float(metrics.get('suffering_score', 0))
+            suffering          = float(metrics.get('suffering_score', 0))
+            prime_accepted     = int(metrics.get('prime_slots_accepted', 0))
+
+            # Count only cancellations that occurred within the last 30 days
+            cutoff = datetime.now() - timedelta(days=30)
+            recent_cancellations = sum(
+                1 for ts in metrics.get('cancellation_timestamps', [])
+                if datetime.fromisoformat(str(ts)) > cutoff
+            )
 
             score -= meetings_this_week * 2.0
-            score -= cancellations * 5.0
+            score -= recent_cancellations * 5.0
             score += suffering * 3.0
+            # Every 3 prime-time slots accepted earns +1 (treated fairly → rewarded)
+            score += (prime_accepted // 3) * 1.0
         except (TypeError, ValueError):
             pass
+
+        # Passive time recovery: up to +15 points for inactivity
+        if last_updated:
+            try:
+                days_inactive = (datetime.now() - datetime.fromisoformat(str(last_updated))).days
+                recovery = min(days_inactive * 0.3, 15.0)
+                score += recovery
+            except (ValueError, TypeError):
+                pass
 
         return max(0.0, min(100.0, score))
 
@@ -150,7 +177,10 @@ class FairnessEngine:
             # 4. Fairness Variance Penalty (0-20 penalty)
             # Penalizes slots that would increase the gap between the most and least busy
             p_scores = [
-                self.calculate_user_score(p.get('meetingLoadMetrics', {}))
+                self.calculate_user_score(
+                    p.get('meetingLoadMetrics', {}),
+                    p.get('lastUpdatedAt')
+                )
                 for p in participant_states
             ]
             variance = (max(p_scores) - min(p_scores)) if len(p_scores) > 1 else 0.0
@@ -325,27 +355,58 @@ class FairnessEngine:
     ) -> dict:
         """
         Recalculate and return updated fairness metrics after a meeting is booked.
+
+        Inconvenient slots (impact < -2) → suffering +1 → net score gain.
+        Prime slots (impact == -1.0) → prime_slots_accepted +1 → score gain every 3.
         """
         metrics = current_state.get('meetingLoadMetrics', {})
-        new_meetings = metrics.get('meetings_this_week', 0) + 1
-        new_cancellations = metrics.get('cancellations_last_month', 0)
-        new_suffering = metrics.get('suffering_score', 0)
+        new_meetings      = int(metrics.get('meetings_this_week', 0)) + 1
+        new_suffering     = int(metrics.get('suffering_score', 0))
+        new_prime         = int(metrics.get('prime_slots_accepted', 0))
+        cancel_timestamps = list(metrics.get('cancellation_timestamps', []))
 
-        # Inconvenient slots (impact < -2) increase suffering score (rewarded later)
-        if slot_fairness_impact < -2:
+        is_inconvenient = slot_fairness_impact < -2
+        is_prime        = slot_fairness_impact == -1.0
+
+        if is_inconvenient:
             new_suffering += 1
+        if is_prime:
+            new_prime += 1
 
         new_metrics = {
-            'meetings_this_week': new_meetings,
-            'cancellations_last_month': new_cancellations,
-            'suffering_score': new_suffering
+            'meetings_this_week':   new_meetings,
+            'suffering_score':      new_suffering,
+            'prime_slots_accepted': new_prime,
+            'cancellation_timestamps': cancel_timestamps,
         }
-        new_score = self.calculate_user_score(new_metrics)
+        last_updated = current_state.get('lastUpdatedAt')
+        new_score = self.calculate_user_score(new_metrics, last_updated)
 
         return {
-            'fairnessScore': new_score,
+            'fairnessScore':           new_score,
+            'meetingLoadMetrics':      new_metrics,
+            'inconvenientMeetingsCount': int(is_inconvenient),
+        }
+
+    def update_score_after_cancel(self, current_state: dict) -> dict:
+        """
+        Recalculate fairness metrics after the organizer cancels a meeting.
+        Adds a cancellation timestamp (expires after 30 days) instead of a raw counter.
+        """
+        metrics = current_state.get('meetingLoadMetrics', {})
+        cancel_timestamps = list(metrics.get('cancellation_timestamps', []))
+        cancel_timestamps.append(datetime.now().isoformat())
+
+        new_metrics = {
+            **metrics,
+            'cancellation_timestamps': cancel_timestamps,
+        }
+        last_updated = current_state.get('lastUpdatedAt')
+        new_score = self.calculate_user_score(new_metrics, last_updated)
+
+        return {
+            'fairnessScore':      new_score,
             'meetingLoadMetrics': new_metrics,
-            'inconvenientMeetingsCount': int(slot_fairness_impact < -2)
         }
 
 
