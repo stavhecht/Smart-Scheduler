@@ -23,6 +23,7 @@ export default function CreateMeetingModal({ prefill, onClose, onCreated, onRefr
 
   // User search state
   const [allUsers, setAllUsers] = useState([]);
+  const [usersLoadError, setUsersLoadError] = useState(false);
   const [selectedUsers, setSelectedUsers] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -34,7 +35,7 @@ export default function CreateMeetingModal({ prefill, onClose, onCreated, onRefr
     apiGet('/api/users').then(data => {
       const list = Array.isArray(data) ? data : (data?.users ?? []);
       setAllUsers(list);
-    }).catch(() => {});
+    }).catch(() => setUsersLoadError(true));
   }, []);
 
   // Apply prefill on mount
@@ -253,6 +254,11 @@ export default function CreateMeetingModal({ prefill, onClose, onCreated, onRefr
                     onFocus={() => searchQuery && setDropdownOpen(true)}
                     onKeyDown={e => e.key === 'Enter' && e.preventDefault()}
                   />
+                  {usersLoadError && (
+                    <div style={{ fontSize: '0.78rem', color: 'var(--color-warning)', marginTop: '0.3rem' }}>
+                      Could not load users — enter email manually below
+                    </div>
+                  )}
                   {dropdownOpen && searchQuery.trim() && (
                     <div style={{
                       position: 'absolute', zIndex: 200, top: '100%', left: 0, right: 0,

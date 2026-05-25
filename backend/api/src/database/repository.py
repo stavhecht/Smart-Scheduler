@@ -82,9 +82,9 @@ class UserRepository:
             f"USER#{user_id}", "PROFILE",
             models.UserProfile(
                 userId=user_id, email=email, displayName=display_name,
-                timezone="Asia/Jerusalem",
+                timezone="UTC",
                 workingHours={"start": "09:00", "end": "18:00"},
-                workingDays=list(range(7)),
+                workingDays=list(range(5)),
             ).model_dump(mode="json"),
         )
         self._db.put(
@@ -104,7 +104,7 @@ class UserRepository:
         """Reset meetings_this_week if 7+ days have passed since last reset."""
         last_reset = fairness_data.get("lastWeekReset")
         if last_reset:
-            days_since = (datetime.now() - datetime.fromisoformat(str(last_reset))).days
+            days_since = (datetime.now() - datetime.fromisoformat(str(last_reset))).total_seconds() / 86400
             if days_since >= 7:
                 metrics = dict(fairness_data.get("meetingLoadMetrics", {}))
                 metrics["meetings_this_week"] = 0

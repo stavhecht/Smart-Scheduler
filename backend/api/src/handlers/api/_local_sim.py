@@ -59,8 +59,8 @@ def run_simulation(
             busy = _cc.get_user_busy_slots(uid, meeting.dateRangeStart, meeting.dateRangeEnd)
             if busy:
                 all_busy[uid] = busy
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Calendar fetch failed for {uid}: {e}")
 
     def _conflict_count(slot_dt: datetime) -> int:
         slot_end = slot_dt + timedelta(minutes=meeting.durationMinutes)
@@ -128,8 +128,8 @@ def run_simulation(
     for slot_data in best_slots:
         slot = models.SuggestedTimeSlot(
             requestId=meeting.requestId,
-            startIso=datetime.fromisoformat(slot_data["startIso"]),
-            endIso=datetime.fromisoformat(slot_data["endIso"]),
+            startIso=datetime.fromisoformat(slot_data["startIso"].replace("Z", "+00:00")),
+            endIso=datetime.fromisoformat(slot_data["endIso"].replace("Z", "+00:00")),
             score=float(slot_data["score"]),
             fairnessImpact=float(slot_data["fairnessImpact"]),
             conflictCount=slot_data.get("conflictCount", 0),
