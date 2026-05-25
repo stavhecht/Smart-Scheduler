@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { apiGet, apiRegisterCalendarWatch, apiCheckCalendarSync } from '../apiClient';
+import { useToast } from '../context/ToastContext';
 import './CalendarView.css';
 
 const HOUR_START  = 7;
@@ -42,6 +43,7 @@ function gcalColor(ev) {
 }
 
 export default function CalendarView({ meetings, calendarStatus, onMeetingClick, onCreateAt }) {
+  const toast = useToast();
   const [weekOffset, setWeekOffset] = useState(0);
   const [dayOffset, setDayOffset]   = useState(0);
   const [isMobile, setIsMobile]     = useState(() => window.innerWidth < 600);
@@ -129,6 +131,9 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
       setGcalEvents(Array.isArray(data) ? data : []);
     } catch {
       setGcalEvents([]);
+      if (googleConnected) {
+        toast('Could not load Google Calendar events — your session may have expired. Try reconnecting in Settings.', 'warning');
+      }
     }
   };
 

@@ -43,6 +43,7 @@ All frontend API calls go through a single public GET endpoint — **`GET /healt
 - The backend's `/health` handler in `main.py` validates the token via `cognito-idp:GetUser` (see `src/common/auth.py:validate_access_token`), then calls `src/handlers/api/dispatcher.py:dispatch`.
 - The response is always HTTP 200 — even for backend errors. Frontend must check `body.status === 'error'`.
 - `apiGet` / `apiPost` in `apiClient.js` are thin wrappers that map URL patterns to action strings.
+- **Note:** The `decline` action (marked * in the table above) exists in the dispatcher but has no `apiClient.js` wrapper — it is not currently reachable from the frontend.
 
 There are also secondary REST endpoints (`/api/profile`, `/api/meetings`, etc.) with the JWT authorizer from API Gateway — these are a secondary path not used by the main frontend.
 
@@ -58,7 +59,7 @@ src/
 ├── core/
 │   └── fairness.py          # FairnessEngine class + global `engine` singleton
 ├── database/
-│   ├── models.py            # Pydantic models (UserProfile, MeetingRequest, SlotOption, etc.)
+│   ├── models.py            # Pydantic models (UserProfile, MeetingRequest, SuggestedTimeSlot, FairnessState, MeetingLogEntry)
 │   └── repository.py        # UserRepository, MeetingRepository, CalendarRepository
 └── handlers/
     ├── api/
@@ -82,6 +83,8 @@ src/
 1. **Step Functions invocations** — detected by `sfn_action` key → `sfn_router()` in `lambda_entry.py` → maps to the appropriate `workflow/` handler.
 2. **API Gateway invocations** — everything else → Mangum → FastAPI → `/health` → `dispatcher.dispatch()`.
 
+**Local development shortcut:** When `AWS_ACCOUNT_ID` is not set (local uvicorn), `handle_create_meeting` skips Step Functions entirely and calls `_local_sim.run_simulation()` synchronously. This mirrors the full SFN workflow but runs in-process.
+
 ### Action Dispatch (`dispatcher.py`)
 
 Two lookup tables: `EXACT` (exact match) and `PREFIX` (prefix match). Adding a new action means adding an entry to one of these tables and implementing the handler in `meetings.py`, `profile.py`, or `calendar.py`.
@@ -92,7 +95,7 @@ Key actions:
 |---|---|
 | `profile`, `update_profile`, `profile_stats`, `list_users`, `activity_feed` | `profile.py` |
 | `meetings`, `create_meeting`, `score_slot` | `meetings.py` |
-| `book:<id>:<slot>`, `accept:<id>`, `decline:<id>`, `cancel:<id>`, `edit:<id>`, `reschedule:<id>`, `book_custom:<id>`, `meeting_log:<id>` | `meetings.py` |
+| `book:<id>:<slot>`, `accept:<id>`, `decline:<id>`*, `cancel:<id>`, `edit:<id>`, `reschedule:<id>`, `book_custom:<id>`, `meeting_log:<id>` | `meetings.py` |
 | `calendar_status`, `calendar_events`, `oauth_url:<p>`, `oauth_callback:<p>`, `calendar_disconnect:<p>`, `update_ics_url`, `register_calendar_watch`, `stop_calendar_watch`, `check_calendar_sync` | `calendar.py` |
 | `get_public_profile:<id>`, `shared_meetings:<id>` | `profile.py` |
 
@@ -111,9 +114,17 @@ Single `FairnessEngine` class, global `engine` singleton. Key concepts:
 ### DynamoDB Access Pattern (`src/database/repository.py`)
 
 Single-table design (`SmartScheduler_V1`). Three repository classes: `UserRepository`, `MeetingRepository`, `CalendarRepository`. Key schema:
-- User profiles: `PK=USER#<id>`, `SK=PROFILE`
-- Meetings: `PK=USER#<id>`, `SK=MTG#<requestId>`
-- `BaseDBModel` in `models.py` has a `model_validator` that recursively converts `Decimal` → `int`/`float` on every DynamoDB read. All writes must convert floats → `Decimal` before storing.
+- `PK=USER#<id>`, `SK=PROFILE` — user profile
+- `PK=USER#<id>`, `SK=FAIRNESS` — fairness scores / load metrics
+- `PK=USER#<id>`, `SK=PART#<requestId>` — participation index (used to look up a user's meetings)
+- `PK=USER#<id>`, `SK=OAUTH#<provider>` — OAuth tokens (Google/Microsoft)
+- `PK=USER#<id>`, `SK=GCAL_WATCH` — active Google Calendar push-notification channel
+- `PK=MEET#<requestId>`, `SK=META` — meeting metadata (`MeetingRequest`)
+- `PK=MEET#<requestId>`, `SK=SLOT#<startIso>` — candidate time slots (`SuggestedTimeSlot`)
+- `PK=MEET#<requestId>`, `SK=LOG#<timestamp>` — audit log entries
+- `PK=GCAL_CHANNEL#<channelId>`, `SK=LOOKUP` — reverse lookup: channelId → userId
+
+`BaseDBModel` in `models.py` has a `model_validator` that recursively converts `Decimal` → `int`/`float` on every DynamoDB read. All writes must convert floats → `Decimal` before storing.
 
 ### Frontend State Management (`App.jsx`)
 
@@ -144,11 +155,33 @@ Supports Google Calendar (OAuth2) and Microsoft Outlook (.ics feed URL). Google 
 
 | Variable | Where set | Purpose |
 |---|---|---|
-| `TABLE_NAME` | Lambda | DynamoDB table name |
-| `AWS_ACCOUNT_ID` | Lambda | Used to construct SFN ARN |
+| `TABLE_NAME` | Lambda / `.env` | DynamoDB table name |
+| `AWS_ACCOUNT_ID` | Lambda | Used to construct SFN ARN; **absent locally** → `_local_sim` path |
 | `FRONTEND_URL` | Lambda | CORS allow-origin |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Lambda | Google Calendar OAuth |
 | `ENVIRONMENT` | local only | Set to `development` for local uvicorn + .env loading |
+| `VITE_API_URL` | frontend `.env.local` | Backend URL for the Vite dev server (default: `http://localhost:8000`) |
+
+### Local `.env` file
+
+When `ENVIRONMENT=development`, `main.py` auto-loads `Smart-Scheduler/.env` (three directories above `backend/api/main.py`). Minimum required keys for local development:
+
+```
+TABLE_NAME=SmartScheduler_V1
+AWS_DEFAULT_REGION=us-east-1
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+AWS_SESSION_TOKEN=...   # if using temporary credentials (e.g. AWS Academy)
+```
+
+To point the Vite dev server at a local backend, create `frontend/.env.local`:
+```
+VITE_API_URL=http://localhost:8000
+```
+
+## Tests
+
+There is no test suite. No pytest files exist in `backend/` and no Jest/Vitest files in `frontend/src/`.
 
 ## Terraform Notes
 
@@ -157,3 +190,4 @@ Supports Google Calendar (OAuth2) and Microsoft Outlook (.ics feed URL). Google 
 - `lifecycle { ignore_changes = [explicit_auth_flows] }` on Cognito client.
 - Lambda ARN for Step Functions is constructed at runtime from env vars to avoid circular Terraform dependency.
 - `api_deployment.zip` must exist in `terraform/` before `terraform plan/apply` — run `python build_lambda.py` first.
+- `frontend/src/aws-exports.js` is **not** managed by Terraform — update it manually after any Cognito pool/client recreation.

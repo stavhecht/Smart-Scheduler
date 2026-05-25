@@ -94,6 +94,7 @@ function AppContent() {
           navigate('/profile', { state: { initialTab: 'calendar' } });
         } catch (err) {
           console.error('OAuth callback exchange failed:', err);
+          toast(`Failed to connect Google Calendar: ${err.message}`, 'error');
         }
       }
 

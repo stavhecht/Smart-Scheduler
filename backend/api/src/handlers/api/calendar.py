@@ -98,6 +98,7 @@ def handle_oauth_callback(identity: dict, action: str, data: str | None) -> dict
         try:
             tokens = calendar_client.exchange_google_code(code)
         except Exception as exc:
+            logger.error(f"[oauth_callback] Google token exchange failed for {user_id}: {exc}")
             raise HTTPException(status_code=400, detail=f"Token exchange failed: {exc}")
         calendar_email = calendar_client.get_google_user_email(tokens.get("access_token", ""))
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=tokens.get("expires_in", 3600))
@@ -170,6 +171,9 @@ def handle_register_watch(identity: dict) -> dict:
         # Existing channel is expired or expiring soon — stop it and re-register
         calendar_client.stop_google_watch(user_id, existing["channelId"], existing["resourceId"])
         _cal_repo.delete_watch_channel(user_id)
+
+    if not calendar_client.WEBHOOK_BASE_URL:
+        logger.warning("[register_watch] WEBHOOK_BASE_URL not set — push notifications disabled; frontend will fall back to polling")
 
     channel_id = secrets.token_urlsafe(16)
     result = calendar_client.register_google_watch(user_id, channel_id)

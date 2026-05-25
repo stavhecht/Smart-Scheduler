@@ -164,7 +164,7 @@ def _ensure_fresh_google_token(user_id: str) -> Optional[str]:
                 'access_token':  access_token,
                 'refresh_token': refresh_token,   # Google doesn't always return a new one
                 'expires_at':    new_expires,
-                'scope':         tokens.get('scope', ''),
+                'scope':         tokens.get('scopes', ''),
                 'calendar_email': tokens.get('calendarEmail', ''),
             })
     except Exception as e:
