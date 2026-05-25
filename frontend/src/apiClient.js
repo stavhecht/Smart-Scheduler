@@ -145,6 +145,9 @@ export async function apiPost(path, body) {
     const bookCustomMatch = path.match(/^\/api\/meetings\/([^/]+)\/book_custom$/);
     if (bookCustomMatch) return apiProxy(`book_custom:${bookCustomMatch[1]}`, body);
 
+    // /api/profile/fairness/reset
+    if (path === '/api/profile/fairness/reset') return apiProxy('reset_fairness');
+
     // /api/profile/update
     if (path === '/api/profile/update') return apiProxy('update_profile', body);
 

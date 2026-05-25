@@ -81,6 +81,20 @@ def handler(payload: dict) -> dict:
     except openai_client.OpenAIScoreError as e:
         logger.warning(f"calculate_fairness: AI scoring failed, using engine fallback ({e})")
 
-    payload["scored_slots"] = scored
-    payload["optimization_needed"] = engine.needs_optimization(scored)
+    # Fill any empty explanations with heuristic fallback, then strip internal keys
+    _internal = {"_hour", "_day", "_load_penalty", "_equity_bonus"}
+    clean_scored = []
+    for slot in scored:
+        if not slot.get("explanation"):
+            slot["explanation"] = engine.explain_slot(
+                hour=int(slot.get("_hour", 10)),
+                day=int(slot.get("_day", 0)),
+                score=float(slot.get("score", 50)),
+                load_penalty=float(slot.get("_load_penalty", 0.0)),
+                equity_bonus=float(slot.get("_equity_bonus", 20.0)),
+            )
+        clean_scored.append({k: v for k, v in slot.items() if k not in _internal})
+
+    payload["scored_slots"] = clean_scored
+    payload["optimization_needed"] = engine.needs_optimization(clean_scored)
     return payload

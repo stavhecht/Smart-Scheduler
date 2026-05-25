@@ -229,8 +229,20 @@ export default function CalendarView({ meetings, calendarStatus, profile, onMeet
       })
       .filter(e => e.visible);
 
+    // Build set of Google event IDs already shown as Smart Scheduler app events
+    // (meetings written to Google Calendar via _write_to_calendars should not be shown twice)
+    const knownGoogleIds = new Set();
+    for (const m of confirmed) {
+      for (const val of Object.values(m.externalEventIds || {})) {
+        if (typeof val === 'string' && val.startsWith('google:')) {
+          knownGoogleIds.add(val.slice(7));
+        }
+      }
+    }
+
     const gEvents = gcalEvents
       .filter(ev => hasTime(ev.start))
+      .filter(ev => !knownGoogleIds.has(ev.id))
       .filter(ev => new Date(ev.start).toDateString() === dayDate.toDateString())
       .map(ev => {
         const start = new Date(ev.start);

@@ -26,6 +26,7 @@ def dispatch(action: str, identity: dict, data: str | None) -> dict:
         "profile_stats":        lambda: _prf.handle_profile_stats(identity),
         "list_users":           lambda: _prf.handle_list_users(identity),
         "activity_feed":        lambda: _prf.handle_activity_feed(identity),
+        "reset_fairness":       lambda: _prf.handle_reset_fairness(identity),
     }
     if action in EXACT:
         return EXACT[action]()

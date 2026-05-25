@@ -180,6 +180,8 @@ class FairnessEngine:
 
             final_score = time_score - load_penalty + equity_bonus
         else:
+            load_penalty = 0.0
+            equity_bonus = 20.0
             final_score = time_score
 
         # 4. Calendar Conflict Penalty — 12 pts per conflicting participant, max 36
@@ -196,6 +198,10 @@ class FairnessEngine:
             "fairnessImpact": impact,
             "conflictCount": busy_count,
             "explanation": "",
+            "_hour": hour,
+            "_day": day,
+            "_load_penalty": load_penalty,
+            "_equity_bonus": equity_bonus,
         }
 
     def _fairness_impact(self, hour: int, day: int) -> float:
@@ -207,6 +213,28 @@ class FairnessEngine:
         elif day >= 4:
             return -6.0   # Critical: personal time boundary
         return -4.5       # Outside normal hours
+
+    def explain_slot(self, hour: int, day: int, score: float, load_penalty: float, equity_bonus: float) -> str:
+        """Heuristic explanation used when AI ranking is unavailable."""
+        days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        parts = []
+        hw = self.HOUR_WEIGHTS.get(hour, 0.3)
+        if hw >= 0.9:
+            parts.append(f"prime {days[day]} window")
+        elif hw <= 0.3:
+            parts.append(f"off-peak hour ({hour}:00)")
+        if load_penalty > 20:
+            parts.append("group heavily loaded this week")
+        if equity_bonus < 0:
+            parts.append("uneven load distribution between participants")
+        elif equity_bonus > 15:
+            parts.append("load well-balanced across participants")
+        if day >= 5:
+            parts.append("weekend slot")
+        if not parts:
+            parts.append("standard working window")
+        qualifier = "Good" if score >= 70 else ("Fair" if score >= 50 else "Poor")
+        return f"{qualifier} slot: {', '.join(parts)}."
 
     # ---------------------------------------------------------------------------
     # Candidate slot generation
