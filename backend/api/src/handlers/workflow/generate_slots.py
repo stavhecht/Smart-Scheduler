@@ -85,4 +85,10 @@ def handler(payload: dict) -> dict:
         }
         for dt in candidates
     ]
+    # Pass redacted busy intervals (start/end only) to downstream AI scorer.
+    # Cap per-user to bound payload size; AI client redacts further.
+    payload["participant_busy"] = {
+        uid: [{"start": b.get("start", ""), "end": b.get("end", "")} for b in busy_list[:50]]
+        for uid, busy_list in all_busy.items()
+    }
     return payload

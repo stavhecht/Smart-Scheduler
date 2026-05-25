@@ -40,7 +40,26 @@ export default function CreateMeetingModal({ prefill, onClose, onCreated, onRefr
   // Apply prefill on mount
   useEffect(() => {
     if (prefill) {
-      if (typeof prefill === 'object' && prefill?.datetime) {
+      if (typeof prefill === 'object' && prefill?.parsed) {
+        // NL-parsed prefill from the command palette
+        const p = prefill.parsed;
+        setNewMeeting(m => ({
+          ...m,
+          title: p.title || m.title,
+          durationMinutes: p.durationMinutes || m.durationMinutes,
+          daysForward: p.daysForward || m.daysForward,
+          description: p.description || m.description,
+        }));
+        setTitleTouched(true);
+        // Resolve parsed participants against the loaded user list
+        (p.participants || []).forEach(parsedUser => {
+          const match = allUsers.find(u =>
+            u.userId === parsedUser.userId ||
+            (parsedUser.email && u.email === parsedUser.email)
+          );
+          if (match) addUser(match);
+        });
+      } else if (typeof prefill === 'object' && prefill?.datetime) {
         setWizardDatetime(prefill.datetime);
       } else if (typeof prefill === 'string') {
         // Try to match a registered user by email

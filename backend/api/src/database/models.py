@@ -81,6 +81,12 @@ class MeetingRequest(BaseDBModel):
     cancelledAt: Optional[datetime] = None
     cancelledBy: Optional[str] = None
     externalEventIds: Dict[str, str] = Field(default_factory=dict)
+    # AI strategic summary — populated by SFN after slot generation; null if AI unavailable
+    aiMeetingScore: Optional[float] = None
+    aiSummary: Optional[str] = None
+    aiBestSlotIso: Optional[str] = None
+    aiBestSlotReason: Optional[str] = None
+    aiCalendarSuggestions: List[str] = Field(default_factory=list)
 
 
 class MeetingCreateSchema(BaseModel):
@@ -107,6 +113,8 @@ class SuggestedTimeSlot(BaseDBModel):
     fairnessImpact: float
     conflictCount: int
     explanation: str
+    aiScored: bool = False
+    aiSuggestions: Optional[str] = None
 
 
 class FairnessState(BaseDBModel):

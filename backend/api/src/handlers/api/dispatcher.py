@@ -21,6 +21,7 @@ def dispatch(action: str, identity: dict, data: str | None) -> dict:
         "check_calendar_sync":  lambda: _cal.handle_check_sync(identity),
         "create_meeting":       lambda: _mtg.handle_create_meeting(identity, data),
         "score_slot":           lambda: _mtg.handle_score_slot(identity, data),
+        "parse_meeting_nl":     lambda: _mtg.handle_parse_meeting_nl(identity, data),
         "update_ics_url":       lambda: _cal.handle_ics_url(identity, data),
         "profile_stats":        lambda: _prf.handle_profile_stats(identity),
         "list_users":           lambda: _prf.handle_list_users(identity),

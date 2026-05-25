@@ -11,7 +11,7 @@ import PublicProfile from './components/PublicProfile';
 import MeetingDetailModal from './components/MeetingDetailModal';
 import CommandPalette from './components/CommandPalette';
 import CreateMeetingModal from './components/CreateMeetingModal';
-import { apiGet, apiPost } from './apiClient';
+import { apiGet, apiPost, apiParseMeetingNL } from './apiClient';
 
 import { Amplify } from 'aws-amplify';
 import { Authenticator, useAuthenticator } from '@aws-amplify/ui-react';
@@ -465,6 +465,19 @@ function AppContent() {
           onClose={() => setShowPalette(false)}
           onNavigate={setActiveView}
           onNewMeeting={() => { setMeetingPrefill(null); setShowGlobalCreate(true); setShowPalette(false); }}
+          onNewMeetingFromText={async (text) => {
+            try {
+              const parsed = await apiParseMeetingNL(text);
+              setMeetingPrefill({ parsed });
+              setShowGlobalCreate(true);
+              setShowPalette(false);
+              if (parsed.unmatchedHints?.length) {
+                toast?.(`Couldn't match: ${parsed.unmatchedHints.join(', ')} — add manually`, 'info');
+              }
+            } catch (e) {
+              toast?.(`AI parse failed: ${e.message || e}`, 'error');
+            }
+          }}
           signOut={signOut}
           meetings={meetings}
           users={[]}

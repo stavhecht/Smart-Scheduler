@@ -338,12 +338,15 @@ def handle_score_slot(identity: dict, data: str | None) -> dict:
     if not start_iso:
         raise HTTPException(status_code=400, detail="startIso is required")
     try:
+        from src.common import openai_client
+
         user_id = identity["user_id"]
         slot_dt = datetime.fromisoformat(start_iso)
         end_dt = slot_dt + timedelta(minutes=duration_minutes)
         all_ids = list(set([user_id] + participant_ids))
 
         participant_states = []
+        participant_profiles = []
         participant_tz_offsets = []
         participant_working_days = []
         for uid in all_ids:
@@ -352,18 +355,50 @@ def handle_score_slot(identity: dict, data: str | None) -> dict:
                 participant_states.append(state.model_dump(mode="json"))
             p = _user_repo.get_profile_raw(uid)
             if p:
+                participant_profiles.append({
+                    "userId": uid,
+                    "timezone": p.get("timezone", "UTC"),
+                    "workingHours": p.get("workingHours"),
+                    "workingDays": p.get("workingDays", [0, 1, 2, 3, 4]),
+                    "lunchBreak": p.get("lunchBreak"),
+                })
                 participant_tz_offsets.append(get_tz_offset_hours(p.get("timezone", "UTC")))
                 participant_working_days.append(p.get("workingDays", [0, 1, 2, 3, 4]))
 
         user_profile = _user_repo.get_profile_raw(user_id)
         tz_offset = get_tz_offset_hours((user_profile or {}).get("timezone", "UTC"))
 
+        # Engine score — baseline + always provides fairnessImpact
         result = fairness_engine.score_time_slot(
             slot_dt, participant_states, duration_minutes,
             tz_offset_hours=tz_offset,
             participant_tz_offsets=participant_tz_offsets or None,
             participant_working_days=participant_working_days or None,
         )
+
+        # AI overlay — single-slot batch; falls back silently to engine on any error
+        ai_scored = False
+        ai_suggestions = None
+        try:
+            ai_results = openai_client.score_slots_with_ai(
+                [{
+                    "startIso": start_iso,
+                    "endIso": end_dt.isoformat(),
+                    "conflictCount": result.get("conflictCount", 0),
+                    "engine_baseline_score": result["score"],
+                }],
+                openai_client.build_participant_context(participant_states, participant_profiles),
+                duration_minutes,
+            )
+            ai = ai_results.get(start_iso)
+            if ai:
+                result["score"] = ai["score"]
+                result["explanation"] = ai["explanation"]
+                ai_suggestions = ai["suggestions"]
+                ai_scored = True
+        except openai_client.OpenAIScoreError as e:
+            logger.warning(f"score_slot AI failed, using engine: {e}")
+
         return {
             "startIso": start_iso,
             "endIso": end_dt.isoformat(),
@@ -371,9 +406,78 @@ def handle_score_slot(identity: dict, data: str | None) -> dict:
             "fairnessImpact": result["fairnessImpact"],
             "explanation": result["explanation"],
             "conflictCount": result.get("conflictCount", 0),
+            "aiScored": ai_scored,
+            "aiSuggestions": ai_suggestions,
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Scoring failed: {exc}")
+
+
+def handle_parse_meeting_nl(identity: dict, data: str | None) -> dict:
+    """Parse free-text meeting request → prefill fields for the create modal."""
+    if not data:
+        raise HTTPException(status_code=400, detail="Missing data for parse_meeting_nl")
+    try:
+        text = (json.loads(data).get("text") or "").strip()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid parse_meeting_nl data: {exc}")
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+
+    from src.common import openai_client
+
+    user_id = identity["user_id"]
+    known_users = []
+    try:
+        known_users = _user_repo.get_all_users(user_id)
+    except Exception:
+        pass
+
+    try:
+        parsed = openai_client.parse_meeting_intent(
+            text=text,
+            today_iso=datetime.now().date().isoformat(),
+            known_users=known_users,
+        )
+    except openai_client.OpenAIScoreError as e:
+        logger.warning(f"parse_meeting_nl failed: {e}")
+        raise HTTPException(status_code=503, detail=f"AI parser unavailable: {e}")
+
+    # Resolve participantHints → real users (matches displayName or email, case-insensitive)
+    resolved_users = []
+    resolved_emails = []
+    hints_lower = [h.lower() for h in parsed["participantHints"]]
+    seen_ids: set = set()
+    for u in known_users:
+        uid = u.get("userId", "")
+        if uid == user_id or uid in seen_ids:
+            continue
+        name = (u.get("displayName") or "").lower()
+        email = (u.get("email") or "").lower()
+        for h in hints_lower:
+            if h and (h == name or h == email or h in name or h in email):
+                resolved_users.append({
+                    "userId": uid,
+                    "displayName": u.get("displayName", ""),
+                    "email": u.get("email", ""),
+                })
+                if email:
+                    resolved_emails.append(email)
+                seen_ids.add(uid)
+                break
+
+    return {
+        "title": parsed["title"],
+        "durationMinutes": parsed["durationMinutes"],
+        "daysForward": parsed["daysForward"],
+        "description": parsed["description"],
+        "participants": resolved_users,
+        "participantEmails": resolved_emails,
+        "unmatchedHints": [h for h in parsed["participantHints"]
+                          if not any(h.lower() == ru["displayName"].lower() or h.lower() == ru["email"].lower()
+                                     or h.lower() in ru["displayName"].lower() or h.lower() in ru["email"].lower()
+                                     for ru in resolved_users)],
+    }
 
 
 def handle_meeting_log(identity: dict, action: str) -> list:

@@ -12,7 +12,8 @@ function saveRecent(item) {
   localStorage.setItem(RECENT_KEY, JSON.stringify([item, ...prev].slice(0, MAX_RECENT)));
 }
 
-export default function CommandPalette({ onClose, onNavigate, onNewMeeting, signOut, meetings = [], users = [] }) {
+export default function CommandPalette({ onClose, onNavigate, onNewMeeting, onNewMeetingFromText, signOut, meetings = [], users = [] }) {
+  const [parsing, setParsing] = useState(false);
   const [query, setQuery]          = useState('');
   const [selectedIdx, setSelected] = useState(0);
   const [recentIds, setRecentIds]  = useState(() => loadRecent());
@@ -56,6 +57,23 @@ export default function CommandPalette({ onClose, onNavigate, onNewMeeting, sign
     return map;
   }, [actions, meetingItems, peopleItems]);
 
+  // NL meeting creation item — shown when query is non-trivial and onNewMeetingFromText is wired
+  const nlItem = useMemo(() => {
+    const raw = query.trim();
+    if (!onNewMeetingFromText || raw.length < 6) return null;
+    return {
+      id: 'cmd:nl-create',
+      label: parsing ? `🧠 Parsing "${raw}"…` : `🧠 Create meeting: "${raw}"`,
+      type: 'action',
+      action: async () => {
+        if (parsing) return;
+        setParsing(true);
+        try { await onNewMeetingFromText(raw); }
+        finally { setParsing(false); }
+      },
+    };
+  }, [query, parsing, onNewMeetingFromText]);
+
   const sections = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) {
@@ -65,12 +83,14 @@ export default function CommandPalette({ onClose, onNavigate, onNewMeeting, sign
         { label: 'Actions',  items: actions.slice(0, 4) },
       ];
     }
+    const aiSection = nlItem ? [{ label: 'AI', items: [nlItem] }] : [];
     return [
+      ...aiSection,
       { label: 'Actions',  items: actions.filter(c => c.label.toLowerCase().includes(q)) },
       { label: 'Meetings', items: meetingItems.filter(i => i.label.toLowerCase().includes(q)) },
       { label: 'People',   items: peopleItems.filter(i => i.label.toLowerCase().includes(q)) },
     ];
-  }, [query, recentIds, allById, actions, meetingItems, peopleItems]);
+  }, [query, recentIds, allById, actions, meetingItems, peopleItems, nlItem]);
 
   const flatItems = useMemo(() => sections.flatMap(s => s.items), [sections]);
 

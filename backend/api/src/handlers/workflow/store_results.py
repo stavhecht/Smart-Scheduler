@@ -18,9 +18,27 @@ logger = logging.getLogger(__name__)
 _meeting_repo = MeetingRepository()
 
 
+def _persist_meeting_summary(request_id: str, ai_summary: dict) -> None:
+    """Patch the meeting META row with AI strategic-summary fields."""
+    if not ai_summary:
+        return
+    meta = _meeting_repo.get_meta(request_id)
+    if not meta:
+        return
+    meta.update({
+        "aiMeetingScore": float(ai_summary.get("meetingScore", 0.0)),
+        "aiSummary": str(ai_summary.get("summary", ""))[:300],
+        "aiBestSlotIso": str(ai_summary.get("bestSlotIso", "")),
+        "aiBestSlotReason": str(ai_summary.get("bestSlotReason", ""))[:600],
+        "aiCalendarSuggestions": list(ai_summary.get("calendarSuggestions", []))[:4],
+    })
+    _meeting_repo.update_meta(request_id, meta)
+
+
 def handler(payload: dict) -> dict:
     request_id = payload["request_id"]
     scored_slots = payload.get("scored_slots", [])
+    ai_summary = payload.get("ai_summary")
 
     from src.core.fairness import engine
     from datetime import datetime as _dt
@@ -45,12 +63,20 @@ def handler(payload: dict) -> dict:
             fairnessImpact=float(slot_data["fairnessImpact"]),
             conflictCount=slot_data.get("conflictCount", 0),
             explanation=slot_data["explanation"],
+            aiScored=bool(slot_data.get("aiScored", False)),
+            aiSuggestions=slot_data.get("aiSuggestions"),
         )
         _meeting_repo.write_slot(
             request_id,
             slot.startIso.isoformat(),
             slot.model_dump(mode="json"),
         )
+
+    if ai_summary:
+        try:
+            _persist_meeting_summary(request_id, ai_summary)
+        except Exception as e:
+            logger.warning(f"store_results: failed to persist AI summary: {e}")
 
     payload["stored_slots_count"] = len(best_slots)
     return payload

@@ -663,9 +663,9 @@ function SlotCalendar({ slots, onBook }) {
                     <div key={i} className="cv-event"
                       style={{ top: `calc(${e.topPct}% + 1px)`, height: `calc(${e.heightPct}% - 2px)`, left: '2px', right: '2px', background: `${color}1a`, borderLeft: `3px solid ${color}`, color, cursor: 'pointer' }}
                       onClick={() => onBook(e.s)}
-                      title={`${e.sc}% fairness${e.s.explanation ? ' — ' + e.s.explanation : ''}`}
+                      title={`${e.sc}% fairness${e.s.aiScored ? ' (AI-scored)' : ''}${e.s.explanation ? ' — ' + e.s.explanation : ''}${e.s.aiSuggestions ? '\n💡 ' + e.s.aiSuggestions : ''}`}
                     >
-                      <span className="cv-ev-title">{e.isTop ? '⭐ ' : ''}{e.startStr}</span>
+                      <span className="cv-ev-title">{e.isTop ? '⭐ ' : ''}{e.s.aiScored ? '🧠 ' : ''}{e.startStr}</span>
                       <span className="cv-ev-time">{e.sc}% fair</span>
                     </div>
                   );
@@ -817,6 +817,48 @@ function MeetingCard({
       {/* Slot selection panel — organizer, pending, expanded */}
       {isExpanded && isOrganizer && !isConfirmed && (
         <div className="mc-panel slots-panel">
+          {/* AI strategic summary — meeting-wide verdict + calendar suggestions */}
+          {meeting.aiSummary && (
+            <div style={{
+              border: '1px solid #8b5cf644',
+              background: 'linear-gradient(135deg, #8b5cf60d, #8b5cf604)',
+              borderRadius: '10px',
+              padding: '0.75rem 0.9rem',
+              marginBottom: '0.75rem',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.4rem' }}>
+                <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#8b5cf6', background: '#8b5cf61a', border: '1px solid #8b5cf644', borderRadius: '10px', padding: '0.15rem 0.5rem' }}>
+                  🧠 AI Verdict
+                </span>
+                {typeof meeting.aiMeetingScore === 'number' && (
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    Slate score: <strong style={{ color: '#8b5cf6' }}>{Math.round(meeting.aiMeetingScore)}%</strong>
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize: '0.85rem', marginBottom: meeting.aiBestSlotReason ? '0.5rem' : 0 }}>
+                {meeting.aiSummary}
+              </div>
+              {meeting.aiBestSlotReason && (
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: meeting.aiCalendarSuggestions?.length ? '0.5rem' : 0 }}>
+                  <strong>Best pick:</strong> {meeting.aiBestSlotReason}
+                </div>
+              )}
+              {meeting.aiCalendarSuggestions?.length > 0 && (
+                <div style={{ marginTop: '0.4rem' }}>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 600, color: '#8b5cf6', marginBottom: '0.25rem' }}>
+                    💡 To unlock better slots:
+                  </div>
+                  <ul style={{ margin: 0, paddingLeft: '1.1rem', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                    {meeting.aiCalendarSuggestions.map((s, i) => (
+                      <li key={i} style={{ marginBottom: '0.2rem' }}>{s}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* AI-generated slots */}
           {hasSlots && (
             <>
@@ -863,9 +905,16 @@ function MeetingCard({
                           >
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.2rem' }}>
                               <div className="slot-time">{fmtDate(slot.startIso)} · {fmtTime(slot.startIso)} – {fmtTime(slot.endIso)}</div>
-                              <span style={{ fontSize: '0.68rem', fontWeight: 700, color: quality.color, background: quality.color + '1a', border: `1px solid ${quality.color}44`, borderRadius: '10px', padding: '0.1rem 0.5rem' }}>
-                                {isTop ? '⭐ ' : ''}{quality.text}
-                              </span>
+                              <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                                {slot.aiScored && (
+                                  <span title="Scored by AI" style={{ fontSize: '0.62rem', fontWeight: 700, color: '#8b5cf6', background: '#8b5cf61a', border: '1px solid #8b5cf644', borderRadius: '10px', padding: '0.1rem 0.4rem' }}>
+                                    🧠 AI
+                                  </span>
+                                )}
+                                <span style={{ fontSize: '0.68rem', fontWeight: 700, color: quality.color, background: quality.color + '1a', border: `1px solid ${quality.color}44`, borderRadius: '10px', padding: '0.1rem 0.5rem' }}>
+                                  {isTop ? '⭐ ' : ''}{quality.text}
+                                </span>
+                              </div>
                             </div>
                             <div className="slot-score-row">
                               <span className="slot-score-label">Fairness</span>
@@ -876,6 +925,11 @@ function MeetingCard({
                             </div>
                             {slot.explanation && (
                               <div className="slot-explain">{slot.explanation}</div>
+                            )}
+                            {slot.aiSuggestions && (
+                              <div className="slot-explain" style={{ marginTop: '0.25rem', color: '#8b5cf6', fontStyle: 'normal' }}>
+                                💡 {slot.aiSuggestions}
+                              </div>
                             )}
                           </div>
                         );
@@ -909,19 +963,31 @@ function MeetingCard({
 
               {customPicker.scored && (
                 <div className="custom-scored">
-                  <div className="slot-score-row" style={{ marginBottom: '0.5rem' }}>
-                    <span className="slot-score-label">Fairness</span>
-                    <div className="slot-score-track">
-                      <div
-                        className="slot-score-fill"
-                        style={{ width: `${Math.min(100, Math.round(customPicker.scored.score))}%` }}
-                      />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                    <div className="slot-score-row" style={{ flex: 1 }}>
+                      <span className="slot-score-label">Fairness</span>
+                      <div className="slot-score-track">
+                        <div
+                          className="slot-score-fill"
+                          style={{ width: `${Math.min(100, Math.round(customPicker.scored.score))}%` }}
+                        />
+                      </div>
+                      <span className="slot-score-val">{Math.round(customPicker.scored.score)}%</span>
                     </div>
-                    <span className="slot-score-val">{Math.round(customPicker.scored.score)}%</span>
+                    {customPicker.scored.aiScored && (
+                      <span title="Scored by AI" style={{ marginLeft: '0.5rem', fontSize: '0.62rem', fontWeight: 700, color: '#8b5cf6', background: '#8b5cf61a', border: '1px solid #8b5cf644', borderRadius: '10px', padding: '0.1rem 0.4rem' }}>
+                        🧠 AI
+                      </span>
+                    )}
                   </div>
-                  <div className="slot-explain" style={{ marginBottom: '0.75rem' }}>
+                  <div className="slot-explain" style={{ marginBottom: customPicker.scored.aiSuggestions ? '0.4rem' : '0.75rem' }}>
                     "{customPicker.scored.explanation}"
                   </div>
+                  {customPicker.scored.aiSuggestions && (
+                    <div className="slot-explain" style={{ marginBottom: '0.75rem', color: '#8b5cf6', fontStyle: 'normal' }}>
+                      💡 {customPicker.scored.aiSuggestions}
+                    </div>
+                  )}
                   <button className="btn-book-custom" onClick={onBookCustom}>
                     ✅ Book This Time
                   </button>

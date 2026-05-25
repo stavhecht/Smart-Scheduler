@@ -152,6 +152,11 @@ export async function apiScoreSlot(startIso, durationMinutes, participantIds = [
     return apiProxy('score_slot', { startIso, durationMinutes, participantIds });
 }
 
+/** Parse a free-text meeting request into prefill fields. */
+export async function apiParseMeetingNL(text) {
+    return apiProxy('parse_meeting_nl', { text });
+}
+
 /** Save (or clear) the user's .ics calendar feed URL. */
 export async function apiUpdateIcsUrl(icsUrl) {
     return apiProxy('update_ics_url', { icsUrl });
