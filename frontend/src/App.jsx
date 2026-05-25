@@ -151,10 +151,10 @@ function AppContent() {
       })
       .catch(() => {}); // silent failure during background polling
 
-  /** Auto-poll meetings every 30 seconds when logged in. */
+  /** Auto-poll meetings every 60 seconds when logged in. */
   useEffect(() => {
     if (!profile) return;
-    const id = setInterval(refreshMeetings, 30_000);
+    const id = setInterval(refreshMeetings, 60_000);
     return () => clearInterval(id);
   }, [profile?.id]);
 

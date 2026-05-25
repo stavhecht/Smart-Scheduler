@@ -139,11 +139,11 @@ export default function CalendarView({ meetings, calendarStatus, profile, onMeet
     }
   };
 
-  // Fetch on mount / week change / connection change; poll every 30 s as fallback
+  // Fetch on mount / week change / connection change; poll every 60 s as fallback
   useEffect(() => {
     if (!anyCalConnected) { setGcalEvents([]); return; }
     fetchGcalEvents(weekOffset);
-    const id = setInterval(() => fetchGcalEvents(weekOffsetRef.current), 30_000);
+    const id = setInterval(() => fetchGcalEvents(weekOffsetRef.current), 60_000);
     return () => clearInterval(id);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [weekOffset, anyCalConnected]);
@@ -171,22 +171,6 @@ export default function CalendarView({ meetings, calendarStatus, profile, onMeet
       .catch(() => setWebhookActive(false));
   }, [googleConnected]);
 
-  // When webhooks are active, poll check_calendar_sync every 5 s.
-  // A changeToken change means Google fired a notification → re-fetch immediately.
-  useEffect(() => {
-    if (!webhookActive) return;
-    const id = setInterval(async () => {
-      try {
-        const { changeToken } = await apiCheckCalendarSync();
-        if (lastChangeToken.current !== null && changeToken !== lastChangeToken.current) {
-          fetchGcalEvents(weekOffsetRef.current);
-        }
-        lastChangeToken.current = changeToken;
-      } catch { /* ignore — 30 s poll is still running as fallback */ }
-    }, 5_000);
-    return () => clearInterval(id);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [webhookActive]);
 
   /* ── App meetings (confirmed/pending with a booked slot) ── */
   const confirmed = meetings.filter(m =>
