@@ -1,6 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect } from 'react';
 import { X } from 'lucide-react';
-import { apiGet } from '../apiClient.js';
 
 /* ─────────────────────────────────────────────
    MeetingDetailModal
@@ -201,10 +200,13 @@ export default function MeetingDetailModal({
             </DetailRow>
           )}
 
-          {/* AI fairness verdict — polled from async SmartSchedulerFairnessAI workflow */}
-          {meeting.status !== 'cancelled' && (
-            <DetailRow label="AI fairness">
-              <AIFairnessBadge requestId={meeting.requestId} />
+          {/* AI analysis — populated synchronously during meeting creation */}
+          {meeting.status !== 'cancelled' && meeting.aiAnalysis && (
+            <DetailRow label="AI analysis">
+              <AiAnalysisPanel
+                analysis={meeting.aiAnalysis}
+                selectedSlotStart={meeting.selectedSlotStart}
+              />
             </DetailRow>
           )}
 
@@ -371,88 +373,130 @@ function ParticipantList({ participants, acceptedBy, currentUserId }) {
 }
 
 /* ─────────────────────────────────────────────
-   AIFairnessBadge
-   Polls /api/meetings/<id>/ai_fairness every 4 s until the async
-   SmartSchedulerFairnessAI workflow lands (status: "ready" or "error").
-   Gives up after ~2 min so a stuck workflow can't leak timers.
+   AiAnalysisPanel
+   Renders the AI fairness verdict computed synchronously during meeting
+   creation. Reads from meeting.aiAnalysis (no polling, no async loading).
+
+   Shape of `analysis`:
+     {
+       method: 'ai' | 'heuristic_fallback',
+       model: string,
+       summary: string,
+       bestSlot: string (ISO),
+       bestSlotReason: string,
+       calendarSuggestions: string[],
+       meetingFairnessScore: number,
+     }
 ───────────────────────────────────────────── */
-function AIFairnessBadge({ requestId }) {
-  const [state, setState] = useState({ status: 'pending' });
-  const attempts = useRef(0);
-  const MAX_ATTEMPTS = 30; // 30 × 4 s = 2 min
+function AiAnalysisPanel({ analysis, selectedSlotStart }) {
+  if (!analysis) return null;
+  const score = Math.round(Number(analysis.meetingFairnessScore || 0));
+  const method = analysis.method || '';
+  const summary = analysis.summary || '';
+  const bestSlot = analysis.bestSlot || '';
+  const bestSlotReason = analysis.bestSlotReason || '';
+  const suggestions = analysis.calendarSuggestions || [];
 
-  useEffect(() => {
-    if (!requestId) return;
-    let cancelled = false;
-    let timer = null;
-
-    const poll = async () => {
-      attempts.current += 1;
-      try {
-        const res = await apiGet(`/api/meetings/${requestId}/ai_fairness`);
-        if (cancelled) return;
-        setState(res);
-        if (res.status === 'ready' || res.error) return; // stop polling
-      } catch (e) {
-        if (cancelled) return;
-        setState({ status: 'error', error: e.message || 'Failed to load AI score' });
-        return;
-      }
-      if (attempts.current < MAX_ATTEMPTS) {
-        timer = setTimeout(poll, 4000);
-      } else if (!cancelled) {
-        setState({ status: 'timeout' });
-      }
-    };
-
-    timer = setTimeout(poll, 0);
-    return () => { cancelled = true; clearTimeout(timer); };
-  }, [requestId]);
-
-  if (state.status === 'pending') {
-    return (
-      <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', fontStyle: 'italic' }}>
-        Computing AI fairness verdict…
-      </span>
-    );
-  }
-  if (state.status === 'timeout') {
-    return (
-      <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-        AI score is taking longer than usual — refresh later.
-      </span>
-    );
-  }
-  if (state.status === 'error' || state.error) {
-    return (
-      <span style={{ color: 'var(--danger)', fontSize: '0.8rem' }}>
-        AI score unavailable
-      </span>
-    );
-  }
-
-  // Ready
-  const score = Math.round(Number(state.meetingFairnessScore || 0));
-  const method = state.method || '';
-  const summary = state.summary || '';
   const scoreColor =
     score >= 80 ? 'var(--success)' :
     score >= 60 ? 'var(--accent)' :
     score >= 40 ? '#fbbf24'        : 'var(--danger)';
+
+  const methodLabel =
+    method === 'ai' ? (analysis.model || 'gpt-4o-mini') :
+    method === 'heuristic_fallback' ? 'heuristic fallback' :
+    method;
+
+  const fmtSlot = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d)) return iso;
+    return d.toLocaleString('en-US', {
+      weekday: 'short', month: 'short', day: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    });
+  };
+
+  const isBestTheSelected = bestSlot && selectedSlotStart && bestSlot === selectedSlotStart;
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-      <span>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+      {/* Score line */}
+      <div>
         <span style={{ color: scoreColor, fontWeight: 700, fontSize: '0.95rem' }}>
           {score} / 100
         </span>
         <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem', marginLeft: '0.5rem' }}>
-          ({method === 'ai' ? 'gpt-4o-mini' : method === 'heuristic_fallback' ? 'heuristic only' : method})
+          ({methodLabel})
         </span>
-      </span>
+      </div>
+
+      {/* Summary */}
       {summary && (
-        <span style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', lineHeight: 1.4 }}>
+        <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.8rem', lineHeight: 1.5 }}>
           {summary}
-        </span>
+        </p>
+      )}
+
+      {/* Best slot recommendation */}
+      {bestSlot && (
+        <div style={{
+          padding: '0.6rem 0.75rem',
+          borderRadius: 'var(--radius-md)',
+          background: isBestTheSelected ? 'rgba(52,211,153,0.08)' : 'var(--bg-raised)',
+          border: `1px solid ${isBestTheSelected ? 'rgba(52,211,153,0.25)' : 'var(--border)'}`,
+        }}>
+          <div style={{
+            fontSize: '0.7rem',
+            fontWeight: 700,
+            textTransform: 'uppercase',
+            letterSpacing: '0.04em',
+            color: isBestTheSelected ? 'var(--success)' : 'var(--accent)',
+            marginBottom: '0.3rem',
+          }}>
+            {isBestTheSelected ? '✓ AI recommended (this slot)' : 'AI recommended slot'}
+          </div>
+          <div style={{ color: 'var(--text-primary)', fontWeight: 600, fontSize: '0.85rem' }}>
+            {fmtSlot(bestSlot)}
+          </div>
+          {bestSlotReason && (
+            <p style={{
+              margin: '0.35rem 0 0',
+              color: 'var(--text-secondary)',
+              fontSize: '0.78rem',
+              lineHeight: 1.5,
+            }}>
+              {bestSlotReason}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Calendar suggestions */}
+      {suggestions.length > 0 && (
+        <div>
+          <div style={{
+            fontSize: '0.7rem',
+            fontWeight: 700,
+            textTransform: 'uppercase',
+            letterSpacing: '0.04em',
+            color: 'var(--text-muted)',
+            marginBottom: '0.35rem',
+          }}>
+            Calendar tips for better slots
+          </div>
+          <ul style={{
+            margin: 0,
+            paddingLeft: '1.1rem',
+            color: 'var(--text-secondary)',
+            fontSize: '0.78rem',
+            lineHeight: 1.55,
+          }}>
+            {suggestions.map((s, i) => (
+              <li key={i} style={{ marginBottom: '0.25rem' }}>{s}</li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   );

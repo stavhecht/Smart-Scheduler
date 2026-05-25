@@ -38,7 +38,6 @@ def dispatch(action: str, identity: dict, data: str | None) -> dict:
         ("book_custom:",        lambda: _mtg.handle_book_custom(identity, action, data)),
         ("reschedule:",         lambda: _mtg.handle_reschedule(identity, action, data)),
         ("meeting_log:",        lambda: _mtg.handle_meeting_log(identity, action)),
-        ("ai_fairness:",        lambda: _mtg.handle_ai_fairness(identity, action)),
         ("get_public_profile:", lambda: _prf.handle_public_profile(identity, action)),
         ("shared_meetings:",    lambda: _prf.handle_shared_meetings(identity, action)),
         ("oauth_url:",          lambda: _cal.handle_oauth_url(identity, action)),

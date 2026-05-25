@@ -1,20 +1,19 @@
 """
-AI-powered fairness scoring (Method B / Method C of the fairness system).
+AI-powered fairness scoring — primary scorer.
 
 This module wraps an OpenAI gpt-4o-mini agent that takes:
-  - the heuristic fairness output from `fairness.py` (Method A)
-  - each participant's historical fairness scores + decision-influence trends
+  - heuristic candidate slots (used only as a sanity-check reference)
+  - each participant's historical fairness scores + load metrics
   - each participant's Google Calendar events for the meeting horizon
 
-…and emits a calibrated fairness verdict per candidate slot, plus a single
-"meeting fairness score" that captures whether the proposed slots are equitable
-across the group as a whole.
+…and emits a PRIMARY fairness verdict per candidate slot, identifies the single
+best slot with a rationale, and suggests concrete calendar-event changes that
+would unlock even better options.
 
-The agent is intentionally instructed to RESPECT the existing heuristic score —
-it can adjust within a bounded delta, but cannot wholesale override Method A.
-This gives us Method C (hybrid blend) for free.
+The AI's score is the score the user sees. The heuristic score is only used
+as a fallback if the AI call fails (OpenAI down, no API key, parse error).
 
-Runtime model: gpt-4o-mini (cheap, fast, supports structured JSON output).
+Runtime model: gpt-4o-mini (cheap, fast, JSON-mode output).
 """
 
 from __future__ import annotations
@@ -25,9 +24,6 @@ import os
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
-
-# Bounded blend: AI may shift a slot's heuristic score by at most ±AI_MAX_DELTA
-AI_MAX_DELTA = 15.0
 
 # AI call budget: cap input context to avoid runaway cost on huge groups
 MAX_PARTICIPANTS_FOR_AI = 25
@@ -42,42 +38,57 @@ MODEL_ID = os.environ.get("AI_FAIRNESS_MODEL", "gpt-4o-mini")
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
-You are the Smart Scheduler Fairness Auditor. Your job is to review a set of
-candidate meeting time slots that a heuristic scheduler has already scored, and
-to issue a calibrated fairness verdict that accounts for:
+You are the Smart Scheduler AI Analyst. Your scores are shown DIRECTLY to users
+as the primary fairness verdict for candidate meeting slots — there is no
+heuristic post-processing.
 
-  1. Each participant's historical fairness score trend (are they consistently
-     absorbing inconvenient meetings? are they over-loaded this week?).
-  2. Each participant's calendar density and the type of events around the
-     proposed slot (deep-work blocks vs. back-to-back meetings).
-  3. Decision-making equity — does the same person keep getting prime slots
-     while others get pushed to fringe hours?
-  4. Inclusion — does every participant have at least one workable option in
-     their local working hours?
+You receive:
+  1. Candidate time slots, each with a reference heuristic pre-score (guidance
+     only — use your own judgment).
+  2. Each participant's current fairness score, weekly load, suffering score,
+     and recent fairness trend.
+  3. Each participant's calendar density around the proposed slots (event
+     details anonymized — only start/end/duration/attendee_count provided).
 
-CRITICAL RULES:
-- The heuristic score (Method A) is the source of truth for time-of-day and
-  load mechanics. You are ALLOWED to nudge it by at most ±15 points based on
-  the additional context. Do not invent large swings.
-- Never reveal calendar event TITLES verbatim — they may be sensitive. Refer
-  to events generically ("a focus block", "back-to-back meetings", "a
-  recurring 1:1").
-- Output STRICT JSON only. No markdown, no prose outside the JSON.
+Your job:
+  A. Score every slot 0–100 based on overall fairness for the GROUP.
+  B. Pick the SINGLE best slot and explain in 2–3 sentences why (mention which
+     participants benefit and how the slot avoids burdens).
+  C. Suggest 2–4 SPECIFIC, ACTIONABLE calendar changes participants could make
+     to unlock even better slots (e.g. "If Alice moves her recurring Tuesday
+     1:1 to a different day, the Tuesday 10am slot would gain ~12 points
+     because she would be coming off a focus block rather than a meeting").
+     Refer to participants by their userId. Suggestions must be concrete and
+     reference specific days/times.
 
-Output schema:
+SCORING CRITERIA:
+  - Time-of-day fairness (prime working hours vs. fringe hours per timezone)
+  - Load balance (do not pile onto someone already overloaded this week)
+  - Calendar context (avoid creating back-to-back chains, respect focus blocks)
+  - Historical equity (someone consistently absorbing bad slots is unfair)
+  - Inclusion (every participant should have at least one workable option)
+
+PRIVACY RULES:
+  - NEVER mention event titles, attendee names, or emails — you do not have
+    them and must not invent them. Refer to events generically: "a focus
+    block", "back-to-back meetings", "a 1:1".
+
+OUTPUT STRICT JSON ONLY — no markdown, no prose outside the JSON:
 {
-  "meeting_fairness_score": <0-100 float>,
-  "summary": "<one short sentence>",
+  "meeting_fairness_score": <0-100 float — average quality of the slate>,
+  "summary": "<one concise sentence — overall verdict on the slate>",
+  "best_slot": "<startIso of the single best slot, must match an input slot exactly>",
+  "best_slot_reason": "<2-3 sentences — why this is the best, who benefits>",
+  "calendar_suggestions": [
+    "<specific actionable suggestion 1>",
+    "<specific actionable suggestion 2>"
+  ],
   "slot_scores": [
     {
-      "startIso": "<iso>",
+      "startIso": "<must match an input slot exactly>",
       "ai_score": <0-100 float>,
-      "delta_vs_heuristic": <float, must be within [-15, 15]>,
-      "rationale": "<one short sentence, no event titles>"
+      "description": "<one sentence — why this slot scores as it does>"
     }
-  ],
-  "participant_equity": [
-    {"userId": "<id>", "burden_assessment": "low|balanced|elevated|overloaded"}
   ]
 }
 """
@@ -120,7 +131,7 @@ def _build_user_prompt(
         "candidate_slots": [
             {
                 "startIso": s.get("startIso"),
-                "heuristic_score": float(s.get("score", 0.0)),
+                "heuristic_reference_score": float(s.get("score", 0.0)),
                 "heuristic_explanation": s.get("explanation", ""),
                 "conflictCount": int(s.get("conflictCount", 0)),
             }
@@ -149,8 +160,8 @@ def _build_user_prompt(
 def _call_openai(user_prompt: str) -> Optional[dict]:
     """Invoke gpt-4o-mini with JSON-mode structured output.
 
-    Returns the parsed JSON dict on success, or None if the call fails — caller
-    must fall back to the heuristic-only blend so the meeting flow never breaks.
+    Returns the parsed JSON dict on success, or None if the call fails —
+    caller must fall back to heuristic scores so the meeting flow never breaks.
     """
     api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
@@ -169,7 +180,7 @@ def _call_openai(user_prompt: str) -> Optional[dict]:
             model=MODEL_ID,
             response_format={"type": "json_object"},
             temperature=0.2,
-            max_tokens=1500,
+            max_tokens=2000,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
@@ -183,15 +194,52 @@ def _call_openai(user_prompt: str) -> Optional[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Hybrid blend (Method C)
+# Helpers
 # ---------------------------------------------------------------------------
 
-def _blend(heuristic: float, ai_score: Optional[float]) -> float:
-    """Bounded blend so the AI cannot wholesale override the heuristic."""
-    if ai_score is None:
-        return heuristic
-    delta = max(-AI_MAX_DELTA, min(AI_MAX_DELTA, ai_score - heuristic))
-    return round(max(0.0, min(100.0, heuristic + delta)), 1)
+def _norm_iso(s: Any) -> str:
+    """Normalize an ISO string for matching (drop fractional secs / timezone offset)."""
+    if not s:
+        return ""
+    s = str(s).split("+")[0].split("Z")[0].split(".")[0]
+    return s.strip()
+
+
+def _heuristic_fallback(
+    candidate_slots: List[dict],
+    reason: str = "AI scoring unavailable — heuristic scores used as fallback.",
+) -> Dict[str, Any]:
+    """Produce a fallback result using only the heuristic scores."""
+    if not candidate_slots:
+        return {
+            "method": "heuristic_fallback",
+            "model": MODEL_ID,
+            "meeting_fairness_score": 0.0,
+            "summary": reason,
+            "best_slot": "",
+            "best_slot_reason": "",
+            "calendar_suggestions": [],
+            "slot_scores": [],
+        }
+    avg = round(sum(float(s.get("score", 0)) for s in candidate_slots) / len(candidate_slots), 1)
+    best = max(candidate_slots, key=lambda s: float(s.get("score", 0)))
+    return {
+        "method": "heuristic_fallback",
+        "model": MODEL_ID,
+        "meeting_fairness_score": avg,
+        "summary": reason,
+        "best_slot": str(best.get("startIso", "")),
+        "best_slot_reason": best.get("explanation", "Top-ranked slot by the heuristic scorer."),
+        "calendar_suggestions": [],
+        "slot_scores": [
+            {
+                "startIso": str(s.get("startIso", "")),
+                "ai_score": float(s.get("score", 0.0)),
+                "description": s.get("explanation", ""),
+            }
+            for s in candidate_slots
+        ],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -204,15 +252,16 @@ def score_meeting_with_ai(
     participants: List[dict],
 ) -> Dict[str, Any]:
     """
-    Run the AI fairness pass on a meeting.
+    Run the AI fairness pass on a meeting. AI is the PRIMARY scorer — heuristic
+    scores are only used if the AI call fails.
 
     Args:
         request_id: meeting requestId (for logging only)
-        candidate_slots: output of `fairness.engine.score_time_slot` — each item
-            must have startIso, score, explanation, conflictCount.
+        candidate_slots: list of dicts with startIso, score (heuristic
+            reference), explanation, conflictCount.
         participants: list of dicts with userId, timezone,
             current_fairness_score, meetings_this_week, suffering_score,
-            fairness_trend (list of past scores), calendar_events (Google).
+            fairness_trend, calendar_events.
 
     Returns:
         {
@@ -220,61 +269,72 @@ def score_meeting_with_ai(
             "model": str,
             "meeting_fairness_score": float,
             "summary": str,
-            "slot_scores": [{startIso, heuristic_score, ai_score, blended_score, rationale}],
-            "participant_equity": [{userId, burden_assessment}],
+            "best_slot": str (startIso),
+            "best_slot_reason": str,
+            "calendar_suggestions": [str],
+            "slot_scores": [{startIso, ai_score, description}],
         }
     """
+    if not candidate_slots:
+        return _heuristic_fallback([], "No candidate slots to score.")
+
     user_prompt = _build_user_prompt(candidate_slots, participants)
     ai = _call_openai(user_prompt)
 
     if not ai:
-        # Heuristic fallback — keep the meeting flow alive even if OpenAI is down
-        return {
-            "method": "heuristic_fallback",
-            "model": MODEL_ID,
-            "meeting_fairness_score": (
-                round(sum(float(s.get("score", 0)) for s in candidate_slots) / len(candidate_slots), 1)
-                if candidate_slots else 0.0
-            ),
-            "summary": "AI scoring unavailable — using heuristic average.",
-            "slot_scores": [
-                {
-                    "startIso": s.get("startIso"),
-                    "heuristic_score": float(s.get("score", 0.0)),
-                    "ai_score": None,
-                    "blended_score": float(s.get("score", 0.0)),
-                    "rationale": s.get("explanation", ""),
-                }
-                for s in candidate_slots
-            ],
-            "participant_equity": [],
-        }
+        return _heuristic_fallback(candidate_slots)
 
-    # Map AI per-slot scores back by startIso
-    ai_by_start = {entry.get("startIso"): entry for entry in ai.get("slot_scores", [])}
-    blended_slots = []
+    # Map AI per-slot scores back to input slots (match by normalized startIso)
+    ai_by_start: Dict[str, dict] = {}
+    for entry in ai.get("slot_scores", []) or []:
+        key = _norm_iso(entry.get("startIso"))
+        if key:
+            ai_by_start[key] = entry
+
+    slot_scores_out: List[dict] = []
     for s in candidate_slots:
-        start = s.get("startIso")
+        start_raw = str(s.get("startIso", ""))
+        key = _norm_iso(start_raw)
         heuristic = float(s.get("score", 0.0))
-        ai_entry = ai_by_start.get(start, {})
-        ai_score = ai_entry.get("ai_score")
+        ai_entry = ai_by_start.get(key, {})
+
+        # Use AI score directly if present, else fall back to heuristic for this slot
         try:
-            ai_score_f = float(ai_score) if ai_score is not None else None
+            ai_score = float(ai_entry.get("ai_score")) if ai_entry.get("ai_score") is not None else heuristic
         except (TypeError, ValueError):
-            ai_score_f = None
-        blended_slots.append({
-            "startIso": start,
-            "heuristic_score": heuristic,
-            "ai_score": ai_score_f,
-            "blended_score": _blend(heuristic, ai_score_f),
-            "rationale": ai_entry.get("rationale", s.get("explanation", "")),
+            ai_score = heuristic
+
+        ai_score = max(0.0, min(100.0, round(ai_score, 1)))
+        slot_scores_out.append({
+            "startIso": start_raw,
+            "ai_score": ai_score,
+            "description": str(ai_entry.get("description") or s.get("explanation", ""))[:500],
         })
+
+    # Resolve best_slot — AI's choice if it matches an input slot, else top by ai_score
+    best_iso = _norm_iso(ai.get("best_slot", ""))
+    best_match = next(
+        (entry for entry in slot_scores_out if _norm_iso(entry["startIso"]) == best_iso),
+        None,
+    )
+    if not best_match and slot_scores_out:
+        best_match = max(slot_scores_out, key=lambda e: e["ai_score"])
+
+    suggestions_raw = ai.get("calendar_suggestions", []) or []
+    suggestions = [str(s)[:400] for s in suggestions_raw if str(s).strip()][:4]
+
+    logger.info(
+        f"[ai_fairness] request_id={request_id} method=ai slots={len(slot_scores_out)} "
+        f"best={best_match['startIso'] if best_match else 'n/a'} suggestions={len(suggestions)}"
+    )
 
     return {
         "method": "ai",
         "model": MODEL_ID,
         "meeting_fairness_score": float(ai.get("meeting_fairness_score", 0.0)),
         "summary": str(ai.get("summary", ""))[:280],
-        "slot_scores": blended_slots,
-        "participant_equity": ai.get("participant_equity", []),
+        "best_slot": best_match["startIso"] if best_match else "",
+        "best_slot_reason": str(ai.get("best_slot_reason", ""))[:600],
+        "calendar_suggestions": suggestions,
+        "slot_scores": slot_scores_out,
     }
