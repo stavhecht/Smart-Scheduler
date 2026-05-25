@@ -42,7 +42,7 @@ function gcalColor(ev) {
   return GCAL_COLOR_MAP[ev.colorId || ''] ?? GCAL_COLOR_MAP[''];
 }
 
-export default function CalendarView({ meetings, calendarStatus, onMeetingClick, onCreateAt }) {
+export default function CalendarView({ meetings, calendarStatus, profile, onMeetingClick, onCreateAt }) {
   const toast = useToast();
   const [weekOffset, setWeekOffset] = useState(0);
   const [dayOffset, setDayOffset]   = useState(0);
@@ -50,10 +50,11 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
   const [gcalEvents, setGcalEvents]   = useState([]);
   const [tooltip, setTooltip]         = useState(null); // { ev, el }
   const [webhookActive, setWebhookActive] = useState(false);
-  const nowRef           = useRef(null);
-  const touchStartX      = useRef(null);
-  const lastChangeToken  = useRef(null);
-  const scrollContainerRef = useRef(null); // ref to .main-content (the actual scroll container)
+  const nowRef             = useRef(null);
+  const touchStartX        = useRef(null);
+  const lastChangeToken    = useRef(null);
+  const scrollContainerRef = useRef(null);
+  const tokenErrorShown    = useRef(false);
 
   const googleConnected = calendarStatus?.google?.connected;
   const icsConnected    = calendarStatus?.ics?.connected;
@@ -131,8 +132,9 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
       setGcalEvents(Array.isArray(data) ? data : []);
     } catch {
       setGcalEvents([]);
-      if (googleConnected) {
-        toast('Could not load Google Calendar events — your session may have expired. Try reconnecting in Settings.', 'warning');
+      if (googleConnected && !tokenErrorShown.current) {
+        tokenErrorShown.current = true;
+        toast('Could not sync Google Calendar — your token may have expired. Go to Profile → Calendar tab to reconnect.', 'warning');
       }
     }
   };
@@ -156,6 +158,9 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
     return () => document.removeEventListener('visibilitychange', onVisible);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anyCalConnected]);
+
+  // Reset token error flag when connection state changes so the warning can re-appear after reconnect
+  useEffect(() => { tokenErrorShown.current = false; }, [googleConnected]);
 
   // Register a Google Calendar push-notification watch channel once connected.
   // Falls back gracefully if WEBHOOK_BASE_URL isn't configured on the backend.
@@ -344,6 +349,19 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
       const m = ev.meeting;
       const colors = ev.status === 'pending' ? PENDING_COLOR : (ROLE_COLOR[ev.userRole] || ROLE_COLOR.organizer);
       const participantCount = m?.participantUserIds?.length || 0;
+
+      // Build Google Calendar link: direct event link if we have an externalEventId, else day view
+      let gcalLink = null;
+      if (googleConnected && ev.status === 'confirmed' && m?.selectedSlotStart) {
+        const d = new Date(m.selectedSlotStart);
+        const rawId = m.externalEventIds?.[profile?.userId];
+        const eventId = rawId?.startsWith('google:') ? rawId.slice(7) : null;
+        const url = eventId
+          ? `https://www.google.com/calendar/event?eid=${btoa(eventId + ' primary')}`
+          : `https://calendar.google.com/calendar/r/day/${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
+        gcalLink = <a className="cv-tt-link" href={url} target="_blank" rel="noreferrer">📅 Open in Google Calendar ↗</a>;
+      }
+
       return (
         <>
           <div className="cv-tt-title" style={{ borderLeft: `3px solid ${colors.border}`, paddingLeft: 8 }}>
@@ -357,6 +375,7 @@ export default function CalendarView({ meetings, calendarStatus, onMeetingClick,
             📋 {ev.status === 'confirmed' ? '✅ Confirmed' : '⏳ Pending'}
             {' · '}{ev.userRole === 'organizer' ? 'You organized' : 'You were invited'}
           </div>
+          {gcalLink}
           <button
             className="cv-tt-btn"
             onClick={() => { setTooltip(null); onMeetingClick?.(ev.meeting); }}

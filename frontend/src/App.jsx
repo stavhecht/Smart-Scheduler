@@ -394,6 +394,7 @@ function AppContent() {
                 <CalendarView
                   meetings={meetings}
                   calendarStatus={calendarStatus}
+                  profile={profile}
                   onMeetingClick={(m) => setSelectedMeeting(m)}
                   onCreateAt={handleCreateAt}
                 />

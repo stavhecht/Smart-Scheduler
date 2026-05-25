@@ -175,7 +175,7 @@ export default function MeetingDetailModal({
           {Object.keys(meeting.participantNames || {}).length > 0 && (
             <DetailRow label="Participants">
               <ParticipantList
-                participants={Object.entries(meeting.participantNames).map(([uid, info]) => ({
+                participants={Object.entries(meeting.participantNames ?? {}).map(([uid, info]) => ({
                   userId: uid,
                   name: (typeof info === 'object' ? info.name : info) || uid,
                   email: typeof info === 'object' ? (info.email || '') : '',
