@@ -112,9 +112,12 @@ class SuggestedTimeSlot(BaseDBModel):
 class FairnessState(BaseDBModel):
     userId: str
     fairnessScore: float
-    meetingLoadMetrics: Dict[str, int]
+    meetingLoadMetrics: Dict[str, Any]
     inconvenientMeetingsCount: int
     lastUpdatedAt: datetime = Field(default_factory=datetime.now)
+    cancellation_timestamps: List[str] = Field(default_factory=list)
+    prime_slots_accepted: int = 0
+    lastWeekReset: Optional[str] = None
 
 
 class MeetingLogEntry(BaseDBModel):

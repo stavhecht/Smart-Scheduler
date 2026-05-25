@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timedelta
 
 from fastapi import HTTPException
 
 from src.database.repository import MeetingRepository, UserRepository
+from src.core.fairness import engine as _fairness_engine
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +26,17 @@ def handle_profile(identity: dict) -> dict:
         if not profile:
             raise HTTPException(status_code=404, detail="User not found")
         metrics = fairness.meetingLoadMetrics if fairness else {}
+        last_updated = fairness.lastUpdatedAt.isoformat() if fairness and fairness.lastUpdatedAt else None
+        # Recalculate score at read time so passive recovery is reflected immediately
+        live_score = (
+            _fairness_engine.calculate_user_score(metrics, last_updated) if fairness else 100.0
+        )
+        # Count only recent cancellations (last 30 days) for the UI details panel
+        cutoff = datetime.now() - timedelta(days=30)
+        recent_cancellations = sum(
+            1 for ts in metrics.get("cancellation_timestamps", [])
+            if datetime.fromisoformat(str(ts)) > cutoff
+        )
         return {
             "id": user_id,
             "name": profile.displayName,
@@ -41,11 +54,12 @@ def handle_profile(identity: dict) -> dict:
             "lunchBreak": profile.lunchBreak,
             "notificationPrefs": profile.notificationPrefs,
             "showFairnessScore": profile.showFairnessScore,
-            "fairness_score": float(fairness.fairnessScore) if fairness else 100.0,
+            "fairness_score": live_score,
             "details": {
-                "meetings_this_week": metrics.get("meetings_this_week", 0),
-                "cancellations_last_month": metrics.get("cancellations_last_month", 0),
-                "suffering_score": metrics.get("suffering_score", 0),
+                "meetings_this_week":     metrics.get("meetings_this_week", 0),
+                "cancellations_last_month": recent_cancellations,
+                "suffering_score":         metrics.get("suffering_score", 0),
+                "prime_slots_accepted":    metrics.get("prime_slots_accepted", 0),
             },
         }
     except HTTPException:
@@ -58,7 +72,7 @@ def handle_profile(identity: dict) -> dict:
             "email": email,
             "role": "Professional",
             "fairness_score": 100.0,
-            "details": {"meetings_this_week": 0, "cancellations_last_month": 0, "suffering_score": 0},
+            "details": {"meetings_this_week": 0, "cancellations_last_month": 0, "suffering_score": 0, "prime_slots_accepted": 0},
         }
 
 
