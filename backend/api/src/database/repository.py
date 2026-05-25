@@ -255,6 +255,7 @@ class UserRepository:
 
     def get_recent_activity(self, user_id: str, limit: int = 12) -> List[dict]:
         part_items = self._db.query_prefix(f"USER#{user_id}", "PART#")
+        part_items.sort(key=lambda x: x.get("addedAt", ""), reverse=True)
         meeting_ids = [item.get("meetingId") for item in part_items if item.get("meetingId")]
         meeting_ids = meeting_ids[:20]
         all_logs: List[dict] = []

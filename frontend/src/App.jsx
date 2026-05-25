@@ -125,17 +125,19 @@ function AppContent() {
 
   const [lastRefreshed, setLastRefreshed] = useState(null);
 
-  /** Refreshes profile (fairness score), meetings list, and calendar status. */
+  /** Refreshes profile (fairness score), meetings list, calendar status, and activity feed. */
   const refreshAll = () =>
     Promise.all([
       apiGet('/api/profile'),
       apiGet('/api/meetings'),
       apiGet('/api/calendar/status').catch(() => null),
+      apiGet('/api/activity').catch(() => []),
     ])
-      .then(([profileData, meetingsData, calStatus]) => {
+      .then(([profileData, meetingsData, calStatus, activityData]) => {
         setProfile(profileData);
         setMeetings(Array.isArray(meetingsData) ? meetingsData : (meetingsData?.meetings ?? []));
         if (calStatus) setCalendarStatus(calStatus);
+        setActivities(Array.isArray(activityData) ? activityData : []);
         setLastRefreshed(new Date());
       })
       .catch(err => console.error('Refresh failed', err));

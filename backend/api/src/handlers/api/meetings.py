@@ -172,6 +172,7 @@ def handle_cancel(identity: dict, action: str) -> dict:
             logger.error(f"Calendar delete failed during cancel for {request_id}: {exc}")
     updated = _meeting_repo.cancel(request_id, user_id)
     _user_repo.update_fairness_on_cancel(user_id)
+    _meeting_repo.log_activity(request_id, "cancelled", user_id)
     return {"status": "success", "message": "Meeting cancelled", "meeting": updated}
 
 
@@ -235,6 +236,7 @@ def handle_edit(identity: dict, action: str, data: str | None) -> dict:
                     )
             except Exception:
                 pass
+    _meeting_repo.log_activity(request_id, "edited", user_id)
     return {"status": "success", "meeting": updated, "slotsRegenerated": needs_regen}
 
 

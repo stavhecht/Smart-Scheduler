@@ -78,5 +78,12 @@ def handler(payload: dict) -> dict:
         except Exception as e:
             logger.warning(f"store_results: failed to persist AI summary: {e}")
 
+    creator_id = payload.get("creator_id", "")
+    if creator_id:
+        try:
+            _meeting_repo.log_activity(request_id, "created", creator_id)
+        except Exception as e:
+            logger.warning(f"store_results: failed to log created activity: {e}")
+
     payload["stored_slots_count"] = len(best_slots)
     return payload
