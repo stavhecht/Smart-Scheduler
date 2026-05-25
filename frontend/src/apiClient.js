@@ -87,6 +87,12 @@ export async function apiGet(path) {
     const logMatch = path.match(/^\/api\/meetings\/([^/]+)\/log$/);
     if (logMatch) return apiProxy(`meeting_log:${logMatch[1]}`);
 
+    // /api/meetings/<id>/ai_fairness  — polled after meeting creation while the
+    // async SmartSchedulerFairnessAI workflow computes the gpt-4o-mini verdict.
+    // Returns {status: "pending"} until the score lands.
+    const aiFairnessMatch = path.match(/^\/api\/meetings\/([^/]+)\/ai_fairness$/);
+    if (aiFairnessMatch) return apiProxy(`ai_fairness:${aiFairnessMatch[1]}`);
+
     // /api/calendar/oauth_url?provider=<provider>
     const oauthUrlMatch = path.match(/^\/api\/calendar\/oauth_url\?provider=(.+)$/);
     if (oauthUrlMatch) return apiProxy(`oauth_url:${oauthUrlMatch[1]}`);

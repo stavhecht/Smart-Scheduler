@@ -11,12 +11,13 @@ from fastapi import HTTPException
 from src.common.timezone import get_tz_offset_hours
 from src.core.fairness import engine as fairness_engine
 from src.database import models
-from src.database.repository import MeetingRepository, UserRepository
+from src.database.repository import AIFairnessRepository, MeetingRepository, UserRepository
 
 logger = logging.getLogger(__name__)
 
 _meeting_repo = MeetingRepository()
 _user_repo = UserRepository()
+_ai_fairness_repo = AIFairnessRepository()
 
 
 def handle_meetings(identity: dict) -> list:
@@ -373,6 +374,36 @@ def handle_score_slot(identity: dict, data: str | None) -> dict:
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Scoring failed: {exc}")
+
+
+def handle_ai_fairness(identity: dict, action: str) -> dict:
+    """
+    Poll endpoint for the async AI fairness score on a meeting.
+    Returns the latest verdict, or {"status": "pending"} if it hasn't landed yet.
+    """
+    request_id = action.split(":", 1)[1]
+    user_id = identity["user_id"]
+    meeting = _meeting_repo.get_meta(request_id)
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    if meeting.get("creatorUserId") != user_id and user_id not in meeting.get("participantUserIds", []):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    score = _ai_fairness_repo.get_meeting_score(request_id)
+    if not score:
+        return {"status": "pending", "requestId": request_id}
+    return {
+        "status": "ready",
+        "requestId": request_id,
+        "method": score.get("method", "unknown"),
+        "model": score.get("model", ""),
+        "meetingFairnessScore": float(score.get("meetingFairnessScore", 0.0)),
+        "summary": score.get("summary", ""),
+        "slotScores": score.get("slotScores", []),
+        "participantEquity": score.get("participantEquity", []),
+        "computedAt": score.get("computedAt", ""),
+        "error": score.get("error", ""),
+    }
 
 
 def handle_meeting_log(identity: dict, action: str) -> list:

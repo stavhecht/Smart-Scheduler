@@ -12,3 +12,5 @@ mangum==0.17.0
 # NOTE: boto3 / botocore / uvicorn / python-dotenv are intentionally omitted.
 # boto3 is pre-installed in the Lambda Python 3.12 runtime (no need to bundle it).
 # uvicorn / click / colorama / h11 are dev-only (Mangum handles ASGI in Lambda).
+# AI fairness scoring (async SFN workflow → src/core/ai_fairness.py).
+openai>=1.40.0

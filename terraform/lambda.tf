@@ -20,6 +20,7 @@ resource "aws_lambda_function" "api_handler" {
       GOOGLE_CLIENT_ID     = var.google_client_id
       GOOGLE_CLIENT_SECRET = var.google_client_secret
       OPENAI_API_KEY       = var.openai_api_key
+      AI_FAIRNESS_MODEL    = "gpt-4o-mini"
       WEBHOOK_BASE_URL     = aws_apigatewayv2_api.api_gateway.api_endpoint
     }
   }

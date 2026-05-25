@@ -1,5 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
+import { apiGet } from '../apiClient.js';
 
 /* ─────────────────────────────────────────────
    MeetingDetailModal
@@ -200,6 +201,13 @@ export default function MeetingDetailModal({
             </DetailRow>
           )}
 
+          {/* AI fairness verdict — polled from async SmartSchedulerFairnessAI workflow */}
+          {meeting.status !== 'cancelled' && (
+            <DetailRow label="AI fairness">
+              <AIFairnessBadge requestId={meeting.requestId} />
+            </DetailRow>
+          )}
+
           {/* ICS download */}
           {meeting.icsUrl && (
             <DetailRow label="Calendar">
@@ -358,6 +366,94 @@ function ParticipantList({ participants, acceptedBy, currentUserId }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────
+   AIFairnessBadge
+   Polls /api/meetings/<id>/ai_fairness every 4 s until the async
+   SmartSchedulerFairnessAI workflow lands (status: "ready" or "error").
+   Gives up after ~2 min so a stuck workflow can't leak timers.
+───────────────────────────────────────────── */
+function AIFairnessBadge({ requestId }) {
+  const [state, setState] = useState({ status: 'pending' });
+  const attempts = useRef(0);
+  const MAX_ATTEMPTS = 30; // 30 × 4 s = 2 min
+
+  useEffect(() => {
+    if (!requestId) return;
+    let cancelled = false;
+    let timer = null;
+
+    const poll = async () => {
+      attempts.current += 1;
+      try {
+        const res = await apiGet(`/api/meetings/${requestId}/ai_fairness`);
+        if (cancelled) return;
+        setState(res);
+        if (res.status === 'ready' || res.error) return; // stop polling
+      } catch (e) {
+        if (cancelled) return;
+        setState({ status: 'error', error: e.message || 'Failed to load AI score' });
+        return;
+      }
+      if (attempts.current < MAX_ATTEMPTS) {
+        timer = setTimeout(poll, 4000);
+      } else if (!cancelled) {
+        setState({ status: 'timeout' });
+      }
+    };
+
+    timer = setTimeout(poll, 0);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [requestId]);
+
+  if (state.status === 'pending') {
+    return (
+      <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', fontStyle: 'italic' }}>
+        Computing AI fairness verdict…
+      </span>
+    );
+  }
+  if (state.status === 'timeout') {
+    return (
+      <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+        AI score is taking longer than usual — refresh later.
+      </span>
+    );
+  }
+  if (state.status === 'error' || state.error) {
+    return (
+      <span style={{ color: 'var(--danger)', fontSize: '0.8rem' }}>
+        AI score unavailable
+      </span>
+    );
+  }
+
+  // Ready
+  const score = Math.round(Number(state.meetingFairnessScore || 0));
+  const method = state.method || '';
+  const summary = state.summary || '';
+  const scoreColor =
+    score >= 80 ? 'var(--success)' :
+    score >= 60 ? 'var(--accent)' :
+    score >= 40 ? '#fbbf24'        : 'var(--danger)';
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+      <span>
+        <span style={{ color: scoreColor, fontWeight: 700, fontSize: '0.95rem' }}>
+          {score} / 100
+        </span>
+        <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem', marginLeft: '0.5rem' }}>
+          ({method === 'ai' ? 'gpt-4o-mini' : method === 'heuristic_fallback' ? 'heuristic only' : method})
+        </span>
+      </span>
+      {summary && (
+        <span style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', lineHeight: 1.4 }}>
+          {summary}
+        </span>
+      )}
     </div>
   );
 }

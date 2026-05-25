@@ -39,6 +39,33 @@ def _get_state_machine_arn() -> str:
     return f"arn:aws:states:{region}:{account_id}:stateMachine:SmartSchedulerWorkflow"
 
 
+def _get_ai_state_machine_arn() -> str:
+    region = os.environ.get("AWS_REGION", "us-east-1")
+    account_id = os.environ.get("AWS_ACCOUNT_ID", "")
+    if not account_id:
+        account_id = boto3.client("sts").get_caller_identity()["Account"]
+    return f"arn:aws:states:{region}:{account_id}:stateMachine:SmartSchedulerFairnessAI"
+
+
+def _trigger_ai_fairness_async(meeting_dict: dict, sfn_input: dict) -> None:
+    """
+    Fire-and-forget: kick off the standard (async) SmartSchedulerFairnessAI
+    workflow after the sync slot-generation pipeline returns. Never raises —
+    the booking flow must not depend on AI scoring succeeding.
+    """
+    if os.environ.get("ENVIRONMENT") == "development":
+        return
+    try:
+        sfn = _get_sfn_client()
+        sfn.start_execution(
+            stateMachineArn=_get_ai_state_machine_arn(),
+            name=f"ai-{meeting_dict.get('requestId', 'unknown')}-{int(datetime.now().timestamp())}",
+            input=json.dumps(sfn_input),
+        )
+    except Exception as exc:
+        logger.warning(f"[ai_fairness] async trigger failed for {meeting_dict.get('requestId')}: {exc}")
+
+
 def run_or_schedule(
     meeting_data: models.MeetingCreateSchema, user_id: str
 ) -> dict:
@@ -95,7 +122,9 @@ def run_or_schedule(
         except Exception as local_exc:
             logger.warning(f"Local scheduling also failed for {meeting.requestId}: {local_exc}")
 
-    return meeting.model_dump(mode="json")
+    meeting_dict = meeting.model_dump(mode="json")
+    _trigger_ai_fairness_async(meeting_dict, sfn_input)
+    return meeting_dict
 
 
 def run_local_steps(payload: dict) -> None:
