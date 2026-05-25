@@ -39,8 +39,8 @@ def handler(payload: dict) -> dict:
     for slot_data in best_slots:
         slot = models.SuggestedTimeSlot(
             requestId=request_id,
-            startIso=datetime.fromisoformat(slot_data["startIso"]),
-            endIso=datetime.fromisoformat(slot_data["endIso"]),
+            startIso=datetime.fromisoformat(slot_data["startIso"].replace("Z", "+00:00")),
+            endIso=datetime.fromisoformat(slot_data["endIso"].replace("Z", "+00:00")),
             score=float(slot_data["score"]),
             fairnessImpact=float(slot_data["fairnessImpact"]),
             conflictCount=slot_data.get("conflictCount", 0),

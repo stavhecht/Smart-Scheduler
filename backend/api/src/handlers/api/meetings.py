@@ -82,10 +82,17 @@ def handle_book(identity: dict, action: str, data: str | None) -> dict:
     slot_data = _meeting_repo.get_slot(request_id, slot_start_iso)
     fairness_impact = float(slot_data.get("fairnessImpact", -2.0)) if slot_data else -2.0
     all_pids = list(set([meeting.get("creatorUserId", "")] + meeting.get("participantUserIds", [])))
-    _user_repo.update_fairness_on_booking(all_pids, fairness_impact)
 
+    # Confirm slot first (conditional write — raises 409 if slot already taken)
     _meeting_repo.confirm_slot(request_id, slot_start_iso)
+    # Update fairness only after successful confirmation to avoid double-penalising on concurrent books
+    _user_repo.update_fairness_on_booking(all_pids, fairness_impact)
     _meeting_repo.log_activity(request_id, "booked", user_id)
+
+    # Update local dict to reflect the confirmed state so the response is accurate
+    meeting["status"] = "confirmed"
+    meeting["selectedSlotStart"] = slot_start_iso
+    meeting["updatedAt"] = datetime.now().isoformat()
 
     end_iso = _compute_end_iso(slot_start_iso, slot_data, meeting)
     ics_content = calendar_client.generate_ics_content(
@@ -124,6 +131,8 @@ def handle_decline(identity: dict, action: str) -> dict:
     meeting = _meeting_repo.get_meta(request_id)
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
+    if user_id == meeting.get("creatorUserId"):
+        raise HTTPException(status_code=403, detail="The organizer cannot decline their own meeting")
     if user_id not in meeting.get("participantUserIds", []):
         raise HTTPException(status_code=403, detail="You are not a participant in this meeting")
     declined = meeting.get("declinedBy", [])
