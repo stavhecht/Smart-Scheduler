@@ -584,7 +584,7 @@
   background: rgba(255, 255, 255, 0.025);
   border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 12px;
-  padding: 1rem;
+  padding: 0.85rem 1rem;
   cursor: pointer;
   position: relative;
   overflow: hidden;
@@ -599,6 +599,7 @@
 
 .slot-card.top-pick {
   border-color: rgba(56, 189, 248, 0.35);
+  background: rgba(56, 189, 248, 0.04);
   box-shadow: 0 0 14px rgba(56, 189, 248, 0.07);
 }
 
@@ -613,8 +614,8 @@
   border-bottom-left-radius: 8px;
 }
 
-.slot-date { font-size: 0.76rem; color: var(--text-secondary); margin-bottom: 0.15rem; }
-.slot-time { font-size: 1rem; font-weight: 700; color: white; margin-bottom: 0.6rem; }
+.slot-date { font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 0.2rem; }
+.slot-time { font-size: 1.1rem; font-weight: 700; color: var(--text-primary); letter-spacing: -0.01em; margin-bottom: 0.6rem; }
 
 .slot-score-row {
   display: flex;
@@ -749,7 +750,7 @@
   box-shadow: 0 0 10px rgba(56,189,248,0.15);
 }
 .slt-slot-time {
-  font-size: 0.62rem;
+  font-size: 0.68rem;
   font-weight: 600;
   color: var(--text-primary);
   line-height: 1.2;
@@ -1396,6 +1397,10 @@
 
 [data-theme="light"] .slot-time {
   color: var(--text-primary);
+}
+
+[data-theme="light"] .slot-card.top-pick {
+  background: rgba(37, 99, 235, 0.04);
 }
 
 [data-theme="light"] .slot-score-track {
