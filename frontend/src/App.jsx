@@ -340,6 +340,7 @@ function AppContent() {
             </button>
             <button onClick={signOut} className="signout-btn" style={{ flex: 1 }}>Sign Out</button>
           </div>
+          <div style={{ textAlign: 'center', fontSize: '0.65rem', opacity: 0.35, marginTop: '0.4rem', letterSpacing: '0.05em' }}>v1.1</div>
         </div>
       </aside>
 
