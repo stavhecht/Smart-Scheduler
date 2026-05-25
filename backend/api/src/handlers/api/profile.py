@@ -56,10 +56,11 @@ def handle_profile(identity: dict) -> dict:
             "showFairnessScore": profile.showFairnessScore,
             "fairness_score": live_score,
             "details": {
-                "meetings_this_week":     metrics.get("meetings_this_week", 0),
+                "meetings_this_week":      metrics.get("meetings_this_week", 0),
+                "fairness_balance":        round(float(metrics.get("fairness_balance", 0.0)), 1),
+                "inconvenient_count":      metrics.get("inconvenient_count", 0),
+                "convenient_count":        metrics.get("convenient_count", 0),
                 "cancellations_last_month": recent_cancellations,
-                "suffering_score":         metrics.get("suffering_score", 0),
-                "prime_slots_accepted":    metrics.get("prime_slots_accepted", 0),
                 "last_week_reset":         fairness.lastWeekReset if fairness else None,
             },
         }
@@ -154,6 +155,9 @@ def handle_reset_fairness(identity: dict) -> dict:
     new_metrics = {
         **fairness.meetingLoadMetrics,
         "meetings_this_week": 0,
+        "fairness_balance": 0.0,
+        "inconvenient_count": 0,
+        "convenient_count": 0,
         "cancellation_timestamps": [],
     }
     new_score = _fairness_engine.calculate_user_score(new_metrics, now)

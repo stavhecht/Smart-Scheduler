@@ -40,47 +40,31 @@ class FairnessEngine:
         self,
         metrics: dict,
         last_updated: Optional[str] = None,
-        group_avg_meetings: float = 0.0,
+        **kwargs,
     ) -> float:
         """
-        Fairness score (0–100). Higher = this person deserves scheduling priority.
+        Fairness score (0–100). 50 = neutral.
+        Above 50 = owed a good slot (accepted inconvenient meetings).
+        Below 50 = has been getting good slots (owes consideration to others).
 
-        Logic:
-        - Relative overload (meetings above group average) is penalised heavily.
-        - Absolute meeting count adds a small base penalty.
-        - Recent cancellations (last 30 days) cost points; halved vs. old formula so
-          rescheduling is not punished excessively.
-        - Passive recovery: score drifts back to 100 when a user is inactive.
+        Derived from `fairness_balance` in metrics, which accumulates:
+          +15 for weekend meetings (significant sacrifice)
+          +8  for off-peak meetings (some sacrifice)
+          -4  for standard working-hours meetings
+          -10 for prime-time meetings (you got a great deal)
+
+        Balance drifts back toward 0 (neutral) at 2%/day so old history fades.
         """
-        score = 100.0
-        try:
-            meetings = float(metrics.get('meetings_this_week', 0))
-
-            cutoff = datetime.now() - timedelta(days=30)
-            recent_cancellations = sum(
-                1 for ts in metrics.get('cancellation_timestamps', [])
-                if datetime.fromisoformat(str(ts)) > cutoff
-            )
-
-            # Relative overload: penalise being above the group's average load
-            relative_load = max(0.0, meetings - group_avg_meetings)
-            score -= relative_load * 5.0
-            # Absolute load: small per-meeting base cost
-            score -= meetings * 1.0
-            # Cancellation penalty (2.5 pts each; expires after 30 days)
-            score -= recent_cancellations * 2.5
-        except (TypeError, ValueError):
-            pass
-
-        # Passive recovery: up to +20 pts for inactivity (0.5 pts/day)
+        balance = float(metrics.get('fairness_balance', 0.0))
+        # Drift toward 0 (neutral) — 2% per day, capped at 30% total
         if last_updated:
             try:
-                days_inactive = (datetime.now() - datetime.fromisoformat(str(last_updated))).days
-                score += min(days_inactive * 0.5, 20.0)
+                days = (datetime.now() - datetime.fromisoformat(str(last_updated))).days
+                drift_pct = min(days * 0.02, 0.30)
+                balance = balance * (1.0 - drift_pct)
             except (ValueError, TypeError):
                 pass
-
-        return max(0.0, min(100.0, score))
+        return max(0.0, min(100.0, 50.0 + balance))
 
     # ---------------------------------------------------------------------------
     # Slot scoring (Social Fairness Algorithm)
@@ -128,37 +112,28 @@ class FairnessEngine:
         hour = local_dt.hour
         day = local_dt.weekday()
 
-        # 1. Base Time Score — averaged across all participant local times when available
+        # 1. Per-participant time quality — collected for both time_score and equity calc
+        p_time_qualities: List[float] = []
         if participant_tz_offsets:
-            p_time_scores = []
             for i, offset in enumerate(participant_tz_offsets):
                 p_local = slot_dt + timedelta(hours=offset)
-
                 lb  = participant_lunch_breaks[i] if participant_lunch_breaks and i < len(participant_lunch_breaks) else None
                 hw  = self.LUNCH_BREAK_WEIGHT if self._is_lunch_hour(p_local.hour, lb) else self.HOUR_WEIGHTS.get(p_local.hour, 0.3)
-
-                if participant_working_days and i < len(participant_working_days):
-                    pwd = participant_working_days[i]
-                else:
-                    pwd = [0, 1, 2, 3, 4]
-
-                dw = self.WORKING_DAY_WEIGHT if p_local.weekday() in pwd else self.REST_DAY_WEIGHT
-                p_time_scores.append(hw * dw * 100.0)
-            time_score = sum(p_time_scores) / len(p_time_scores)
+                pwd = participant_working_days[i] if participant_working_days and i < len(participant_working_days) else [0, 1, 2, 3, 4]
+                dw  = self.WORKING_DAY_WEIGHT if p_local.weekday() in pwd else self.REST_DAY_WEIGHT
+                p_time_qualities.append(hw * dw * 100.0)
+            time_score = sum(p_time_qualities) / len(p_time_qualities)
         else:
-            lb0          = participant_lunch_breaks[0] if participant_lunch_breaks else None
-            hour_weight  = self.LUNCH_BREAK_WEIGHT if self._is_lunch_hour(hour, lb0) else self.HOUR_WEIGHTS.get(hour, 0.3)
-
-            if participant_working_days and len(participant_working_days) > 0:
-                pwd = participant_working_days[0]
-            else:
-                pwd = [0, 1, 2, 3, 4]
-
-            day_weight = self.WORKING_DAY_WEIGHT if day in pwd else self.REST_DAY_WEIGHT
-            time_score = hour_weight * day_weight * 100.0
+            lb0         = participant_lunch_breaks[0] if participant_lunch_breaks else None
+            hour_weight = self.LUNCH_BREAK_WEIGHT if self._is_lunch_hour(hour, lb0) else self.HOUR_WEIGHTS.get(hour, 0.3)
+            pwd         = participant_working_days[0] if participant_working_days else [0, 1, 2, 3, 4]
+            day_weight  = self.WORKING_DAY_WEIGHT if day in pwd else self.REST_DAY_WEIGHT
+            tq          = hour_weight * day_weight * 100.0
+            p_time_qualities = [tq] * (len(participant_states) if participant_states else 1)
+            time_score  = tq
 
         if participant_states:
-            # 2. Participant Load & Fatigue (0-30 penalty)
+            # 2. Participant Load penalty (0-30)
             total_load = sum(
                 float(p.get('meetingLoadMetrics', {}).get('meetings_this_week', 0))
                 for p in participant_states
@@ -166,22 +141,28 @@ class FairnessEngine:
             avg_load = total_load / len(participant_states)
             load_penalty = min(avg_load * 4.0, 30.0)
 
-            # 3. Equity Bonus — rewards slots that equalise load across participants
-            p_scores = [
-                self.calculate_user_score(
-                    p.get('meetingLoadMetrics', {}),
-                    p.get('lastUpdatedAt'),
-                    group_avg_meetings=avg_load,
-                )
+            # 3. Equity alignment: reward slots that give convenient time to the most-deserving
+            # participant (highest fairness score = most owed a good slot).
+            p_fairness = [
+                self.calculate_user_score(p.get('meetingLoadMetrics', {}), p.get('lastUpdatedAt'))
                 for p in participant_states
             ]
-            variance = (max(p_scores) - min(p_scores)) if len(p_scores) > 1 else 0.0
-            equity_bonus = max(-15.0, 20.0 - variance * 0.4)
+            if len(p_fairness) > 1 and max(p_fairness) > min(p_fairness):
+                max_fs = max(p_fairness)
+                weights = [fs / max_fs for fs in p_fairness]
+                w_sum = sum(weights)
+                weighted_avg = sum(w * q for w, q in zip(weights, p_time_qualities)) / w_sum
+                unweighted_avg = sum(p_time_qualities) / len(p_time_qualities)
+                # Positive when high-fairness participants get more convenient time
+                equity_bonus = (weighted_avg - unweighted_avg) * 30.0
+                equity_bonus = max(-15.0, min(15.0, equity_bonus))
+            else:
+                equity_bonus = 5.0  # single participant or all equal — small neutral bonus
 
             final_score = time_score - load_penalty + equity_bonus
         else:
             load_penalty = 0.0
-            equity_bonus = 20.0
+            equity_bonus = 5.0
             final_score = time_score
 
         # 4. Calendar Conflict Penalty — 12 pts per conflicting participant, max 36
@@ -341,30 +322,49 @@ class FairnessEngine:
     # Fairness score update on booking
     # ---------------------------------------------------------------------------
 
+    # Balance delta table: maps fairness_impact to balance change
+    _IMPACT_TO_DELTA: List[tuple] = [
+        (-5.0, +15),  # weekend / very off-hours → significant sacrifice
+        (-3.5, +8),   # off-peak hours → some sacrifice
+        (-1.5, -4),   # standard working hours → small cost
+        (0.0,  -10),  # prime time → you got a great deal
+    ]
+
+    def _impact_to_balance_delta(self, impact: float) -> int:
+        for threshold, delta in self._IMPACT_TO_DELTA:
+            if impact <= threshold:
+                return delta
+        return -10
+
     def update_score_after_booking(
         self,
         current_state: dict,
         slot_fairness_impact: float
     ) -> dict:
         """
-        Recalculate and return updated fairness metrics after a meeting is booked.
+        Update fairness balance after a meeting is booked.
 
-        Inconvenient slots (impact < -2) → suffering +1 → net score gain.
-        Prime slots (impact == -1.0) → prime_slots_accepted +1 → score gain every 3.
+        Credit/debt model:
+          Inconvenient slot (off-hours / weekend) → balance UP → score rises above 50
+          Convenient slot (prime time)            → balance DOWN → score drops below 50
+
+        This way the score tracks "how much good scheduling I'm owed":
+          50 = neutral, 100 = highly owed, 0 = has been getting great slots
         """
         metrics = current_state.get('meetingLoadMetrics', {})
-        new_meetings      = int(metrics.get('meetings_this_week', 0)) + 1
-        new_suffering     = int(metrics.get('suffering_score', 0))
-        new_prime         = int(metrics.get('prime_slots_accepted', 0))
-        cancel_timestamps = list(metrics.get('cancellation_timestamps', []))
+        balance = float(metrics.get('fairness_balance', 0.0))
+        delta   = self._impact_to_balance_delta(slot_fairness_impact)
+        balance = max(-50.0, min(50.0, balance + delta))
 
-        is_inconvenient = slot_fairness_impact < -2
+        is_inconvenient = delta > 0
 
         new_metrics = {
-            'meetings_this_week':      new_meetings,
-            'suffering_score':         new_suffering + (1 if is_inconvenient else 0),
-            'prime_slots_accepted':    new_prime,
-            'cancellation_timestamps': cancel_timestamps,
+            **metrics,
+            'fairness_balance':        round(balance, 1),
+            'meetings_this_week':      int(metrics.get('meetings_this_week', 0)) + 1,
+            'cancellation_timestamps': list(metrics.get('cancellation_timestamps', [])),
+            'inconvenient_count':      int(metrics.get('inconvenient_count', 0)) + (1 if is_inconvenient else 0),
+            'convenient_count':        int(metrics.get('convenient_count', 0)) + (0 if is_inconvenient else 1),
         }
         last_updated = current_state.get('lastUpdatedAt')
         new_score = self.calculate_user_score(new_metrics, last_updated)
@@ -377,15 +377,19 @@ class FairnessEngine:
 
     def update_score_after_cancel(self, current_state: dict) -> dict:
         """
-        Recalculate fairness metrics after the organizer cancels a meeting.
-        Adds a cancellation timestamp (expires after 30 days) instead of a raw counter.
+        Update fairness after the organizer cancels a meeting.
+        Cancellation penalises the balance (you broke others' plans) — −5 pts.
         """
         metrics = current_state.get('meetingLoadMetrics', {})
+        balance = float(metrics.get('fairness_balance', 0.0))
+        balance = max(-50.0, balance - 5.0)  # cancellation penalty
+
         cancel_timestamps = list(metrics.get('cancellation_timestamps', []))
         cancel_timestamps.append(datetime.now().isoformat())
 
         new_metrics = {
             **metrics,
+            'fairness_balance':        round(balance, 1),
             'cancellation_timestamps': cancel_timestamps,
         }
         last_updated = current_state.get('lastUpdatedAt')

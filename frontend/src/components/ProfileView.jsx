@@ -866,12 +866,13 @@ export default function ProfileView({
             {showFairnessExplainer && (
               <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
                 {[
-                  { label: 'Starting score', desc: 'Everyone starts at 100 each week' },
-                  { label: '−1 per meeting', desc: 'Each meeting you attend has a small base cost' },
-                  { label: '−5 per meeting above group average', desc: 'If your peers have 3 meetings and you have 7, that extra load hurts your score more' },
-                  { label: '−2.5 per cancellation (30-day window)', desc: 'Cancelling meetings is penalised; penalty expires after 30 days' },
-                  { label: '+0.5 per day inactive (max +20)', desc: 'Score naturally recovers when you haven\'t had meetings recently' },
-                  { label: 'Auto-reset every 7 days', desc: 'Meeting count resets weekly so the score reflects recent load, not all-time history' },
+                  { label: '50 = neutral starting point', desc: 'Everyone starts at 50. Above 50 means you\'re owed a good slot; below 50 means you\'ve been getting good slots.' },
+                  { label: '+15 for a weekend meeting', desc: 'Accepting a meeting on the weekend is a significant sacrifice — you earn priority for next time.' },
+                  { label: '+8 for an off-peak meeting', desc: 'Accepting early morning or late afternoon slots earns you credit.' },
+                  { label: '−4 for standard working hours', desc: 'A normal meeting at a convenient time has a small cost — others who sacrificed should get priority.' },
+                  { label: '−10 for prime-time meeting', desc: 'Getting a 10am–3pm weekday slot is a great deal — your score drops so others get priority next.' },
+                  { label: '−5 for cancelling a meeting', desc: 'Cancellations penalise your balance since you disrupted others\' schedules.' },
+                  { label: 'Balance drifts toward 0 over time', desc: 'Old history fades at 2%/day so your score naturally resets if you stop scheduling.' },
                 ].map((item, i) => (
                   <div key={i} style={{
                     display: 'flex', gap: '0.75rem', padding: '0.6rem 0.8rem',
@@ -900,27 +901,20 @@ function FairnessBreakdown({ profile, score, onUpdated }) {
   const [resetting, setResetting] = useState(false);
 
   const details = profile.details || {};
-  const meetings = details.meetings_this_week ?? 0;
-  const cancellations = details.cancellations_last_month ?? 0;
-  const lastReset = details.last_week_reset;
+  const balance        = details.fairness_balance ?? 0;
+  const inconvenient   = details.inconvenient_count ?? 0;
+  const convenient     = details.convenient_count ?? 0;
+  const cancellations  = details.cancellations_last_month ?? 0;
+  const lastReset      = details.last_week_reset;
 
-  // Compute days until next auto-reset
+  // Days until next auto-reset
   let daysUntilReset = null;
   if (lastReset) {
     const diff = 7 - Math.floor((Date.now() - new Date(lastReset).getTime()) / 86400000);
     daysUntilReset = Math.max(0, diff);
   }
 
-  // Replicate backend penalty math for display
-  const groupAvg = 3; // approximate — backend has real value but not returned here
-  const relativeLoad = Math.max(0, meetings - groupAvg);
-  const absolutePenalty = -meetings;
-  const relativePenalty = -(relativeLoad * 5);
-  const cancelPenalty = -(cancellations * 2.5);
-  const inactivityBonus = score - (100 + absolutePenalty + relativePenalty + cancelPenalty);
-  const clampedBonus = Math.max(0, Math.min(20, Math.round(inactivityBonus)));
-
-  const showReset = score < 60 || meetings > 5;
+  const showReset = score < 45 || score > 80;
 
   const handleReset = async () => {
     setResetting(true);
@@ -929,9 +923,17 @@ function FairnessBreakdown({ profile, score, onUpdated }) {
       onUpdated?.({
         ...profile,
         fairness_score: result.fairnessScore,
-        details: { ...details, ...result.meetingLoadMetrics, meetings_this_week: 0, cancellations_last_month: 0, last_week_reset: new Date().toISOString() },
+        details: {
+          ...details,
+          ...result.meetingLoadMetrics,
+          fairness_balance: 0,
+          inconvenient_count: 0,
+          convenient_count: 0,
+          cancellations_last_month: 0,
+          last_week_reset: new Date().toISOString(),
+        },
       });
-      notify('Fairness score reset. Your weekly load has been cleared.', 'success');
+      notify('Fairness score reset to neutral (50).', 'success');
     } catch (err) {
       notify(err?.message || 'Reset failed', 'error');
     } finally {
@@ -939,50 +941,81 @@ function FairnessBreakdown({ profile, score, onUpdated }) {
     }
   };
 
-  const rows = [
-    { label: 'Meetings this week', value: meetings, delta: absolutePenalty, show: true },
-    { label: `Above-avg load (+${relativeLoad})`, value: null, delta: relativePenalty, show: relativeLoad > 0 },
-    { label: 'Recent cancellations', value: cancellations, delta: cancelPenalty, show: cancellations > 0 },
-    { label: 'Inactivity recovery', value: null, delta: clampedBonus, show: clampedBonus > 0 },
-  ].filter(r => r.show || r.delta !== 0);
+  const statusText = score >= 55
+    ? `+${Math.round(balance)} — you're owed a good slot next time`
+    : score <= 45
+    ? `${Math.round(balance)} — you've been getting convenient slots`
+    : 'Balanced — neutral standing';
+
+  const statusColor = score >= 55 ? '#34d399' : score <= 45 ? '#fbbf24' : 'var(--text-secondary)';
 
   return (
     <div className="pv-card">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-        <h3 style={{ margin: 0 }}>Score Breakdown</h3>
+        <h3 style={{ margin: 0 }}>Fairness Balance</h3>
         {daysUntilReset !== null && (
           <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-            Auto-resets in {daysUntilReset} day{daysUntilReset !== 1 ? 's' : ''}
+            Resets in {daysUntilReset}d
           </span>
         )}
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-        {rows.map((row, i) => (
-          <div key={i} style={{
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-            padding: '0.45rem 0.7rem', borderRadius: 'var(--radius-sm)',
-            background: 'var(--bg-raised)', fontSize: '0.8rem',
-          }}>
-            <span style={{ color: 'var(--text-secondary)' }}>
-              {row.label}{row.value !== null ? `: ${row.value}` : ''}
-            </span>
-            <span style={{ fontWeight: 700, color: row.delta >= 0 ? '#34d399' : '#f87171' }}>
-              {row.delta >= 0 ? `+${row.delta}` : row.delta} pts
-            </span>
+
+      {/* Status line */}
+      <div style={{ fontSize: '0.8rem', color: statusColor, marginBottom: '0.75rem', fontWeight: 600 }}>
+        Balance: {statusText}
+      </div>
+
+      {/* Breakdown rows */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+        {inconvenient > 0 && (
+          <BreakdownRow
+            label={`Inconvenient meetings ×${inconvenient}`}
+            desc="off-hours / weekend — you sacrificed"
+            delta={`+${inconvenient * 8}–${inconvenient * 15}`}
+            positive
+          />
+        )}
+        {convenient > 0 && (
+          <BreakdownRow
+            label={`Convenient meetings ×${convenient}`}
+            desc="prime time / normal hours — you got a good deal"
+            delta={`−${convenient * 4}–${convenient * 10}`}
+            positive={false}
+          />
+        )}
+        {cancellations > 0 && (
+          <BreakdownRow
+            label={`Cancellations ×${cancellations}`}
+            desc="disrupted others' schedules"
+            delta={`−${cancellations * 5}`}
+            positive={false}
+          />
+        )}
+        {inconvenient === 0 && convenient === 0 && cancellations === 0 && (
+          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', padding: '0.4rem 0' }}>
+            No meetings recorded yet — score starts at 50 (neutral).
           </div>
-        ))}
+        )}
+
+        {/* Final score */}
         <div style={{
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           padding: '0.5rem 0.7rem', borderRadius: 'var(--radius-sm)',
           background: 'var(--bg-surface)', fontSize: '0.82rem', fontWeight: 700,
-          borderTop: '1px solid var(--border)', marginTop: '0.1rem',
+          borderTop: '1px solid var(--border)', marginTop: '0.2rem',
         }}>
-          <span>Fairness score</span>
-          <span style={{ color: score >= 80 ? '#34d399' : score >= 60 ? '#fbbf24' : '#f87171' }}>
+          <div>
+            <span>Score: </span>
+            <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: '0.72rem' }}>
+              (50 = neutral · above 50 = owed · below 50 = favored)
+            </span>
+          </div>
+          <span style={{ color: score >= 55 ? '#34d399' : score <= 45 ? '#fbbf24' : 'var(--text-primary)' }}>
             {score} / 100
           </span>
         </div>
       </div>
+
       {showReset && (
         <button
           onClick={handleReset}
@@ -990,19 +1023,37 @@ function FairnessBreakdown({ profile, score, onUpdated }) {
           style={{
             marginTop: '0.75rem', width: '100%',
             padding: '0.5rem 1rem', borderRadius: 'var(--radius-md)',
-            border: '1px solid rgba(248,113,113,0.3)',
-            background: 'rgba(248,113,113,0.08)',
-            color: '#f87171', fontSize: '0.8rem', fontWeight: 600,
+            border: '1px solid rgba(99,102,241,0.3)',
+            background: 'rgba(99,102,241,0.08)',
+            color: 'var(--accent)', fontSize: '0.8rem', fontWeight: 600,
             cursor: resetting ? 'not-allowed' : 'pointer',
             opacity: resetting ? 0.6 : 1,
             transition: 'all var(--transition)',
           }}
-          onMouseEnter={e => !resetting && (e.currentTarget.style.background = 'rgba(248,113,113,0.15)')}
-          onMouseLeave={e => (e.currentTarget.style.background = 'rgba(248,113,113,0.08)')}
+          onMouseEnter={e => !resetting && (e.currentTarget.style.background = 'rgba(99,102,241,0.15)')}
+          onMouseLeave={e => (e.currentTarget.style.background = 'rgba(99,102,241,0.08)')}
         >
-          {resetting ? 'Resetting…' : 'Reset weekly load'}
+          {resetting ? 'Resetting…' : 'Reset to neutral (50)'}
         </button>
       )}
+    </div>
+  );
+}
+
+function BreakdownRow({ label, desc, delta, positive }) {
+  return (
+    <div style={{
+      display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
+      padding: '0.4rem 0.7rem', borderRadius: 'var(--radius-sm)',
+      background: 'var(--bg-raised)', fontSize: '0.78rem', gap: '0.5rem',
+    }}>
+      <div>
+        <div style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{label}</div>
+        <div style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>{desc}</div>
+      </div>
+      <span style={{ fontWeight: 700, color: positive ? '#34d399' : '#fbbf24', flexShrink: 0 }}>
+        {positive ? '+' : ''}{delta}
+      </span>
     </div>
   );
 }
