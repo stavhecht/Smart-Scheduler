@@ -570,3 +570,76 @@ class CalendarRepository:
     def get_change_token(self, user_id: str) -> str:
         channel = self.get_watch_channel(user_id)
         return (channel or {}).get("changeToken", "0")
+
+
+# ---------------------------------------------------------------------------
+# AIFairnessRepository — persists AI-generated fairness verdicts + trend history
+# ---------------------------------------------------------------------------
+
+class AIFairnessRepository:
+    """
+    Storage layout (single-table):
+      MEET#<id>   / AISCORE                → latest AI verdict for a meeting
+      MEET#<id>   / AIHIST#<iso_ts>        → audit trail (TTL: 90 days)
+      USER#<id>   / AIFAIRHIST#<iso_ts>    → per-user fairness trajectory (TTL: 365 days)
+    """
+
+    AI_HIST_TTL_DAYS = 90
+    USER_HIST_TTL_DAYS = 365
+
+    def __init__(self) -> None:
+        self._db = get_db()
+
+    # --- Meeting-level ---
+
+    def write_meeting_score(self, request_id: str, result: dict) -> None:
+        item = {
+            "requestId": request_id,
+            "method":    result.get("method", "unknown"),
+            "model":     result.get("model", ""),
+            "meetingFairnessScore": float(result.get("meeting_fairness_score", 0.0)),
+            "summary":             str(result.get("summary", ""))[:280],
+            "slotScores":          result.get("slot_scores", []),
+            "participantEquity":   result.get("participant_equity", []),
+            "error":               result.get("error", ""),
+            "computedAt":          datetime.now().isoformat(),
+        }
+        self._db.put(f"MEET#{request_id}", "AISCORE", item)
+
+    def get_meeting_score(self, request_id: str) -> Optional[dict]:
+        return self._db.get(f"MEET#{request_id}", "AISCORE")
+
+    def append_meeting_history(self, request_id: str, result: dict) -> None:
+        ts = datetime.now().isoformat()
+        self._db.put(f"MEET#{request_id}", f"AIHIST#{ts}", {
+            "requestId": request_id,
+            "method":    result.get("method", "unknown"),
+            "meetingFairnessScore": float(result.get("meeting_fairness_score", 0.0)),
+            "summary":   str(result.get("summary", ""))[:280],
+            "recordedAt": ts,
+            "ttlExpiry": int(time.time()) + (self.AI_HIST_TTL_DAYS * 86400),
+        })
+
+    # --- User-level ---
+
+    def append_user_fairness_point(self, user_id: str, request_id: str, score: float) -> None:
+        ts = datetime.now().isoformat()
+        self._db.put(f"USER#{user_id}", f"AIFAIRHIST#{ts}", {
+            "userId":      user_id,
+            "requestId":   request_id,
+            "score":       float(score),
+            "recordedAt":  ts,
+            "ttlExpiry":   int(time.time()) + (self.USER_HIST_TTL_DAYS * 86400),
+        })
+
+    def get_recent_fairness_trend(self, user_id: str, limit: int = 20) -> List[dict]:
+        """
+        Return up to `limit` most recent {recordedAt, score} entries for the user.
+        Sorted newest-first.
+        """
+        items = self._db.query_prefix(f"USER#{user_id}", "AIFAIRHIST#")
+        items.sort(key=lambda x: x.get("recordedAt", ""), reverse=True)
+        return [
+            {"recordedAt": it.get("recordedAt", ""), "score": float(it.get("score", 0.0))}
+            for it in items[:limit]
+        ]

@@ -43,6 +43,21 @@ All frontend API calls go through a single public GET endpoint — **`GET /healt
 - The backend's `/health` handler in `main.py` validates the token via `cognito-idp:GetUser` (see `src/common/auth.py:validate_access_token`), then calls `src/handlers/api/dispatcher.py:dispatch`.
 - The response is always HTTP 200 — even for backend errors. Frontend must check `body.status === 'error'`.
 - `apiGet` / `apiPost` in `apiClient.js` are thin wrappers that map URL patterns to action strings.
+
+Key action strings (full list in `apiClient.js`):
+
+| Action | Triggered by |
+|---|---|
+| `profile`, `meetings`, `calendar_status` | `apiGet` |
+| `activity_feed`, `list_users`, `get_messages`, `profile_stats` | `apiGet` |
+| `get_public_profile:<userId>`, `shared_meetings:<userId>` | `apiGet` |
+| `meeting_log:<id>`, `oauth_url:<provider>` | `apiGet` |
+| `create_meeting`, `accept:<id>`, `book:<id>:<slot>` | `apiPost` |
+| `cancel:<id>`, `edit:<id>`, `reschedule:<id>` | `apiPost` |
+| `ai_fairness:<id>` | `apiGet` (poll for async AI fairness verdict) |
+| `book_custom:<id>`, `update_profile`, `send_message:<userId>` | `apiPost` |
+| `oauth_callback:<provider>`, `calendar_disconnect:<provider>` | `apiPost` |
+| `score_slot`, `update_ics_url` | direct `apiProxy` calls |
 - **Note:** The `decline` action (marked * in the table above) exists in the dispatcher but has no `apiClient.js` wrapper — it is not currently reachable from the frontend.
 
 There are also secondary REST endpoints (`/api/profile`, `/api/meetings`, etc.) with the JWT authorizer from API Gateway — these are a secondary path not used by the main frontend.
@@ -105,6 +120,23 @@ Key actions:
 `SmartSchedulerWorkflow` (EXPRESS type) runs when a meeting is created:
 `FetchParticipantData → GenerateCandidateSlots → CalculateFairnessScores → CheckOptimizationNeeded → [ReshuffleSlots] → StoreResults`
 
+Each step maps to a `sfn_*` function in `db.py`. The workflow is triggered from `main.py` when creating a meeting.
+
+### AI Fairness Workflow (async — `SmartSchedulerFairnessAI`)
+
+A second STANDARD-type Step Function runs in the background after meeting creation. It calls **gpt-4o-mini** via `src/core/ai_fairness.py` to produce a calibrated fairness verdict on top of the heuristic `FairnessEngine` output.
+
+- **Trigger**: `_scheduling.run_or_schedule` calls `start_execution` (async, fire-and-forget) on `SmartSchedulerFairnessAI` immediately after the sync slot-generation workflow returns. Failures are logged but never raised — the user-facing meeting flow is decoupled from AI scoring.
+- **Steps**: `AIFetchContext` → `AIScoreMeeting` → `AIStoreScore`, with a shared `Catch → RecordError` that writes an error marker so the frontend poll stops spinning.
+- **Hybrid blend (Method C)**: AI may shift a heuristic score by at most ±15 pts (`AI_MAX_DELTA`). This preserves Method A as the source of truth and prevents the LLM from inventing wild swings.
+- **Storage**:
+  - `MEET#<id> / AISCORE` — latest verdict (frontend polls via `ai_fairness:<id>`)
+  - `MEET#<id> / AIHIST#<ts>` — audit trail (TTL 90 days)
+  - `USER#<id> / AIFAIRHIST#<ts>` — per-user fairness trajectory (TTL 365 days), feeds back into the next AI call as historical context
+- **Privacy**: calendar event titles/locations/attendee emails are stripped before being sent to OpenAI; only start/end/duration/attendee-count is sent (`ai_fairness._redact_events`).
+- **Cost guard**: participants capped at 25, events per participant capped at 40, history entries capped at 20 — bounded context window per call.
+- **Failure mode**: if `OPENAI_API_KEY` is unset or the API errors, the agent returns a `heuristic_fallback` verdict (heuristic average), so the poll endpoint always resolves.
+- **Observability**: state machine logs to `/aws/states/SmartSchedulerFairnessAI` (CloudWatch, 14-day retention). Handler logs use the `[ai_*]` prefix.
 ### AI Scoring (`src/common/openai_client.py`)
 
 Uses `gpt-4.1-nano` via stdlib `urllib` (no OpenAI SDK in the Lambda ZIP). A single batched API call per meeting scores all candidate slots and produces a strategic summary. Hard-fails with `OpenAIScoreError` on any error — the deterministic fairness engine always runs first and AI scoring is additive. Requires `OPENAI_API_KEY` in Lambda env.
@@ -167,6 +199,9 @@ Supports Google Calendar (OAuth2) and Microsoft Outlook (.ics feed URL). Google 
 | `TABLE_NAME` | Lambda / `.env` | DynamoDB table name |
 | `AWS_ACCOUNT_ID` | Lambda | Used to construct SFN ARN; **absent locally** → `_local_sim` path |
 | `FRONTEND_URL` | Lambda | CORS allow-origin |
+| `OPENAI_API_KEY` | Lambda | gpt-4o-mini for AI fairness workflow (optional — heuristic fallback if unset) |
+| `AI_FAIRNESS_MODEL` | Lambda | Defaults to `gpt-4o-mini`; override to pin a different model |
+| `ENVIRONMENT` | local only | Set to `development` for local uvicorn |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Lambda | Google Calendar OAuth |
 | `OPENAI_API_KEY` | Lambda | AI slot scoring + NL meeting parsing; absent → AI scoring silently skipped |
 | `ENVIRONMENT` | local only | Set to `development` for local uvicorn + .env loading |

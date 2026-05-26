@@ -2,6 +2,12 @@
 Scheduling orchestration: tries Step Functions first, falls back to calling
 the workflow step handlers in-process. Shared by handle_create_meeting and
 handle_reschedule.
+
+After the sync slot-generation pipeline completes, AI fairness scoring runs
+SYNCHRONOUSLY (inline). The AI's per-slot scores replace the heuristic scores
+in DynamoDB; the heuristic scores are kept as a fallback when AI fails. The
+AI verdict (best slot, reason, calendar suggestions) is stored in the meeting
+META so the frontend gets everything in one round trip.
 """
 from __future__ import annotations
 
@@ -9,19 +15,20 @@ import json
 import logging
 import os
 from datetime import datetime, timedelta
+from typing import Optional
 
 import boto3
-from fastapi import HTTPException
 
 from src.common.timezone import get_tz_offset_hours
 from src.database import models
-from src.database.repository import MeetingRepository, UserRepository
+from src.database.repository import AIFairnessRepository, MeetingRepository, UserRepository
 
 logger = logging.getLogger(__name__)
 
 _sfn_client = None
 _meeting_repo = MeetingRepository()
 _user_repo = UserRepository()
+_ai_repo = AIFairnessRepository()
 
 
 def _get_sfn_client():
@@ -39,12 +46,148 @@ def _get_state_machine_arn() -> str:
     return f"arn:aws:states:{region}:{account_id}:stateMachine:SmartSchedulerWorkflow"
 
 
+# ---------------------------------------------------------------------------
+# Inline AI scoring (replaces the previous async Step Function)
+# ---------------------------------------------------------------------------
+
+def _build_participants_context(
+    creator_id: str,
+    participant_ids: list,
+    date_start: datetime,
+    date_end: datetime,
+) -> list:
+    """Gather per-participant fairness history + calendar events for the AI."""
+    from src.common import calendar_client
+
+    all_ids = list({creator_id, *(participant_ids or [])} - {""})
+    participants_context = []
+    for uid in all_ids:
+        profile = _user_repo.get_profile_raw(uid) or {}
+        fairness = _user_repo.get_fairness(uid)
+        load_metrics = fairness.meetingLoadMetrics if fairness else {}
+        current_score = float(fairness.fairnessScore) if fairness else 100.0
+        trend = _ai_repo.get_recent_fairness_trend(uid, limit=20)
+
+        try:
+            calendar_events = calendar_client.get_user_busy_slots(uid, date_start, date_end)
+        except Exception as exc:
+            logger.warning(f"[ai_inline] calendar fetch failed for {uid}: {exc}")
+            calendar_events = []
+
+        participants_context.append({
+            "userId": uid,
+            "timezone": profile.get("timezone", "UTC"),
+            "current_fairness_score": current_score,
+            "meetings_this_week": int(float(load_metrics.get("meetings_this_week", 0) or 0)),
+            "suffering_score": int(float(load_metrics.get("suffering_score", 0) or 0)),
+            "fairness_trend": trend,
+            "calendar_events": calendar_events,
+        })
+    return participants_context
+
+
+def _run_ai_inline(request_id: str, sfn_input: dict) -> Optional[dict]:
+    """
+    Runs AI fairness scoring synchronously right after the heuristic SFN.
+    Reads the stored slots, calls OpenAI, updates each slot in DynamoDB with
+    the AI score + description, and writes the aiAnalysis to the meeting META.
+
+    Never raises — on any failure, returns a heuristic-fallback ai_analysis so
+    the meeting flow continues with heuristic scores already in DynamoDB.
+    """
+    from src.core.ai_fairness import score_meeting_with_ai
+
+    try:
+        slots = _meeting_repo.get_slots(request_id)
+        if not slots:
+            logger.warning(f"[ai_inline] no slots found for {request_id} — skipping")
+            return None
+
+        candidate_slots = [
+            {
+                "startIso": s.startIso.isoformat(),
+                "score": float(s.score),
+                "explanation": s.explanation or "",
+                "conflictCount": int(s.conflictCount or 0),
+            }
+            for s in slots
+        ]
+
+        try:
+            date_start = datetime.fromisoformat(sfn_input["date_range_start"])
+            date_end = datetime.fromisoformat(sfn_input["date_range_end"])
+        except Exception:
+            date_start = datetime.utcnow()
+            date_end = datetime.utcnow() + timedelta(days=7)
+
+        participants_context = _build_participants_context(
+            sfn_input.get("creator_id", ""),
+            sfn_input.get("participant_ids", []) or [],
+            date_start,
+            date_end,
+        )
+
+        ai_result = score_meeting_with_ai(request_id, candidate_slots, participants_context)
+
+        # Update each slot in DynamoDB with AI score + description.
+        # Keep the heuristic score in the `explanation` text so it isn't lost.
+        ai_by_start = {str(entry.get("startIso")): entry for entry in ai_result.get("slot_scores", [])}
+        for slot in slots:
+            start_key = slot.startIso.isoformat()
+            ai_entry = ai_by_start.get(start_key)
+            if not ai_entry:
+                continue
+            slot_dict = slot.model_dump(mode="json")
+            ai_score = float(ai_entry.get("ai_score", slot.score))
+            slot_dict["aiScore"] = ai_score
+            slot_dict["aiDescription"] = ai_entry.get("description", "")
+            # Promote AI score to the primary `score` field so existing UI uses it
+            slot_dict["score"] = ai_score
+            _meeting_repo.write_slot(request_id, start_key, slot_dict)
+
+        ai_analysis = {
+            "method": ai_result.get("method", "unknown"),
+            "model": ai_result.get("model", ""),
+            "summary": ai_result.get("summary", ""),
+            "bestSlot": ai_result.get("best_slot", ""),
+            "bestSlotReason": ai_result.get("best_slot_reason", ""),
+            "calendarSuggestions": ai_result.get("calendar_suggestions", []),
+            "meetingFairnessScore": float(ai_result.get("meeting_fairness_score", 0.0)),
+            "computedAt": datetime.now().isoformat(),
+        }
+
+        meeting = _meeting_repo.get_meta(request_id)
+        if meeting:
+            meeting["aiAnalysis"] = ai_analysis
+            _meeting_repo.update_meta(request_id, meeting)
+
+        # Feed the per-participant fairness trend so future AI calls have context
+        if ai_result.get("method") == "ai":
+            try:
+                meeting_score = float(ai_result.get("meeting_fairness_score", 0.0))
+                for p in participants_context:
+                    _ai_repo.append_user_fairness_point(p["userId"], request_id, meeting_score)
+            except Exception as exc:
+                logger.warning(f"[ai_inline] failed to append fairness history: {exc}")
+
+        return ai_analysis
+
+    except Exception as exc:
+        logger.warning(f"[ai_inline] failed for {request_id}: {exc}")
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Public entry points
+# ---------------------------------------------------------------------------
+
 def run_or_schedule(
     meeting_data: models.MeetingCreateSchema, user_id: str
 ) -> dict:
     """
-    Creates the meeting record then either triggers Step Functions (AWS)
-    or runs the scheduling pipeline in-process (local / fallback).
+    Creates the meeting record, runs the heuristic slot pipeline (Step Functions
+    or in-process fallback), then runs AI fairness scoring inline. Returns the
+    meeting dict with `aiAnalysis` populated.
     """
     account_id = os.environ.get("AWS_ACCOUNT_ID", "")
     if not account_id or os.environ.get("ENVIRONMENT") == "development":
@@ -95,7 +238,13 @@ def run_or_schedule(
         except Exception as local_exc:
             logger.warning(f"Local scheduling also failed for {meeting.requestId}: {local_exc}")
 
-    return meeting.model_dump(mode="json")
+    # Inline AI scoring — replaces the previous async SFN
+    ai_analysis = _run_ai_inline(meeting.requestId, sfn_input)
+
+    meeting_dict = meeting.model_dump(mode="json")
+    if ai_analysis:
+        meeting_dict["aiAnalysis"] = ai_analysis
+    return meeting_dict
 
 
 def run_local_steps(payload: dict) -> None:
