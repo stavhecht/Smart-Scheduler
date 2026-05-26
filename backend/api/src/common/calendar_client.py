@@ -21,15 +21,16 @@ import urllib.parse
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Dict
 
-from src.database.repository import CalendarRepository as _CalRepo
+from src.database.repository import CalendarRepository as _CalRepo, UserRepository as _UserRepo
 
 _cal_repo = _CalRepo()
+_user_repo = _UserRepo()
 
 # ---------------------------------------------------------------------------
 # Config (from Lambda environment variables)
 # ---------------------------------------------------------------------------
 
-FRONTEND_URL         = os.environ.get('FRONTEND_URL', 'https://main.dhcxa23q98ibd.amplifyapp.com/')
+FRONTEND_URL         = os.environ.get('FRONTEND_URL', 'https://main.dhcxa23q98ibd.amplifyapp.com')
 GOOGLE_CLIENT_ID     = os.environ.get('GOOGLE_CLIENT_ID', '')
 GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
 # Public HTTPS base URL of this Lambda (used as the webhook callback base).
@@ -53,14 +54,13 @@ GOOGLE_CALENDAR   = 'https://www.googleapis.com/calendar/v3'
 # Generic HTTP helpers
 # ---------------------------------------------------------------------------
 
-def _to_event_time(iso: str) -> dict:
+def _to_event_time(iso: str, user_timezone: str = 'UTC') -> dict:
     """
     Build the {dateTime, timeZone} dict for a calendar event body.
     - Strings with explicit UTC info (Z suffix or +offset) are normalised to
       'YYYY-MM-DDTHH:MM:SSZ' and paired with timeZone='UTC'.
-    - Naive strings (no timezone suffix) are assumed to be Israel local time
-      (from the frontend datetime-local input) and paired with
-      timeZone='Asia/Jerusalem'.
+    - Naive strings (no timezone suffix) are treated as the user's local time
+      using user_timezone (defaults to 'UTC' when unknown).
     """
     s = iso.strip()
     has_tz = s.endswith('Z') or (len(s) > 10 and ('+' in s[10:] or s[10:].count('-') >= 1 and 'T' in s))
@@ -74,7 +74,7 @@ def _to_event_time(iso: str) -> dict:
             except Exception:
                 pass
         return {'dateTime': s, 'timeZone': 'UTC'}
-    return {'dateTime': s, 'timeZone': 'Asia/Jerusalem'}
+    return {'dateTime': s, 'timeZone': user_timezone or 'UTC'}
 
 
 def _http_get(url: str, headers: dict = None) -> dict:
@@ -84,11 +84,16 @@ def _http_get(url: str, headers: dict = None) -> dict:
 
 
 def _http_post(url: str, data: dict, headers: dict = None) -> dict:
+    import urllib.error
     encoded = urllib.parse.urlencode(data).encode()
     req = urllib.request.Request(url, data=encoded, headers=headers or {})
     req.add_header('Content-Type', 'application/x-www-form-urlencoded')
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        return json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        raise Exception(f"HTTP {e.code} from {url}: {body}") from e
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +169,7 @@ def _ensure_fresh_google_token(user_id: str) -> Optional[str]:
                 'access_token':  access_token,
                 'refresh_token': refresh_token,   # Google doesn't always return a new one
                 'expires_at':    new_expires,
-                'scope':         tokens.get('scope', ''),
+                'scope':         tokens.get('scopes', ''),
                 'calendar_email': tokens.get('calendarEmail', ''),
             })
     except Exception as e:
@@ -216,7 +221,8 @@ def get_google_events(user_id: str, time_min: str, time_max: str) -> List[dict]:
 
 
 def create_google_event(user_id: str, title: str, start_iso: str, end_iso: str,
-                        attendee_emails: List[str] = None) -> Optional[str]:
+                        attendee_emails: List[str] = None,
+                        user_timezone: str = 'UTC') -> Optional[str]:
     """Create a Google Calendar event after booking. Returns the event ID on success, None on failure."""
     token = _ensure_fresh_google_token(user_id)
     if not token:
@@ -224,8 +230,8 @@ def create_google_event(user_id: str, title: str, start_iso: str, end_iso: str,
     try:
         event_body = {
             'summary': title,
-            'start':   _to_event_time(start_iso),
-            'end':     _to_event_time(end_iso),
+            'start':   _to_event_time(start_iso, user_timezone),
+            'end':     _to_event_time(end_iso, user_timezone),
             'attendees': [{'email': e} for e in (attendee_emails or [])],
         }
         data = json.dumps(event_body).encode()
@@ -424,7 +430,9 @@ def write_meeting_to_calendars(creator_id: str, participant_ids: List[str],
     for uid in all_ids:
         try:
             if _cal_repo.get_oauth_tokens(uid, 'google'):
-                eid = create_google_event(uid, title, start_iso, end_iso, attendee_emails)
+                profile = _user_repo.get_profile_raw(uid) or {}
+                tz = profile.get('timezone', 'UTC') or 'UTC'
+                eid = create_google_event(uid, title, start_iso, end_iso, attendee_emails, user_timezone=tz)
                 if eid:
                     event_ids[uid] = f"google:{eid}"
                 else:
@@ -453,7 +461,8 @@ def remove_meeting_from_calendars(external_ids: Dict[str, str]):
 
 
 def update_google_event(user_id: str, event_id: str, title: str,
-                        start_iso: str, end_iso: str) -> bool:
+                        start_iso: str, end_iso: str,
+                        user_timezone: str = 'UTC') -> bool:
     """Update an existing Google Calendar event's title and/or time. Returns True on success."""
     token = _ensure_fresh_google_token(user_id)
     if not token or not event_id:
@@ -461,8 +470,8 @@ def update_google_event(user_id: str, event_id: str, title: str,
     try:
         patch_body = {
             'summary': title,
-            'start': _to_event_time(start_iso),
-            'end':   _to_event_time(end_iso),
+            'start': _to_event_time(start_iso, user_timezone),
+            'end':   _to_event_time(end_iso, user_timezone),
         }
         data = json.dumps(patch_body).encode()
         url  = f"{GOOGLE_CALENDAR}/calendars/primary/events/{event_id}"
@@ -538,6 +547,8 @@ def update_meeting_in_calendars(external_ids: Dict[str, str],
             if ':' not in composite_id: continue
             provider, eid = composite_id.split(':', 1)
             if provider == 'google':
-                update_google_event(uid, eid, title, start_iso, end_iso)
+                profile = _user_repo.get_profile_raw(uid) or {}
+                tz = profile.get('timezone', 'UTC') or 'UTC'
+                update_google_event(uid, eid, title, start_iso, end_iso, user_timezone=tz)
         except Exception:
             pass

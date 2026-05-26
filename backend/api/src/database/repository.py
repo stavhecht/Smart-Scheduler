@@ -82,19 +82,37 @@ class UserRepository:
             f"USER#{user_id}", "PROFILE",
             models.UserProfile(
                 userId=user_id, email=email, displayName=display_name,
-                timezone="Asia/Jerusalem",
+                timezone="UTC",
                 workingHours={"start": "09:00", "end": "18:00"},
-                workingDays=list(range(7)),
+                workingDays=list(range(5)),
             ).model_dump(mode="json"),
         )
         self._db.put(
             f"USER#{user_id}", "FAIRNESS",
             models.FairnessState(
                 userId=user_id, fairnessScore=100.0,
-                meetingLoadMetrics={"meetings_this_week": 0, "cancellations_last_month": 0, "suffering_score": 0},
+                meetingLoadMetrics={
+                    "meetings_this_week": 0, "suffering_score": 0,
+                    "prime_slots_accepted": 0, "cancellation_timestamps": [],
+                },
                 inconvenientMeetingsCount=0,
+                lastWeekReset=datetime.now().isoformat(),
             ).model_dump(mode="json"),
         )
+
+    def _maybe_reset_weekly(self, fairness_data: dict) -> dict:
+        """Reset meetings_this_week if 7+ days have passed since last reset."""
+        last_reset = fairness_data.get("lastWeekReset")
+        if last_reset:
+            days_since = (datetime.now() - datetime.fromisoformat(str(last_reset))).total_seconds() / 86400
+            if days_since >= 7:
+                metrics = dict(fairness_data.get("meetingLoadMetrics", {}))
+                metrics["meetings_this_week"] = 0
+                fairness_data = {**fairness_data, "meetingLoadMetrics": metrics,
+                                 "lastWeekReset": datetime.now().isoformat()}
+        else:
+            fairness_data = {**fairness_data, "lastWeekReset": datetime.now().isoformat()}
+        return fairness_data
 
     def get_profile(self, user_id: str) -> Optional[models.UserProfile]:
         data = self._db.get(f"USER#{user_id}", "PROFILE")
@@ -126,9 +144,12 @@ class UserRepository:
                 fairness = self.get_fairness(uid)
             if not fairness:
                 continue
+            now = datetime.now().isoformat()
+            raw = self._maybe_reset_weekly(fairness.model_dump(mode="json"))
             updated = engine.update_score_after_booking(
-                {"fairnessScore": float(fairness.fairnessScore),
-                 "meetingLoadMetrics": fairness.meetingLoadMetrics},
+                {"fairnessScore": float(raw["fairnessScore"]),
+                 "meetingLoadMetrics": raw["meetingLoadMetrics"],
+                 "lastUpdatedAt": raw.get("lastUpdatedAt", now)},
                 fairness_impact,
             )
             self._db.put(f"USER#{uid}", "FAIRNESS", {
@@ -137,8 +158,31 @@ class UserRepository:
                 "inconvenientMeetingsCount": (
                     fairness.inconvenientMeetingsCount + updated["inconvenientMeetingsCount"]
                 ),
-                "lastUpdatedAt": datetime.now().isoformat(),
+                "cancellation_timestamps": raw["meetingLoadMetrics"].get("cancellation_timestamps", []),
+                "lastWeekReset": raw.get("lastWeekReset", now),
+                "lastUpdatedAt": now,
             })
+
+    def update_fairness_on_cancel(self, user_id: str) -> None:
+        """Add a cancellation timestamp to the organizer's fairness record (expires in 30 days)."""
+        from src.core.fairness import engine
+        fairness = self.get_fairness(user_id)
+        if not fairness:
+            return
+        now = datetime.now().isoformat()
+        raw = self._maybe_reset_weekly(fairness.model_dump(mode="json"))
+        updated = engine.update_score_after_cancel(
+            {"fairnessScore": float(raw["fairnessScore"]),
+             "meetingLoadMetrics": raw["meetingLoadMetrics"],
+             "lastUpdatedAt": raw.get("lastUpdatedAt", now)},
+        )
+        self._db.put(f"USER#{user_id}", "FAIRNESS", {
+            "userId": user_id,
+            **updated,
+            "inconvenientMeetingsCount": fairness.inconvenientMeetingsCount,
+            "lastWeekReset": raw.get("lastWeekReset", now),
+            "lastUpdatedAt": now,
+        })
 
     def has_oauth_tokens(self, user_id: str, provider: str) -> bool:
         return bool(self._db.get(f"USER#{user_id}", f"OAUTH#{provider}"))
@@ -211,6 +255,7 @@ class UserRepository:
 
     def get_recent_activity(self, user_id: str, limit: int = 12) -> List[dict]:
         part_items = self._db.query_prefix(f"USER#{user_id}", "PART#")
+        part_items.sort(key=lambda x: x.get("addedAt", ""), reverse=True)
         meeting_ids = [item.get("meetingId") for item in part_items if item.get("meetingId")]
         meeting_ids = meeting_ids[:20]
         all_logs: List[dict] = []

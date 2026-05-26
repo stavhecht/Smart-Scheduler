@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timedelta
 
 from fastapi import HTTPException
 
 from src.database.repository import MeetingRepository, UserRepository
+from src.core.fairness import engine as _fairness_engine
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +26,17 @@ def handle_profile(identity: dict) -> dict:
         if not profile:
             raise HTTPException(status_code=404, detail="User not found")
         metrics = fairness.meetingLoadMetrics if fairness else {}
+        last_updated = fairness.lastUpdatedAt.isoformat() if fairness and fairness.lastUpdatedAt else None
+        # Recalculate score at read time so passive recovery is reflected immediately
+        live_score = (
+            _fairness_engine.calculate_user_score(metrics, last_updated) if fairness else 100.0
+        )
+        # Count only recent cancellations (last 30 days) for the UI details panel
+        cutoff = datetime.now() - timedelta(days=30)
+        recent_cancellations = sum(
+            1 for ts in metrics.get("cancellation_timestamps", [])
+            if datetime.fromisoformat(str(ts)) > cutoff
+        )
         return {
             "id": user_id,
             "name": profile.displayName,
@@ -41,11 +54,14 @@ def handle_profile(identity: dict) -> dict:
             "lunchBreak": profile.lunchBreak,
             "notificationPrefs": profile.notificationPrefs,
             "showFairnessScore": profile.showFairnessScore,
-            "fairness_score": float(fairness.fairnessScore) if fairness else 100.0,
+            "fairness_score": live_score,
             "details": {
-                "meetings_this_week": metrics.get("meetings_this_week", 0),
-                "cancellations_last_month": metrics.get("cancellations_last_month", 0),
-                "suffering_score": metrics.get("suffering_score", 0),
+                "meetings_this_week":      metrics.get("meetings_this_week", 0),
+                "fairness_balance":        round(float(metrics.get("fairness_balance", 0.0)), 1),
+                "inconvenient_count":      metrics.get("inconvenient_count", 0),
+                "convenient_count":        metrics.get("convenient_count", 0),
+                "cancellations_last_month": recent_cancellations,
+                "last_week_reset":         fairness.lastWeekReset if fairness else None,
             },
         }
     except HTTPException:
@@ -58,7 +74,7 @@ def handle_profile(identity: dict) -> dict:
             "email": email,
             "role": "Professional",
             "fairness_score": 100.0,
-            "details": {"meetings_this_week": 0, "cancellations_last_month": 0, "suffering_score": 0},
+            "details": {"meetings_this_week": 0, "cancellations_last_month": 0, "suffering_score": 0, "prime_slots_accepted": 0},
         }
 
 
@@ -87,7 +103,7 @@ def handle_public_profile(identity: dict, action: str) -> dict:
         "department": target.department,
         "skills": target.skills,
         "status": target.statusMessage,
-        "score": float(fairness.fairnessScore) if fairness else 100.0,
+        "score": float(fairness.fairnessScore) if (fairness and target.showFairnessScore) else None,
     }
 
 
@@ -127,6 +143,32 @@ def handle_shared_meetings(identity: dict, action: str) -> dict:
         return _user_repo.get_shared_meetings(identity["user_id"], target_id)
     except Exception:
         return {"count": 0, "recentTitles": []}
+
+
+def handle_reset_fairness(identity: dict) -> dict:
+    """Reset meetings_this_week and cancellation_timestamps so the score can recover."""
+    uid = identity["user_id"]
+    fairness = _user_repo.get_fairness(uid)
+    if not fairness:
+        raise HTTPException(status_code=404, detail="Fairness record not found")
+    now = datetime.now().isoformat()
+    new_metrics = {
+        **fairness.meetingLoadMetrics,
+        "meetings_this_week": 0,
+        "fairness_balance": 0.0,
+        "inconvenient_count": 0,
+        "convenient_count": 0,
+        "cancellation_timestamps": [],
+    }
+    new_score = _fairness_engine.calculate_user_score(new_metrics, now)
+    _user_repo._db.put(f"USER#{uid}", "FAIRNESS", {
+        **fairness.model_dump(mode="json"),
+        "meetingLoadMetrics": new_metrics,
+        "fairnessScore": new_score,
+        "lastWeekReset": now,
+        "lastUpdatedAt": now,
+    })
+    return {"fairnessScore": new_score, "meetingLoadMetrics": new_metrics}
 
 
 def handle_activity_feed(identity: dict) -> list:

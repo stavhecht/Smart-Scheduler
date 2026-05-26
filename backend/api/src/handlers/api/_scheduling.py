@@ -280,6 +280,6 @@ def build_reschedule_payload(
         "participant_ids": meeting.get("participantUserIds", []),
         "date_range_start": now.isoformat(),
         "date_range_end": (now + timedelta(days=days_forward)).isoformat(),
-        "duration_minutes": meeting.get("durationMinutes", 60),
+        "duration_minutes": int(meeting.get("durationMinutes", 60)),
         "tz_offset_hours": get_tz_offset_hours(creator_tz),
     }

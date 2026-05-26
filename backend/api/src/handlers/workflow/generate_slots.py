@@ -7,6 +7,7 @@ Output: adds candidate_slots (list of {startIso, endIso, conflictCount})
 Filters out hard creator conflicts and pre-computes per-slot conflict counts
 so CalculateFairnessScores does not need to re-fetch calendar data.
 """
+import logging
 from datetime import datetime, timedelta
 from typing import Dict
 
@@ -14,6 +15,8 @@ from src.common import calendar_client as _cc
 
 from src.core.fairness import engine
 from src.database.repository import get_working_days_intersection, get_working_hours_list
+
+logger = logging.getLogger(__name__)
 
 
 def handler(payload: dict) -> dict:
@@ -43,8 +46,8 @@ def handler(payload: dict) -> dict:
             busy = _cc.get_user_busy_slots(uid, date_start, date_end)
             if busy:
                 all_busy[uid] = busy
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Calendar fetch failed for {uid}: {e}")
 
     def _conflict_count(slot_dt: datetime) -> int:
         slot_end = slot_dt + end_delta
@@ -79,10 +82,16 @@ def handler(payload: dict) -> dict:
 
     payload["candidate_slots"] = [
         {
-            "startIso": dt.isoformat() + "Z",
-            "endIso": (dt + end_delta).isoformat() + "Z",
+            "startIso": dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "endIso": (dt + end_delta).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "conflictCount": _conflict_count(dt),
         }
         for dt in candidates
     ]
+    # Pass redacted busy intervals (start/end only) to downstream AI scorer.
+    # Cap per-user to bound payload size; AI client redacts further.
+    payload["participant_busy"] = {
+        uid: [{"start": b.get("start", ""), "end": b.get("end", "")} for b in busy_list[:50]]
+        for uid, busy_list in all_busy.items()
+    }
     return payload

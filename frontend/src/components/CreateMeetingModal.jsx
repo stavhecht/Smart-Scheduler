@@ -23,6 +23,7 @@ export default function CreateMeetingModal({ prefill, onClose, onCreated, onRefr
 
   // User search state
   const [allUsers, setAllUsers] = useState([]);
+  const [usersLoadError, setUsersLoadError] = useState(false);
   const [selectedUsers, setSelectedUsers] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -34,13 +35,32 @@ export default function CreateMeetingModal({ prefill, onClose, onCreated, onRefr
     apiGet('/api/users').then(data => {
       const list = Array.isArray(data) ? data : (data?.users ?? []);
       setAllUsers(list);
-    }).catch(() => {});
+    }).catch(() => setUsersLoadError(true));
   }, []);
 
   // Apply prefill on mount
   useEffect(() => {
     if (prefill) {
-      if (typeof prefill === 'object' && prefill?.datetime) {
+      if (typeof prefill === 'object' && prefill?.parsed) {
+        // NL-parsed prefill from the command palette
+        const p = prefill.parsed;
+        setNewMeeting(m => ({
+          ...m,
+          title: p.title || m.title,
+          durationMinutes: p.durationMinutes || m.durationMinutes,
+          daysForward: p.daysForward || m.daysForward,
+          description: p.description || m.description,
+        }));
+        setTitleTouched(true);
+        // Resolve parsed participants against the loaded user list
+        (p.participants || []).forEach(parsedUser => {
+          const match = allUsers.find(u =>
+            u.userId === parsedUser.userId ||
+            (parsedUser.email && u.email === parsedUser.email)
+          );
+          if (match) addUser(match);
+        });
+      } else if (typeof prefill === 'object' && prefill?.datetime) {
         setWizardDatetime(prefill.datetime);
       } else if (typeof prefill === 'string') {
         // Try to match a registered user by email
@@ -234,6 +254,11 @@ export default function CreateMeetingModal({ prefill, onClose, onCreated, onRefr
                     onFocus={() => searchQuery && setDropdownOpen(true)}
                     onKeyDown={e => e.key === 'Enter' && e.preventDefault()}
                   />
+                  {usersLoadError && (
+                    <div style={{ fontSize: '0.78rem', color: 'var(--color-warning)', marginTop: '0.3rem' }}>
+                      Could not load users — enter email manually below
+                    </div>
+                  )}
                   {dropdownOpen && searchQuery.trim() && (
                     <div style={{
                       position: 'absolute', zIndex: 200, top: '100%', left: 0, right: 0,
