@@ -138,9 +138,19 @@ def handle_decline(identity: dict, action: str) -> dict:
     declined = meeting.get("declinedBy", [])
     if user_id not in declined:
         declined.append(user_id)
+    now = datetime.now()
     meeting["declinedBy"] = declined
     meeting["acceptedBy"] = [u for u in meeting.get("acceptedBy", []) if u != user_id]
-    meeting["updatedAt"] = datetime.now().isoformat()
+    meeting["status"] = "cancelled"
+    meeting["cancelledAt"] = now.isoformat()
+    meeting["cancelledBy"] = user_id
+    meeting["updatedAt"] = now.isoformat()
+    if ext_ids := meeting.get("externalEventIds"):
+        try:
+            calendar_client.remove_meeting_from_calendars(ext_ids)
+        except Exception as exc:
+            logger.error(f"Calendar delete failed on decline-cancel for {request_id}: {exc}")
+        meeting["externalEventIds"] = {}
     _meeting_repo.update_meta(request_id, meeting)
     _meeting_repo.log_activity(request_id, "declined", user_id)
     try:
@@ -149,12 +159,12 @@ def handle_decline(identity: dict, action: str) -> dict:
         _user_repo.send_message(
             from_uid=user_id,
             to_uid=meeting.get("creatorUserId", ""),
-            content=f'{decliner_name} declined your meeting: "{meeting.get("title", "Meeting")}"',
+            content=f'{decliner_name} declined your meeting: "{meeting.get("title", "Meeting")}" — the meeting has been cancelled.',
             msg_type="general",
         )
     except Exception as e:
         logger.warning(f"Failed to send decline notification: {e}")
-    return {"status": "success", "message": "Meeting declined", "declinedBy": declined}
+    return {"status": "success", "message": "Meeting declined and cancelled", "declinedBy": declined}
 
 
 def handle_cancel(identity: dict, action: str) -> dict:
@@ -190,12 +200,20 @@ def handle_edit(identity: dict, action: str, data: str | None) -> dict:
         raise HTTPException(status_code=404, detail="Meeting not found")
     if meeting.get("creatorUserId") != user_id:
         raise HTTPException(status_code=403, detail="Only the organizer can edit a meeting")
-    if meeting.get("status") == "cancelled":
+
+    original_status = meeting.get("status")
+    # Allow re-opening only when cancelled by a participant decline (cancelledBy != organizer)
+    declined_cancelled = (
+        original_status == "cancelled"
+        and meeting.get("cancelledBy") is not None
+        and meeting.get("cancelledBy") != user_id
+    )
+    if original_status == "cancelled" and not declined_cancelled:
         raise HTTPException(status_code=400, detail="Cannot edit a cancelled meeting")
 
     duration_changed = payload.durationMinutes is not None and payload.durationMinutes != meeting.get("durationMinutes")
     horizon_changed = payload.daysForward is not None and payload.daysForward != meeting.get("daysForward", 7)
-    needs_regen = (duration_changed or horizon_changed) and meeting.get("status") == "pending"
+    needs_regen = (duration_changed or horizon_changed) and original_status == "pending"
 
     if payload.daysForward is not None:
         meeting["daysForward"] = payload.daysForward
@@ -221,23 +239,35 @@ def handle_edit(identity: dict, action: str, data: str | None) -> dict:
         sched_payload = build_reschedule_payload(updated, user_id, request_id, days_forward)
         run_local_steps(sched_payload)
 
-    if updated and updated.get("status") == "confirmed":
-        external_ids = updated.get("externalEventIds") or {}
-        if external_ids:
-            try:
-                start_iso = updated.get("selectedSlotStart", "")
-                dur = int(updated.get("durationMinutes", 60))
-                if start_iso:
-                    end_iso = (datetime.fromisoformat(start_iso) + timedelta(minutes=dur)).isoformat()
-                    calendar_client.update_meeting_in_calendars(
-                        external_ids=external_ids,
-                        title=updated.get("title", "Meeting"),
-                        start_iso=start_iso, end_iso=end_iso,
-                    )
-            except Exception:
-                pass
+    # For confirmed meetings or meetings being re-opened after a participant decline,
+    # clear participant responses so everyone must accept/decline the updated meeting.
+    if updated and (original_status == "confirmed" or declined_cancelled):
+        now = datetime.now()
+        updated["acceptedBy"] = []
+        updated["declinedBy"] = []
+        updated["status"] = "confirmed"
+        updated["cancelledAt"] = None
+        updated["cancelledBy"] = None
+        updated["updatedAt"] = now.isoformat()
+        _meeting_repo.update_meta(request_id, updated)
+        # Sync updated title/time to external calendars (only when already confirmed with a slot)
+        if original_status == "confirmed":
+            external_ids = updated.get("externalEventIds") or {}
+            if external_ids:
+                try:
+                    start_iso = updated.get("selectedSlotStart", "")
+                    dur = int(updated.get("durationMinutes", 60))
+                    if start_iso:
+                        end_iso = (datetime.fromisoformat(start_iso) + timedelta(minutes=dur)).isoformat()
+                        calendar_client.update_meeting_in_calendars(
+                            external_ids=external_ids,
+                            title=updated.get("title", "Meeting"),
+                            start_iso=start_iso, end_iso=end_iso,
+                        )
+                except Exception:
+                    pass
     _meeting_repo.log_activity(request_id, "edited", user_id)
-    return {"status": "success", "meeting": updated, "slotsRegenerated": needs_regen}
+    return {"status": "success", "meeting": updated, "slotsRegenerated": needs_regen, "reopened": declined_cancelled}
 
 
 def handle_book_custom(identity: dict, action: str, data: str | None) -> dict:

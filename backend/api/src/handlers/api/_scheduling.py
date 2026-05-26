@@ -238,6 +238,16 @@ def run_or_schedule(
         except Exception as local_exc:
             logger.warning(f"Local scheduling also failed for {meeting.requestId}: {local_exc}")
 
+    # Guard: SFN can return SUCCEEDED yet leave no slots in DynamoDB if the
+    # store_results step misbehaves. Verify slots were actually written and
+    # fall back to running the workflow in-process if not.
+    if not _meeting_repo.get_slots(meeting.requestId):
+        logger.warning(f"No slots stored for {meeting.requestId} after SFN, running local fallback")
+        try:
+            _run_local_steps(sfn_input)
+        except Exception as local_exc:
+            logger.warning(f"Local fallback after empty SFN failed for {meeting.requestId}: {local_exc}")
+
     # Inline AI scoring — replaces the previous async SFN
     ai_analysis = _run_ai_inline(meeting.requestId, sfn_input)
 
