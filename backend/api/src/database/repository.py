@@ -55,16 +55,20 @@ def get_working_hours_list(participant_profiles: List[dict]) -> List[int]:
 
 
 def get_working_days_intersection(participant_profiles: List[dict]) -> List[int]:
-    """Intersection of participants' working days."""
+    """Intersection of participants' working days. Defaults missing/empty
+    workingDays to Mon–Fri so a participant without an explicit setting can't
+    silently expand availability to weekends."""
+    default_days = [0, 1, 2, 3, 4]
     if not participant_profiles:
-        return list(range(7))
+        return default_days
     try:
         common = set(range(7))
         for p in participant_profiles:
-            common &= set(p.get("workingDays", list(range(7))))
-        return sorted(common) if common else list(range(7))
+            days = p.get("workingDays") or default_days
+            common &= set(days)
+        return sorted(common) if common else default_days
     except Exception:
-        return list(range(7))
+        return default_days
 
 
 # ---------------------------------------------------------------------------
