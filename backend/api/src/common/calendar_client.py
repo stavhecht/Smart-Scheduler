@@ -30,7 +30,7 @@ _user_repo = _UserRepo()
 # Config (from Lambda environment variables)
 # ---------------------------------------------------------------------------
 
-FRONTEND_URL         = os.environ.get('FRONTEND_URL', 'https://main.dswqybh1v4bo.amplifyapp.com')
+FRONTEND_URL         = os.environ.get('FRONTEND_URL', 'https://main.dhcxa23q98ibd.amplifyapp.com')
 GOOGLE_CLIENT_ID     = os.environ.get('GOOGLE_CLIENT_ID', '')
 GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
 # Public HTTPS base URL of this Lambda (used as the webhook callback base).
@@ -84,11 +84,16 @@ def _http_get(url: str, headers: dict = None) -> dict:
 
 
 def _http_post(url: str, data: dict, headers: dict = None) -> dict:
+    import urllib.error
     encoded = urllib.parse.urlencode(data).encode()
     req = urllib.request.Request(url, data=encoded, headers=headers or {})
     req.add_header('Content-Type', 'application/x-www-form-urlencoded')
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        return json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        raise Exception(f"HTTP {e.code} from {url}: {body}") from e
 
 
 # ---------------------------------------------------------------------------

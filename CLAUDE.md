@@ -55,6 +55,7 @@ src/
 │   ├── auth.py              # Token validation (validate_access_token, get_current_user_from_request)
 │   ├── calendar_client.py   # Google Calendar OAuth2 + Outlook .ics integration
 │   ├── dynamo.py            # DynamoDB client singleton (get_db())
+│   ├── openai_client.py     # AI slot scoring + NL meeting parsing (gpt-4.1-nano, stdlib urllib only)
 │   └── timezone.py          # get_tz_offset_hours()
 ├── core/
 │   └── fairness.py          # FairnessEngine class + global `engine` singleton
@@ -94,7 +95,7 @@ Key actions:
 | Action | Handler |
 |---|---|
 | `profile`, `update_profile`, `profile_stats`, `list_users`, `activity_feed` | `profile.py` |
-| `meetings`, `create_meeting`, `score_slot` | `meetings.py` |
+| `meetings`, `create_meeting`, `score_slot`, `parse_meeting_nl` | `meetings.py` |
 | `book:<id>:<slot>`, `accept:<id>`, `decline:<id>`*, `cancel:<id>`, `edit:<id>`, `reschedule:<id>`, `book_custom:<id>`, `meeting_log:<id>` | `meetings.py` |
 | `calendar_status`, `calendar_events`, `oauth_url:<p>`, `oauth_callback:<p>`, `calendar_disconnect:<p>`, `update_ics_url`, `register_calendar_watch`, `stop_calendar_watch`, `check_calendar_sync` | `calendar.py` |
 | `get_public_profile:<id>`, `shared_meetings:<id>` | `profile.py` |
@@ -103,6 +104,14 @@ Key actions:
 
 `SmartSchedulerWorkflow` (EXPRESS type) runs when a meeting is created:
 `FetchParticipantData → GenerateCandidateSlots → CalculateFairnessScores → CheckOptimizationNeeded → [ReshuffleSlots] → StoreResults`
+
+### AI Scoring (`src/common/openai_client.py`)
+
+Uses `gpt-4.1-nano` via stdlib `urllib` (no OpenAI SDK in the Lambda ZIP). A single batched API call per meeting scores all candidate slots and produces a strategic summary. Hard-fails with `OpenAIScoreError` on any error — the deterministic fairness engine always runs first and AI scoring is additive. Requires `OPENAI_API_KEY` in Lambda env.
+
+Two public entry points:
+- `score_slots_with_ai(slots, participant_context)` — called by `calculate_fairness.py` in the SFN workflow
+- `parse_meeting_intent(text, today_iso, known_users)` — called by `handle_parse_meeting_nl` in `meetings.py` to extract structured fields from a natural-language meeting request (`apiParseMeetingNL` in the frontend)
 
 ### Fairness Engine (`src/core/fairness.py`)
 
@@ -129,7 +138,7 @@ Single-table design (`SmartScheduler_V1`). Three repository classes: `UserReposi
 ### Frontend State Management (`App.jsx`)
 
 State is lifted to `AppContent` in `App.jsx`. No global store — all data flows via props. Key state:
-- `profile`, `meetings`, `calendarStatus` — loaded on mount via `Promise.all`, auto-polled every 30s.
+- `profile`, `meetings`, `calendarStatus` — loaded on mount via `Promise.all`, meetings auto-polled every 60s.
 - `targetProfile` — public profile modal (global, controlled from any route).
 - `showGlobalCreate` / `meetingPrefill` — global create modal triggered from calendar, people view, or `⌘K` palette.
 - `selectedMeeting` — drives `MeetingDetailModal`.
@@ -159,6 +168,7 @@ Supports Google Calendar (OAuth2) and Microsoft Outlook (.ics feed URL). Google 
 | `AWS_ACCOUNT_ID` | Lambda | Used to construct SFN ARN; **absent locally** → `_local_sim` path |
 | `FRONTEND_URL` | Lambda | CORS allow-origin |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Lambda | Google Calendar OAuth |
+| `OPENAI_API_KEY` | Lambda | AI slot scoring + NL meeting parsing; absent → AI scoring silently skipped |
 | `ENVIRONMENT` | local only | Set to `development` for local uvicorn + .env loading |
 | `VITE_API_URL` | frontend `.env.local` | Backend URL for the Vite dev server (default: `http://localhost:8000`) |
 
