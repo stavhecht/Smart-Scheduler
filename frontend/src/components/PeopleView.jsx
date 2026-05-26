@@ -9,7 +9,7 @@ const getInitials = (name) =>
 const getScoreColor = (score) =>
   score >= 80 ? 'var(--success)' : score >= 60 ? 'var(--warning)' : 'var(--danger)';
 
-const APP_URL = 'https://main.d1omo55pxwqk6g.amplifyapp.com';
+const APP_URL = window.location.origin;
 
 export default function PeopleView({ meetings, onScheduleWith, onViewProfile }) {
   const [users, setUsers]           = useState([]);

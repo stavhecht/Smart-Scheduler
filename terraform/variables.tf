@@ -33,5 +33,5 @@ variable "openai_api_key" {
 variable "frontend_url" {
   description = "Amplify frontend URL (used for CORS and Lambda FRONTEND_URL env var)"
   type        = string
-  default     = "https://main.dndn8x61u1xu5.amplifyapp.com"
+  default     = "https://main.dhcxa23q98ibd.amplifyapp.com"
 }

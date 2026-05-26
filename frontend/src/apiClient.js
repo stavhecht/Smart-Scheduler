@@ -119,6 +119,10 @@ export async function apiPost(path, body) {
     const bookMatch = path.match(/^\/api\/meetings\/([^/]+)\/book\/(.+)$/);
     if (bookMatch) return apiProxy(`book:${bookMatch[1]}:${decodeURIComponent(bookMatch[2])}`);
 
+    // /api/meetings/<id>/decline
+    const declineMatch = path.match(/^\/api\/meetings\/([^/]+)\/decline$/);
+    if (declineMatch) return apiProxy(`decline:${declineMatch[1]}`);
+
     // /api/meetings/<id>/cancel
     const cancelMatch = path.match(/^\/api\/meetings\/([^/]+)\/cancel$/);
     if (cancelMatch) return apiProxy(`cancel:${cancelMatch[1]}`);
@@ -141,6 +145,9 @@ export async function apiPost(path, body) {
     const bookCustomMatch = path.match(/^\/api\/meetings\/([^/]+)\/book_custom$/);
     if (bookCustomMatch) return apiProxy(`book_custom:${bookCustomMatch[1]}`, body);
 
+    // /api/profile/fairness/reset
+    if (path === '/api/profile/fairness/reset') return apiProxy('reset_fairness');
+
     // /api/profile/update
     if (path === '/api/profile/update') return apiProxy('update_profile', body);
 
@@ -150,6 +157,11 @@ export async function apiPost(path, body) {
 /** Score a manually selected time slot for fairness (no side effects). */
 export async function apiScoreSlot(startIso, durationMinutes, participantIds = []) {
     return apiProxy('score_slot', { startIso, durationMinutes, participantIds });
+}
+
+/** Parse a free-text meeting request into prefill fields. */
+export async function apiParseMeetingNL(text) {
+    return apiProxy('parse_meeting_nl', { text });
 }
 
 /** Save (or clear) the user's .ics calendar feed URL. */

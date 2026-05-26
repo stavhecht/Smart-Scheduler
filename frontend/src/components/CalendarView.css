@@ -280,44 +280,68 @@
   opacity: 0.7;
 }
 
-/* ── Tooltip (click-triggered, fixed position) ── */
+/* ── Tooltip (click-triggered, absolute — moves with page scroll) ── */
 .cv-tooltip {
-  position: fixed;
+  position: absolute;
   background: var(--bg-card);
-  border: 1px solid rgba(56, 189, 248, 0.22);
-  border-radius: 14px;
-  padding: 1rem 1.2rem;
-  z-index: 100;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-  min-width: 220px;
-  max-width: 300px;
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-radius: 16px;
+  padding: 1.1rem 1.25rem 1rem;
+  z-index: 9999;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.2);
+  width: 300px;
   pointer-events: auto;
   animation: ttIn 0.15s ease;
 }
 
 @keyframes ttIn {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0)  scale(1); }
+}
+
+.cv-tt-close {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.75rem;
+  background: none;
+  border: none;
+  color: var(--text-muted, rgba(255,255,255,0.35));
+  cursor: pointer;
+  font-size: 0.8rem;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: color 0.12s, background 0.12s;
+}
+.cv-tt-close:hover {
+  color: var(--text-primary, white);
+  background: rgba(255,255,255,0.08);
 }
 
 .cv-tt-title {
   font-weight: 700;
-  font-size: 0.88rem;
-  color: white;
-  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--text-primary, white);
+  margin-bottom: 0.6rem;
+  margin-right: 1rem;
+  line-height: 1.3;
 }
 
 .cv-tt-row {
-  font-size: 0.77rem;
-  color: rgba(255, 255, 255, 0.52);
-  margin-bottom: 0.2rem;
+  font-size: 0.78rem;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.55));
+  margin-bottom: 0.25rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
 }
 
 .cv-tt-role {
-  margin-top: 0.4rem;
-  padding-top: 0.4rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.4);
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.35);
 }
 
 .cv-tt-desc {
@@ -329,16 +353,40 @@
 }
 
 .cv-tt-link {
-  display: block;
-  margin-top: 0.5rem;
-  font-size: 0.72rem;
-  color: var(--accent-color);
+  display: inline-block;
+  margin-top: 0.6rem;
+  font-size: 0.73rem;
+  color: var(--accent, #38bdf8);
   text-decoration: none;
-  opacity: 0.8;
+  opacity: 0.85;
   transition: opacity 0.12s;
 }
-
 .cv-tt-link:hover { opacity: 1; text-decoration: underline; }
+
+.cv-tt-btn {
+  display: block;
+  width: 100%;
+  margin-top: 0.75rem;
+  padding: 0.45rem 0;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  border-radius: 8px;
+  color: var(--accent, #38bdf8);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.15s, border-color 0.15s;
+}
+.cv-tt-btn:hover {
+  background: rgba(56, 189, 248, 0.22);
+  border-color: rgba(56, 189, 248, 0.5);
+}
+
+[data-theme="light"] .cv-tt-close { color: rgba(0,0,0,0.35); }
+[data-theme="light"] .cv-tt-close:hover { color: rgba(0,0,0,0.7); background: rgba(0,0,0,0.06); }
+[data-theme="light"] .cv-tt-row { color: var(--text-secondary, #4b5563); }
+[data-theme="light"] .cv-tt-role { color: rgba(0,0,0,0.35); border-top-color: rgba(0,0,0,0.07); }
 
 /* ── Empty state ── */
 .cv-empty {
