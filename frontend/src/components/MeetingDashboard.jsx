@@ -149,7 +149,7 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
         durationMinutes: Number(editModal.durationMinutes),
         daysForward: Number(editModal.daysForward),
       });
-      notify(result?.slotsRegenerated ? 'Meeting updated — regenerating slots…' : 'Meeting updated!', 'success');
+      notify(result?.slotsRegenerated ? 'Meeting updated — regenerating slots…' : result?.reopened ? 'Meeting re-opened — participants must accept again.' : 'Meeting updated!', 'success');
       setEditModal(null);
       onRefresh();
     } catch (err) {
@@ -861,6 +861,39 @@ function MeetingCard({
             </div>
           )}
 
+          {/* Empty-state when slot generation produced no slots */}
+          {!hasSlots && (
+            <div style={{
+              border: '1px solid rgba(245,158,11,0.3)',
+              background: 'rgba(245,158,11,0.06)',
+              borderRadius: '10px',
+              padding: '0.9rem 1rem',
+              marginBottom: '0.9rem',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.6rem',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ fontSize: '1rem' }}>⚠️</span>
+                <strong style={{ fontSize: '0.88rem' }}>No AI slots available yet</strong>
+              </div>
+              <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                Slot generation hasn't completed for this meeting. Click <strong>Regenerate</strong> to
+                run the scheduler again, or pick a custom time below.
+              </div>
+              {onReschedule && (
+                <button
+                  className="btn-score"
+                  style={{ alignSelf: 'flex-start' }}
+                  onClick={onReschedule}
+                >
+                  <RefreshCw size={12} style={{ verticalAlign: 'middle', marginRight: '0.3rem' }} />
+                  Regenerate slots
+                </button>
+              )}
+            </div>
+          )}
+
           {/* AI-generated slots */}
           {hasSlots && (
             <>
@@ -998,11 +1031,6 @@ function MeetingCard({
             </div>
           )}
 
-          {!hasSlots && !customPicker.scored && (
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
-              AI is still generating slots… pick a custom time above to proceed immediately.
-            </p>
-          )}
         </div>
       )}
 
