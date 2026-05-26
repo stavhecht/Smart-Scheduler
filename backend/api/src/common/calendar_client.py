@@ -29,7 +29,7 @@ _cal_repo = _CalRepo()
 # Config (from Lambda environment variables)
 # ---------------------------------------------------------------------------
 
-FRONTEND_URL         = os.environ.get('FRONTEND_URL', 'https://main.dswqybh1v4bo.amplifyapp.com')
+FRONTEND_URL         = os.environ.get('FRONTEND_URL', 'https://main.dhcxa23q98ibd.amplifyapp.com/')
 GOOGLE_CLIENT_ID     = os.environ.get('GOOGLE_CLIENT_ID', '')
 GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
 # Public HTTPS base URL of this Lambda (used as the webhook callback base).
