@@ -17,7 +17,7 @@ locals {
 
 variable "google_client_id" {
   type    = string
-  default = ""
+  default = "590649260340-qansuooma76qck2774fbsl45opj9qetv.apps.googleusercontent.com"
 }
 
 variable "google_client_secret" {
