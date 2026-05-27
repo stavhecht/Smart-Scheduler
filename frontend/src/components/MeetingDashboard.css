@@ -508,6 +508,7 @@
 
 .mc-confirmed-time { color: var(--success); font-weight: 600; }
 .mc-slots-hint { color: var(--warning); font-weight: 500; }
+.mc-organizer { color: var(--text-secondary); font-size: 0.78rem; }
 
 .mc-right {
   display: flex;
@@ -693,6 +694,48 @@
   .slots-split-cal,
   .slots-split-list { flex: none; width: 100%; }
 }
+
+/* Slots view header + Calendar/List toggle */
+.slots-view-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+.slot-view-toggle { display: flex; }
+.svt-btn {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.svt-btn:first-child { border-radius: 8px 0 0 8px; }
+.svt-btn:last-child  { border-radius: 0 8px 8px 0; border-left: none; }
+.svt-btn.active      { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* Slot list view */
+.slot-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.slot-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 10px;
+  padding: 0.6rem 0.9rem;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.slot-list-item:hover { background: rgba(255,255,255,0.07); border-color: rgba(255,255,255,0.15); }
+.sli-left  { display: flex; flex-direction: column; gap: 0.15rem; }
+.sli-date  { font-weight: 600; font-size: 0.85rem; }
+.sli-time  { font-size: 0.78rem; color: var(--text-secondary); display: flex; align-items: center; gap: 0.4rem; }
+.sli-ai    { font-size: 0.65rem; font-weight: 700; color: #8b5cf6; background: #8b5cf61a; border: 1px solid #8b5cf644; border-radius: 8px; padding: 0.1rem 0.35rem; }
+.sli-right { display: flex; align-items: center; gap: 0.5rem; }
+.sli-score { font-size: 0.8rem; font-weight: 700; min-width: 35px; text-align: right; }
 
 /* Slot Timeline */
 .slot-timeline {

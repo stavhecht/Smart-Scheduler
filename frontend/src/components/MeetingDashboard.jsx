@@ -768,6 +768,42 @@ function SlotCalendar({ slots, preferredHours, onBook }) {
 }
 
 /* ─────────────────────────────────────────────
+   SlotList sub-component — compact list view
+───────────────────────────────────────────── */
+function SlotList({ slots, onBook }) {
+  const scoreColor = sc => sc >= 80 ? '#22c55e' : sc >= 60 ? '#f59e0b' : '#ef4444';
+  return (
+    <div className="slot-list">
+      {slots.map((s, i) => {
+        const sc = Math.round(s.score);
+        const color = scoreColor(sc);
+        const dt = new Date(s.startIso);
+        return (
+          <div key={i} className="slot-list-item" onClick={() => onBook(s)}>
+            <div className="sli-left">
+              <span className="sli-date">
+                {i === 0 ? '⭐ ' : ''}
+                {dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+              </span>
+              <span className="sli-time">
+                {dt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                {s.aiScored && <span className="sli-ai">🧠 AI</span>}
+              </span>
+            </div>
+            <div className="sli-right">
+              <div className="slot-score-track" style={{ width: '80px' }}>
+                <div className="slot-score-fill" style={{ width: `${sc}%`, background: color }} />
+              </div>
+              <span className="sli-score" style={{ color }}>{sc}%</span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────
    MeetingCard sub-component
 ───────────────────────────────────────────── */
 function MeetingCard({
@@ -777,7 +813,7 @@ function MeetingCard({
   customPicker = {}, onCustomPickerChange, onScoreCustom, onBookCustom,
   onParticipantClick, isCalendarConnected,
 }) {
-  // slotView removed — both calendar and list are shown simultaneously
+  const [slotView, setSlotView] = useState('calendar');
   const isOrganizer    = meeting.userRole === 'organizer';
   const isConfirmed    = meeting.status === 'confirmed';
   const hasSlots       = Array.isArray(meeting.slots) && meeting.slots.length > 0;
@@ -806,6 +842,11 @@ function MeetingCard({
           </div>
           <div className="mc-meta">
             <span>⏱ {meeting.durationMinutes}m</span>
+            {!isOrganizer && (
+              <span className="mc-organizer">
+                👤 {participantNames[meeting.creatorUserId]?.name || 'Unknown'}
+              </span>
+            )}
             {participantCount > 0 && (
               <div className="participant-avatars">
                 {topParticipants.map(pid => {
@@ -982,75 +1023,25 @@ function MeetingCard({
           {/* AI-generated slots */}
           {hasSlots && (
             <>
-              <div className="panel-title">AI-Optimised Time Slots — click to confirm</div>
-              <div className="slots-split">
-                <div className="slots-split-cal">
-                  <SlotCalendar
-                    slots={meeting.slots}
-                    preferredHours={meeting.preferredHours}
-                    onBook={slot => onBook(meeting.requestId, slot)}
-                  />
-                </div>
-                <div className="slots-split-list">
-                  {(() => {
-                    const sorted = [...meeting.slots].sort((a, b) => b.score - a.score);
-                    const qualityLabel = sc => sc >= 80 ? { text: 'Best', color: '#22c55e' } : sc >= 60 ? { text: 'Good', color: '#f59e0b' } : { text: 'Acceptable', color: '#ef4444' };
-                    return (
-                      <div className="slots-grid">
-                        {sorted.map((slot, rank) => {
-                          const sc = Math.round(slot.score);
-                          const borderColor = sc >= 80 ? '#22c55e' : sc >= 60 ? '#f59e0b' : '#ef4444';
-                          const quality = qualityLabel(sc);
-                          const isTop = rank === 0;
-                          return (
-                            <div
-                              key={rank}
-                              className={`slot-card ${isTop ? 'top-pick' : ''}`}
-                              style={{ borderLeft: `3px solid ${borderColor}` }}
-                              onClick={() => onBook(meeting.requestId, slot)}
-                              title={slot.explanation}
-                            >
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.2rem' }}>
-                                <div className="slot-time">{fmtDate(slot.startIso)} · {fmtTime(slot.startIso)} – {fmtTime(slot.endIso)}</div>
-                                <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
-                                  {slot.isPreferred && meeting.preferredHours?.length > 0 && (
-                                    <span title="Matches your preferred time" style={{ fontSize: '0.62rem', fontWeight: 700, color: '#06b6d4', background: '#06b6d41a', border: '1px solid #06b6d444', borderRadius: '10px', padding: '0.1rem 0.4rem' }}>
-                                      ⏰ preferred
-                                    </span>
-                                  )}
-                                  {slot.aiScored && (
-                                    <span title="Scored by AI" style={{ fontSize: '0.62rem', fontWeight: 700, color: '#8b5cf6', background: '#8b5cf61a', border: '1px solid #8b5cf644', borderRadius: '10px', padding: '0.1rem 0.4rem' }}>
-                                      🧠 AI
-                                    </span>
-                                  )}
-                                  <span style={{ fontSize: '0.68rem', fontWeight: 700, color: quality.color, background: quality.color + '1a', border: `1px solid ${quality.color}44`, borderRadius: '10px', padding: '0.1rem 0.5rem' }}>
-                                    {isTop ? '⭐ ' : ''}{quality.text}
-                                  </span>
-                                </div>
-                              </div>
-                              <div className="slot-score-row">
-                                <span className="slot-score-label">Fairness</span>
-                                <div className="slot-score-track">
-                                  <div className="slot-score-fill" style={{ width: `${Math.min(100, sc)}%`, background: borderColor }} />
-                                </div>
-                                <span className="slot-score-val" style={{ color: borderColor }}>{sc}%</span>
-                              </div>
-                              {slot.explanation && (
-                                <div className="slot-explain">{slot.explanation}</div>
-                              )}
-                              {slot.aiSuggestions && (
-                                <div className="slot-explain" style={{ marginTop: '0.25rem', color: '#8b5cf6', fontStyle: 'normal' }}>
-                                  💡 {slot.aiSuggestions}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  })()}
+              <div className="slots-view-header">
+                <span className="panel-title" style={{ margin: 0 }}>AI-Optimised Time Slots — click to confirm</span>
+                <div className="slot-view-toggle">
+                  <button className={slotView === 'calendar' ? 'svt-btn active' : 'svt-btn'} onClick={() => setSlotView('calendar')}>📅 Calendar</button>
+                  <button className={slotView === 'list' ? 'svt-btn active' : 'svt-btn'} onClick={() => setSlotView('list')}>☰ List</button>
                 </div>
               </div>
+              {slotView === 'calendar' ? (
+                <SlotCalendar
+                  slots={meeting.slots}
+                  preferredHours={meeting.preferredHours}
+                  onBook={slot => onBook(meeting.requestId, slot)}
+                />
+              ) : (
+                <SlotList
+                  slots={meeting.slots}
+                  onBook={slot => onBook(meeting.requestId, slot)}
+                />
+              )}
             </>
           )}
 

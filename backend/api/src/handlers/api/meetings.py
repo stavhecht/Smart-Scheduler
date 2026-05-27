@@ -27,6 +27,7 @@ def handle_meetings(identity: dict) -> list:
         all_pids: set = set()
         for m in meetings:
             all_pids.update(m.participantUserIds)
+            all_pids.add(m.creatorUserId)
         name_map = _user_repo.get_by_ids(list(all_pids))
         result = []
         for m in meetings:
@@ -36,7 +37,7 @@ def handle_meetings(identity: dict) -> list:
             d["userRole"] = "organizer" if m.creatorUserId == user_id else "participant"
             d["participantNames"] = {
                 pid: name_map.get(pid, {"name": pid, "email": ""})
-                for pid in m.participantUserIds
+                for pid in (set(m.participantUserIds) | {m.creatorUserId})
             }
             result.append(d)
         return result
@@ -235,7 +236,7 @@ def handle_edit(identity: dict, action: str, data: str | None) -> dict:
             updated["preferredHours"] = payload.preferredHours
         if payload.excludedWeekdays is not None:
             updated["excludedWeekdays"] = payload.excludedWeekdays
-        days_forward = updated.get("daysForward", 7)
+        days_forward = int(updated.get("daysForward") or 7)
         now = datetime.now()
         updated.update({
             "dateRangeStart": now.isoformat(),
@@ -352,7 +353,7 @@ def handle_reschedule(identity: dict, action: str, data: str | None) -> dict:
     if meeting.get("status") == "cancelled":
         raise HTTPException(status_code=400, detail="Cannot reschedule a cancelled meeting")
 
-    days_forward = meeting.get("daysForward") or 7
+    days_forward = int(meeting.get("daysForward") or 7)
 
     now = datetime.now()
     if ext_ids := meeting.get("externalEventIds", {}):
