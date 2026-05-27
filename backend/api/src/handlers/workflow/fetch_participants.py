@@ -32,7 +32,7 @@ def handler(payload: dict) -> dict:
                 "userId": uid,
                 "timezone": profile.get("timezone", "UTC"),
                 "workingHours": profile.get("workingHours", {"start": "09:00", "end": "18:00"}),
-                "workingDays": profile.get("workingDays", list(range(7))),
+                "workingDays": profile.get("workingDays", [0, 1, 2, 3, 4]),
                 "lunchBreak": profile.get("lunchBreak", {"start": "12:00", "duration": 60}),
             })
 

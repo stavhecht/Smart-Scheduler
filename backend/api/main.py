@@ -24,7 +24,7 @@ logging.basicConfig(level=logging.INFO)
 
 app = FastAPI()
 
-_FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://main.dndn8x61u1xu5.amplifyapp.com')
+_FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://main.dhcxa23q98ibd.amplifyapp.com')
 
 app.add_middleware(
     CORSMiddleware,

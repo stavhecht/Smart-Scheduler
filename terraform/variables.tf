@@ -27,8 +27,9 @@ variable "google_client_secret" {
 }
 
 variable "openai_api_key" {
-  type    = string
-  default = ""
+  type      = string
+  sensitive = true
+  default   = ""
 }
 variable "frontend_url" {
   description = "Amplify frontend URL (used for CORS and Lambda FRONTEND_URL env var)"
