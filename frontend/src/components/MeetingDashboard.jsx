@@ -143,11 +143,20 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
     if (!editModal) return;
     setLoading(true);
     try {
+      const editDaysForward = editModal.schedPreset === 'custom'
+        ? Math.max(1, Math.min(90, editModal.customDays || 7))
+        : parseInt(editModal.schedPreset || '7');
+      const editPreferredHours = editModal.timeWindow === 'morning' ? [8, 9, 10, 11]
+        : editModal.timeWindow === 'afternoon' ? [12, 13, 14, 15, 16]
+        : editModal.timeWindow === 'evening' ? [17, 18, 19, 20]
+        : [];
       const result = await apiPost(`/api/meetings/${editModal.requestId}/edit`, {
         title: editModal.title,
         description: editModal.description ?? '',
         durationMinutes: Number(editModal.durationMinutes),
-        daysForward: Number(editModal.daysForward),
+        daysForward: editDaysForward,
+        preferredHours: editPreferredHours,
+        excludedWeekdays: editModal.excludedWeekdays || [],
       });
       notify(result?.slotsRegenerated ? 'Meeting updated — regenerating slots…' : result?.reopened ? 'Meeting re-opened — participants must accept again.' : 'Meeting updated!', 'success');
       setEditModal(null);
@@ -359,19 +368,65 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
                 </div>
               </div>
               <div className="form-group">
-                <label>Scheduling Horizon</label>
+                <label>Scheduling Range</label>
                 <div className="dur-pills">
-                  {[{ label: '3 days', value: 3 }, { label: '1 week', value: 7 }, { label: '2 weeks', value: 14 }].map(opt => (
+                  {[{ label: '3 days', value: '3' }, { label: '1 week', value: '7' }, { label: '2 weeks', value: '14' }, { label: '1 month', value: '30' }, { label: 'Custom', value: 'custom' }].map(opt => (
                     <button
                       key={opt.value} type="button"
-                      className={`dur-pill ${editModal.daysForward === opt.value ? 'active' : ''}`}
-                      onClick={() => setEditModal({ ...editModal, daysForward: opt.value })}
+                      className={`dur-pill ${editModal.schedPreset === opt.value ? 'active' : ''}`}
+                      onClick={() => setEditModal({ ...editModal, schedPreset: opt.value })}
                     >
                       {opt.label}
                     </button>
                   ))}
                 </div>
-                {editModal.isPending && <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)', margin: '0.3rem 0 0' }}>Changing duration or horizon will regenerate slots.</p>}
+                {editModal.schedPreset === 'custom' && (
+                  <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', alignItems: 'center' }}>
+                    <input
+                      type="number"
+                      min={1}
+                      max={90}
+                      value={editModal.customDays || 14}
+                      onChange={e => setEditModal({ ...editModal, customDays: parseInt(e.target.value) || 14 })}
+                      style={{ width: '80px' }}
+                    />
+                    <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>days from today</span>
+                  </div>
+                )}
+                {editModal.isPending && <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)', margin: '0.3rem 0 0' }}>Saving will regenerate slot suggestions.</p>}
+              </div>
+              <div className="form-group">
+                <label>Time of Day</label>
+                <div className="dur-pills">
+                  {[{ label: 'Any time', value: 'all' }, { label: 'Morning 8–12', value: 'morning' }, { label: 'Afternoon 12–17', value: 'afternoon' }, { label: 'Evening 17–20', value: 'evening' }].map(opt => (
+                    <button
+                      key={opt.value} type="button"
+                      className={`dur-pill ${editModal.timeWindow === opt.value ? 'active' : ''}`}
+                      onClick={() => setEditModal({ ...editModal, timeWindow: opt.value })}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Skip Weekdays <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontWeight: 400 }}>(optional)</span></label>
+                <div className="dur-pills" style={{ flexWrap: 'wrap' }}>
+                  {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day, i) => (
+                    <button
+                      key={i} type="button"
+                      className={`dur-pill ${(editModal.excludedWeekdays || []).includes(i) ? 'active' : ''}`}
+                      style={(editModal.excludedWeekdays || []).includes(i) ? { background: 'rgba(239,68,68,0.15)', borderColor: 'rgba(239,68,68,0.5)', color: '#ef4444' } : {}}
+                      onClick={() => {
+                        const curr = editModal.excludedWeekdays || [];
+                        const next = curr.includes(i) ? curr.filter(d => d !== i) : [...curr, i];
+                        setEditModal({ ...editModal, excludedWeekdays: next });
+                      }}
+                    >
+                      {day}
+                    </button>
+                  ))}
+                </div>
               </div>
               <div className="form-group">
                 <label>Agenda / Notes</label>
@@ -529,7 +584,29 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
                 onToggle={() => toggle(m.requestId)}
                 onAccept={() => {}}
                 onBook={handleBook}
-                onEdit={() => setEditModal({ requestId: m.requestId, title: m.title, durationMinutes: m.durationMinutes, description: m.description || '', daysForward: m.daysForward || 7, isPending: m.status === 'pending' })}
+                onEdit={() => {
+                  // daysForward may be missing for older meetings — derive from stored date range
+                  const daysForward = m.daysForward
+                    ?? Math.max(1, Math.round((new Date(m.dateRangeEnd) - new Date(m.dateRangeStart)) / 864e5));
+                  const presets = ['3', '7', '14', '30'];
+                  const schedPreset = presets.includes(String(daysForward)) ? String(daysForward) : 'custom';
+                  let timeWindow = 'all';
+                  if (m.preferredHours?.length) {
+                    const first = m.preferredHours[0];
+                    timeWindow = first <= 11 ? 'morning' : first <= 16 ? 'afternoon' : 'evening';
+                  }
+                  setEditModal({
+                    requestId: m.requestId,
+                    title: m.title,
+                    durationMinutes: m.durationMinutes,
+                    description: m.description || '',
+                    isPending: m.status === 'pending',
+                    schedPreset,
+                    customDays: daysForward,
+                    timeWindow,
+                    excludedWeekdays: m.excludedWeekdays || [],
+                  });
+                }}
                 onCancel={() => setCancelConfirmId(m.requestId)}
                 onReschedule={() => setRescheduleConfirmId(m.requestId)}
                 fmtDate={fmtDate}
@@ -594,10 +671,17 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
 }
 
 /* SlotCalendar — full-week calendar reusing cv-* classes from CalendarView.css */
-const CAL_HOURS = Array.from({ length: 15 }, (_, i) => 7 + i); // 7 am – 10 pm
-
-function SlotCalendar({ slots, onBook }) {
+function SlotCalendar({ slots, preferredHours, onBook }) {
   const scoreColor = sc => sc >= 80 ? '#22c55e' : sc >= 60 ? '#f59e0b' : '#ef4444';
+
+  const slotHours = useMemo(() => slots.flatMap(s => {
+    const h = new Date(s.startIso).getHours();
+    const eh = new Date(s.endIso).getHours() + (new Date(s.endIso).getMinutes() > 0 ? 1 : 0);
+    return [h, eh];
+  }), [slots]);
+  const CAL_START = slots.length ? Math.max(0, Math.min(7, ...slotHours) - 1) : 7;
+  const CAL_END   = slots.length ? Math.min(24, Math.max(22, ...slotHours) + 1) : 22;
+  const CAL_HOURS = Array.from({ length: CAL_END - CAL_START }, (_, i) => CAL_START + i);
 
   const initialOffset = useMemo(() => {
     if (!slots.length) return 0;
@@ -628,8 +712,9 @@ function SlotCalendar({ slots, onBook }) {
       const start = new Date(s.startIso), end = new Date(s.endIso);
       const h = start.getHours() + start.getMinutes() / 60;
       const endH = end.getHours() + end.getMinutes() / 60;
-      const cs = Math.max(h, 7), ce = Math.min(endH, 22);
-      return { s, topPct: (cs - 7) / 15 * 100, heightPct: Math.max((ce - cs) / 15 * 100, 2), startStr: start.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }), sc: Math.round(s.score), isTop: s.startIso === topSlotIso, visible: ce > cs };
+      const cs = Math.max(h, CAL_START), ce = Math.min(endH, CAL_END);
+      const range = CAL_END - CAL_START;
+      return { s, topPct: (cs - CAL_START) / range * 100, heightPct: Math.max((ce - cs) / range * 100, 2), startStr: start.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }), sc: Math.round(s.score), isTop: s.startIso === topSlotIso, visible: ce > cs };
     })
     .filter(e => e.visible);
 
@@ -665,7 +750,7 @@ function SlotCalendar({ slots, onBook }) {
                     <div key={i} className="cv-event"
                       style={{ top: `calc(${e.topPct}% + 1px)`, height: `calc(${e.heightPct}% - 2px)`, left: '2px', right: '2px', background: `${color}1a`, borderLeft: `3px solid ${color}`, color, cursor: 'pointer' }}
                       onClick={() => onBook(e.s)}
-                      title={`${e.sc}% fairness${e.s.aiScored ? ' (AI-scored)' : ''}${e.s.explanation ? ' — ' + e.s.explanation : ''}${e.s.aiSuggestions ? '\n💡 ' + e.s.aiSuggestions : ''}`}
+                      title={`${e.sc}% fairness${e.s.isPreferred && preferredHours?.length > 0 ? ' ⏰ preferred' : ''}${e.s.aiScored ? ' (AI-scored)' : ''}${e.s.explanation ? ' — ' + e.s.explanation : ''}${e.s.aiSuggestions ? '\n💡 ' + e.s.aiSuggestions : ''}`}
                     >
                       <span className="cv-ev-title">{e.isTop ? '⭐ ' : ''}{e.s.aiScored ? '🧠 ' : ''}{e.startStr}</span>
                       <span className="cv-ev-time">{e.sc}% fair</span>
@@ -692,7 +777,7 @@ function MeetingCard({
   customPicker = {}, onCustomPickerChange, onScoreCustom, onBookCustom,
   onParticipantClick, isCalendarConnected,
 }) {
-  const [slotView, setSlotView] = useState('timeline');
+  // slotView removed — both calendar and list are shown simultaneously
   const isOrganizer    = meeting.userRole === 'organizer';
   const isConfirmed    = meeting.status === 'confirmed';
   const hasSlots       = Array.isArray(meeting.slots) && meeting.slots.length > 0;
@@ -897,82 +982,75 @@ function MeetingCard({
           {/* AI-generated slots */}
           {hasSlots && (
             <>
-              <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>AI-Optimised Time Slots — click to confirm</span>
-                <div className="slot-view-toggle">
-                  <button
-                    className={`slot-view-btn${slotView === 'timeline' ? ' active' : ''}`}
-                    onClick={() => setSlotView('timeline')}
-                    title="Timeline view"
-                  >▦ Timeline</button>
-                  <button
-                    className={`slot-view-btn${slotView === 'list' ? ' active' : ''}`}
-                    onClick={() => setSlotView('list')}
-                    title="List view"
-                  >☰ List</button>
+              <div className="panel-title">AI-Optimised Time Slots — click to confirm</div>
+              <div className="slots-split">
+                <div className="slots-split-cal">
+                  <SlotCalendar
+                    slots={meeting.slots}
+                    preferredHours={meeting.preferredHours}
+                    onBook={slot => onBook(meeting.requestId, slot)}
+                  />
+                </div>
+                <div className="slots-split-list">
+                  {(() => {
+                    const sorted = [...meeting.slots].sort((a, b) => b.score - a.score);
+                    const qualityLabel = sc => sc >= 80 ? { text: 'Best', color: '#22c55e' } : sc >= 60 ? { text: 'Good', color: '#f59e0b' } : { text: 'Acceptable', color: '#ef4444' };
+                    return (
+                      <div className="slots-grid">
+                        {sorted.map((slot, rank) => {
+                          const sc = Math.round(slot.score);
+                          const borderColor = sc >= 80 ? '#22c55e' : sc >= 60 ? '#f59e0b' : '#ef4444';
+                          const quality = qualityLabel(sc);
+                          const isTop = rank === 0;
+                          return (
+                            <div
+                              key={rank}
+                              className={`slot-card ${isTop ? 'top-pick' : ''}`}
+                              style={{ borderLeft: `3px solid ${borderColor}` }}
+                              onClick={() => onBook(meeting.requestId, slot)}
+                              title={slot.explanation}
+                            >
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.2rem' }}>
+                                <div className="slot-time">{fmtDate(slot.startIso)} · {fmtTime(slot.startIso)} – {fmtTime(slot.endIso)}</div>
+                                <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                                  {slot.isPreferred && meeting.preferredHours?.length > 0 && (
+                                    <span title="Matches your preferred time" style={{ fontSize: '0.62rem', fontWeight: 700, color: '#06b6d4', background: '#06b6d41a', border: '1px solid #06b6d444', borderRadius: '10px', padding: '0.1rem 0.4rem' }}>
+                                      ⏰ preferred
+                                    </span>
+                                  )}
+                                  {slot.aiScored && (
+                                    <span title="Scored by AI" style={{ fontSize: '0.62rem', fontWeight: 700, color: '#8b5cf6', background: '#8b5cf61a', border: '1px solid #8b5cf644', borderRadius: '10px', padding: '0.1rem 0.4rem' }}>
+                                      🧠 AI
+                                    </span>
+                                  )}
+                                  <span style={{ fontSize: '0.68rem', fontWeight: 700, color: quality.color, background: quality.color + '1a', border: `1px solid ${quality.color}44`, borderRadius: '10px', padding: '0.1rem 0.5rem' }}>
+                                    {isTop ? '⭐ ' : ''}{quality.text}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="slot-score-row">
+                                <span className="slot-score-label">Fairness</span>
+                                <div className="slot-score-track">
+                                  <div className="slot-score-fill" style={{ width: `${Math.min(100, sc)}%`, background: borderColor }} />
+                                </div>
+                                <span className="slot-score-val" style={{ color: borderColor }}>{sc}%</span>
+                              </div>
+                              {slot.explanation && (
+                                <div className="slot-explain">{slot.explanation}</div>
+                              )}
+                              {slot.aiSuggestions && (
+                                <div className="slot-explain" style={{ marginTop: '0.25rem', color: '#8b5cf6', fontStyle: 'normal' }}>
+                                  💡 {slot.aiSuggestions}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
-
-              {slotView === 'timeline' ? (
-                <SlotCalendar
-                  slots={meeting.slots}
-                  onBook={slot => onBook(meeting.requestId, slot)}
-                />
-              ) : (
-                /* List view — sorted by fairness score descending, all slots shown */
-                (() => {
-                  const sorted = [...meeting.slots].sort((a, b) => b.score - a.score);
-                  const qualityLabel = sc => sc >= 80 ? { text: 'Best', color: '#22c55e' } : sc >= 60 ? { text: 'Good', color: '#f59e0b' } : { text: 'Acceptable', color: '#ef4444' };
-                  return (
-                    <div className="slots-grid">
-                      {sorted.map((slot, rank) => {
-                        const sc = Math.round(slot.score);
-                        const borderColor = sc >= 80 ? '#22c55e' : sc >= 60 ? '#f59e0b' : '#ef4444';
-                        const quality = qualityLabel(sc);
-                        const isTop = rank === 0;
-                        return (
-                          <div
-                            key={rank}
-                            className={`slot-card ${isTop ? 'top-pick' : ''}`}
-                            style={{ borderLeft: `3px solid ${borderColor}` }}
-                            onClick={() => onBook(meeting.requestId, slot)}
-                            title={slot.explanation}
-                          >
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.2rem' }}>
-                              <div className="slot-time">{fmtDate(slot.startIso)} · {fmtTime(slot.startIso)} – {fmtTime(slot.endIso)}</div>
-                              <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
-                                {slot.aiScored && (
-                                  <span title="Scored by AI" style={{ fontSize: '0.62rem', fontWeight: 700, color: '#8b5cf6', background: '#8b5cf61a', border: '1px solid #8b5cf644', borderRadius: '10px', padding: '0.1rem 0.4rem' }}>
-                                    🧠 AI
-                                  </span>
-                                )}
-                                <span style={{ fontSize: '0.68rem', fontWeight: 700, color: quality.color, background: quality.color + '1a', border: `1px solid ${quality.color}44`, borderRadius: '10px', padding: '0.1rem 0.5rem' }}>
-                                  {isTop ? '⭐ ' : ''}{quality.text}
-                                </span>
-                              </div>
-                            </div>
-                            <div className="slot-score-row">
-                              <span className="slot-score-label">Fairness</span>
-                              <div className="slot-score-track">
-                                <div className="slot-score-fill" style={{ width: `${Math.min(100, sc)}%`, background: borderColor }} />
-                              </div>
-                              <span className="slot-score-val" style={{ color: borderColor }}>{sc}%</span>
-                            </div>
-                            {slot.explanation && (
-                              <div className="slot-explain">{slot.explanation}</div>
-                            )}
-                            {slot.aiSuggestions && (
-                              <div className="slot-explain" style={{ marginTop: '0.25rem', color: '#8b5cf6', fontStyle: 'normal' }}>
-                                💡 {slot.aiSuggestions}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  );
-                })()
-              )}
             </>
           )}
 

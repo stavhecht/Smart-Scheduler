@@ -28,8 +28,18 @@ def handler(payload: dict) -> dict:
     creator_id = payload.get("creator_id", "")
     all_ids = list({creator_id} | set(payload.get("participant_ids", [])))
 
-    wh_list = get_working_hours_list(profiles)
-    wd_list = get_working_days_intersection(profiles)
+    # Per-meeting scheduling preferences — override profile-derived defaults when set
+    preferred_hours = payload.get("preferred_hours")          # List[int] or None
+    excluded_weekdays = set(payload.get("excluded_weekdays") or [])  # e.g. {0, 4}
+
+    # Generate slots across the full day and all 7 days of the week.
+    # preferred_hours becomes a soft score boost; excluded_weekdays is the only
+    # hard day filter (explicit organizer exclusion). Participants' working-day
+    # profiles affect scoring via REST_DAY_WEIGHT but not slot generation.
+    FULL_DAY_HOURS = list(range(7, 22))
+    wh_list = FULL_DAY_HOURS
+    base_wd = list(range(7))  # all days; scoring penalises non-working days
+    wd_list = [d for d in base_wd if d not in excluded_weekdays]
 
     candidates = engine.generate_candidate_slots(
         date_start, date_end,
@@ -64,7 +74,7 @@ def handler(payload: dict) -> dict:
                     pass
         return count
 
-    # Remove slots where the creator has a hard conflict
+    # Hard-filter 1: remove slots where the creator has a conflict
     creator_busy = all_busy.get(creator_id, [])
     if creator_busy:
         def _creator_conflict(slot_dt: datetime) -> bool:
@@ -80,14 +90,23 @@ def handler(payload: dict) -> dict:
             return False
         candidates = [c for c in candidates if not _creator_conflict(c)]
 
-    payload["candidate_slots"] = [
-        {
-            "startIso": dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "endIso": (dt + end_delta).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "conflictCount": _conflict_count(dt),
-        }
-        for dt in candidates
-    ]
+    # Hard-filter 2: remove slots where the majority of participants conflict
+    majority_threshold = len(all_ids) / 2
+    candidate_slots = []
+    for dt in candidates:
+        cc = _conflict_count(dt)
+        if cc <= majority_threshold:
+            # Mark slots that fall within the user's preferred hours (organizer local time).
+            # isPreferred=True when no preference was set (all slots equally preferred).
+            local_hour = int((dt.hour + round(tz_offset)) % 24)
+            is_preferred = preferred_hours is None or local_hour in preferred_hours
+            candidate_slots.append({
+                "startIso": dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "endIso": (dt + end_delta).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "conflictCount": cc,
+                "isPreferred": is_preferred,
+            })
+    payload["candidate_slots"] = candidate_slots
     # Pass redacted busy intervals (start/end only) to downstream AI scorer.
     # Cap per-user to bound payload size; AI client redacts further.
     payload["participant_busy"] = {

@@ -299,6 +299,12 @@ class MeetingRepository:
         self, req_data: models.MeetingCreateSchema, creator_id: str
     ) -> models.MeetingRequest:
         req_id = f"m{uuid.uuid4().hex[:6]}"
+        range_start = datetime.now()
+        if getattr(req_data, "dateRangeStart", None):
+            try:
+                range_start = datetime.fromisoformat(req_data.dateRangeStart)
+            except (ValueError, TypeError):
+                pass
         meeting = models.MeetingRequest(
             requestId=req_id,
             creatorUserId=creator_id,
@@ -306,9 +312,12 @@ class MeetingRepository:
             title=req_data.title,
             description=getattr(req_data, "description", "") or "",
             durationMinutes=req_data.durationMinutes,
-            dateRangeStart=datetime.now(),
-            dateRangeEnd=datetime.now() + timedelta(days=req_data.daysForward),
+            dateRangeStart=range_start,
+            dateRangeEnd=range_start + timedelta(days=req_data.daysForward),
             status="pending",
+            daysForward=req_data.daysForward,
+            preferredHours=getattr(req_data, "preferredHours", None),
+            excludedWeekdays=getattr(req_data, "excludedWeekdays", None),
         )
         self._db.put(f"MEET#{req_id}", "META", meeting.model_dump(mode="json"))
         self._write_participation_records(meeting)

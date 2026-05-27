@@ -49,8 +49,13 @@ def run_simulation(
     participant_working_days  = [p.get("workingDays", list(range(7))) for p in participant_profiles] or None
     participant_lunch_breaks  = [p.get("lunchBreak") for p in participant_profiles] or None
 
-    wh_list = get_working_hours_list(participant_profiles)
-    wd_list = get_working_days_intersection(participant_profiles)
+    preferred_hours = getattr(meeting_data, "preferredHours", None)
+    excluded_weekdays = set(getattr(meeting_data, "excludedWeekdays", None) or [])
+
+    FULL_DAY_HOURS = list(range(7, 22))
+    wh_list = FULL_DAY_HOURS
+    base_wd = list(range(7))  # all days; scoring penalises non-working days
+    wd_list = [d for d in base_wd if d not in excluded_weekdays]
 
     candidates = engine.generate_candidate_slots(
         meeting.dateRangeStart, meeting.dateRangeEnd,
@@ -96,15 +101,21 @@ def run_simulation(
             return False
         candidates = [c for c in candidates if not _creator_conflicts(c)]
 
-    # Build candidate slots with conflict counts (matches generate_slots.handler output)
+    # Build candidate slots; skip any slot where the majority of participants conflict
+    majority_threshold = len(all_pids) / 2
     candidate_slots = []
     for slot_dt in candidates:
-        end_dt = slot_dt + timedelta(minutes=meeting.durationMinutes)
-        candidate_slots.append({
-            "startIso": slot_dt.isoformat() + "Z",
-            "endIso": end_dt.isoformat() + "Z",
-            "conflictCount": _conflict_count(slot_dt),
-        })
+        cc = _conflict_count(slot_dt)
+        if cc <= majority_threshold:
+            local_hour = int((slot_dt.hour + round(tz_offset)) % 24)
+            is_preferred = preferred_hours is None or local_hour in preferred_hours
+            end_dt = slot_dt + timedelta(minutes=meeting.durationMinutes)
+            candidate_slots.append({
+                "startIso": slot_dt.isoformat() + "Z",
+                "endIso": end_dt.isoformat() + "Z",
+                "conflictCount": cc,
+                "isPreferred": is_preferred,
+            })
 
     # Trim per-user busy intervals (matches generate_slots payload shape)
     participant_busy_payload = {
@@ -124,12 +135,13 @@ def run_simulation(
         "participant_tz_offsets": participant_tz_offsets,
         "participant_working_days": participant_working_days,
         "participant_lunch_breaks": participant_lunch_breaks,
+        "preferred_hours": preferred_hours,
     })
     all_scored = cf_payload["scored_slots"]
     ai_summary = cf_payload.get("ai_summary")
 
     days_forward = max(1, (meeting.dateRangeEnd - meeting.dateRangeStart).days)
-    slot_count = min(30, max(8, days_forward * 3))
+    slot_count = min(50, max(10, days_forward * 4))
     best_slots = engine.reshuffle(all_scored, count=slot_count) if engine.needs_optimization(all_scored) else engine.select_best_slots(all_scored, count=slot_count)
 
     for slot_data in best_slots:
@@ -143,6 +155,7 @@ def run_simulation(
             explanation=slot_data["explanation"],
             aiScored=bool(slot_data.get("aiScored", False)),
             aiSuggestions=slot_data.get("aiSuggestions"),
+            isPreferred=bool(slot_data.get("isPreferred", False)),
         )
         _meeting_repo.write_slot(
             meeting.requestId,

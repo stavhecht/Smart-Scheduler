@@ -220,6 +220,8 @@ def run_or_schedule(
         "duration_minutes": meeting.durationMinutes,
         "tz_offset_hours": get_tz_offset_hours(creator_tz),
         "participant_profiles": participant_profiles_for_sfn,
+        "preferred_hours": getattr(meeting_data, "preferredHours", None),
+        "excluded_weekdays": getattr(meeting_data, "excludedWeekdays", None),
     }
 
     try:
@@ -279,7 +281,8 @@ def _run_local_steps(payload: dict) -> None:
 
 
 def build_reschedule_payload(
-    meeting: dict, user_id: str, request_id: str, days_forward: int
+    meeting: dict, user_id: str, request_id: str, days_forward: int,
+    preferred_hours=None, excluded_weekdays=None,
 ) -> dict:
     creator_profile = _user_repo.get_profile_raw(user_id)
     creator_tz = (creator_profile or {}).get("timezone", "UTC")
@@ -292,4 +295,6 @@ def build_reschedule_payload(
         "date_range_end": (now + timedelta(days=days_forward)).isoformat(),
         "duration_minutes": int(meeting.get("durationMinutes", 60)),
         "tz_offset_hours": get_tz_offset_hours(creator_tz),
+        "preferred_hours": preferred_hours if preferred_hours is not None else meeting.get("preferredHours"),
+        "excluded_weekdays": excluded_weekdays if excluded_weekdays is not None else meeting.get("excludedWeekdays"),
     }

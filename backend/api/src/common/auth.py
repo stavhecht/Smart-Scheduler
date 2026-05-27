@@ -24,9 +24,10 @@ def validate_access_token(access_token: str) -> Optional[dict]:
         user_id = attrs.get("sub", "")
         email = attrs.get("email", "")
         name = attrs.get("name") or email.split("@")[0]
+        logger.info(f"[auth] token valid — user_id={user_id} email={email}")
         return {"user_id": user_id, "email": email, "display_name": name}
     except Exception as exc:
-        logger.debug(f"Token validation failed: {exc}")
+        logger.warning(f"[auth] token validation failed: {exc}")
         return None
 
 

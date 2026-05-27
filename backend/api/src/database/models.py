@@ -81,6 +81,10 @@ class MeetingRequest(BaseDBModel):
     cancelledAt: Optional[datetime] = None
     cancelledBy: Optional[str] = None
     externalEventIds: Dict[str, str] = Field(default_factory=dict)
+    # Per-meeting scheduling preferences (set at creation, used for rescheduling)
+    daysForward: Optional[int] = None
+    preferredHours: Optional[List[int]] = None
+    excludedWeekdays: Optional[List[int]] = None
     # AI strategic summary — populated by SFN after slot generation; null if AI unavailable
     aiMeetingScore: Optional[float] = None
     aiSummary: Optional[str] = None
@@ -96,6 +100,9 @@ class MeetingCreateSchema(BaseModel):
     participantIds: List[str] = []
     participantEmails: List[str] = []
     daysForward: int = Field(default=7, ge=1, le=90)
+    dateRangeStart: Optional[str] = Field(default=None)          # "YYYY-MM-DD" — start from a specific date instead of today
+    preferredHours: Optional[List[int]] = Field(default=None)    # e.g. [8,9,10,11] — restrict to morning only
+    excludedWeekdays: Optional[List[int]] = Field(default=None)  # e.g. [0,4] — skip Monday and Friday
 
 
 class MeetingEditSchema(BaseModel):
@@ -103,6 +110,8 @@ class MeetingEditSchema(BaseModel):
     description: Optional[str] = None
     durationMinutes: Optional[int] = None
     daysForward: Optional[int] = Field(default=None, ge=1, le=90)
+    preferredHours: Optional[List[int]] = None
+    excludedWeekdays: Optional[List[int]] = None
 
 
 class SuggestedTimeSlot(BaseDBModel):
@@ -115,6 +124,7 @@ class SuggestedTimeSlot(BaseDBModel):
     explanation: str
     aiScored: bool = False
     aiSuggestions: Optional[str] = None
+    isPreferred: bool = False
 
 
 class FairnessState(BaseDBModel):

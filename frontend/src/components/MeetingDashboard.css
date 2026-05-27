@@ -184,6 +184,9 @@
   border-radius: 20px;
   width: 100%;
   max-width: 440px;
+  max-height: calc(100vh - 2rem);
+  display: flex;
+  flex-direction: column;
   box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
   animation: scaleIn 0.2s ease;
 }
@@ -199,6 +202,7 @@
   align-items: center;
   padding: 1.5rem 1.5rem 1rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
 }
 
 .modal-head h3 { margin: 0; font-size: 1.05rem; font-weight: 700; }
@@ -221,6 +225,8 @@
   display: flex;
   flex-direction: column;
   gap: 1.1rem;
+  overflow-y: auto;
+  flex: 1;
 }
 
 .form-group {
@@ -667,6 +673,26 @@
   color: var(--accent);
 }
 .slot-view-btn:hover:not(.active) { color: var(--text-primary); }
+
+/* Split view: calendar left + list right */
+.slots-split {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+}
+.slots-split-cal  { flex: 0 0 55%; min-width: 0; }
+.slots-split-list {
+  flex: 1;
+  min-width: 0;
+  max-height: 480px;
+  overflow-y: auto;
+}
+
+@media (max-width: 900px) {
+  .slots-split { flex-direction: column; }
+  .slots-split-cal,
+  .slots-split-list { flex: none; width: 100%; }
+}
 
 /* Slot Timeline */
 .slot-timeline {

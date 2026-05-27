@@ -738,7 +738,7 @@ function DashboardView({ profile, meetings, activities, onNavigate, needsAction,
               const pts = trend.map((v, i) => {
                 const x = (i / (trend.length - 1)) * 100;
                 const y = 60 - ((v - trendMin) / trendRange) * 55;
-                return `${x}%,${y}`;
+                return `${x},${y}`;
               }).join(' ');
               return (
                 <>

@@ -23,6 +23,7 @@ def handle_meetings(identity: dict) -> list:
     user_id = identity["user_id"]
     try:
         meetings = _meeting_repo.get_user_meetings(user_id)
+        logger.info(f"[meetings] user_id={user_id} → found {len(meetings)} meetings")
         all_pids: set = set()
         for m in meetings:
             all_pids.update(m.participantUserIds)
@@ -40,7 +41,7 @@ def handle_meetings(identity: dict) -> list:
             result.append(d)
         return result
     except Exception as exc:
-        logger.warning(f"[meetings] failed for {user_id}: {exc}")
+        logger.error(f"[meetings] failed for {user_id}: {exc}", exc_info=True)
         return []
 
 
@@ -211,12 +212,14 @@ def handle_edit(identity: dict, action: str, data: str | None) -> dict:
     if original_status == "cancelled" and not declined_cancelled:
         raise HTTPException(status_code=400, detail="Cannot edit a cancelled meeting")
 
-    duration_changed = payload.durationMinutes is not None and payload.durationMinutes != meeting.get("durationMinutes")
-    horizon_changed = payload.daysForward is not None and payload.daysForward != meeting.get("daysForward", 7)
-    needs_regen = (duration_changed or horizon_changed) and original_status == "pending"
+    needs_regen = original_status == "pending"
 
     if payload.daysForward is not None:
         meeting["daysForward"] = payload.daysForward
+    if payload.preferredHours is not None:
+        meeting["preferredHours"] = payload.preferredHours
+    if payload.excludedWeekdays is not None:
+        meeting["excludedWeekdays"] = payload.excludedWeekdays
 
     updated = _meeting_repo.edit(
         request_id, user_id,
@@ -227,6 +230,11 @@ def handle_edit(identity: dict, action: str, data: str | None) -> dict:
     )
 
     if needs_regen and updated:
+        # Apply preference changes to the fresh `updated` dict (edit() re-fetches from DB)
+        if payload.preferredHours is not None:
+            updated["preferredHours"] = payload.preferredHours
+        if payload.excludedWeekdays is not None:
+            updated["excludedWeekdays"] = payload.excludedWeekdays
         days_forward = updated.get("daysForward", 7)
         now = datetime.now()
         updated.update({
@@ -236,12 +244,20 @@ def handle_edit(identity: dict, action: str, data: str | None) -> dict:
         _meeting_repo.update_meta(request_id, updated)
         _meeting_repo.delete_slots(request_id)
         from src.handlers.api._scheduling import build_reschedule_payload, run_local_steps
-        sched_payload = build_reschedule_payload(updated, user_id, request_id, days_forward)
+        sched_payload = build_reschedule_payload(
+            updated, user_id, request_id, days_forward,
+            preferred_hours=payload.preferredHours,
+            excluded_weekdays=payload.excludedWeekdays,
+        )
         run_local_steps(sched_payload)
 
     # For confirmed meetings or meetings being re-opened after a participant decline,
     # clear participant responses so everyone must accept/decline the updated meeting.
     if updated and (original_status == "confirmed" or declined_cancelled):
+        if payload.preferredHours is not None:
+            updated["preferredHours"] = payload.preferredHours
+        if payload.excludedWeekdays is not None:
+            updated["excludedWeekdays"] = payload.excludedWeekdays
         now = datetime.now()
         updated["acceptedBy"] = []
         updated["declinedBy"] = []
@@ -328,13 +344,6 @@ def handle_book_custom(identity: dict, action: str, data: str | None) -> dict:
 def handle_reschedule(identity: dict, action: str, data: str | None) -> dict:
     request_id = action.split(":", 1)[1]
     user_id = identity["user_id"]
-    days_forward = 7
-    if data:
-        try:
-            days_forward = int(json.loads(data).get("daysForward", 7))
-        except Exception:
-            pass
-
     meeting = _meeting_repo.get_meta(request_id)
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
@@ -342,6 +351,8 @@ def handle_reschedule(identity: dict, action: str, data: str | None) -> dict:
         raise HTTPException(status_code=403, detail="Only the organizer can reschedule")
     if meeting.get("status") == "cancelled":
         raise HTTPException(status_code=400, detail="Cannot reschedule a cancelled meeting")
+
+    days_forward = meeting.get("daysForward") or 7
 
     now = datetime.now()
     if ext_ids := meeting.get("externalEventIds", {}):

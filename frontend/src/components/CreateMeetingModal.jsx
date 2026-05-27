@@ -21,6 +21,14 @@ export default function CreateMeetingModal({ prefill, onClose, onCreated, onRefr
     title: '', durationMinutes: 60, daysForward: 7, description: '',
   });
 
+  // Scheduling preferences state
+  const [schedPreset, setSchedPreset] = useState('7');      // '3','7','14','30','custom'
+  const [customFrom, setCustomFrom] = useState('');          // YYYY-MM-DD
+  const [customDays, setCustomDays] = useState(14);
+  const [timeWindow, setTimeWindow] = useState('all');       // 'all','morning','afternoon','evening'
+  const [excludedWeekdays, setExcludedWeekdays] = useState([]); // [0-6]
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
   // User search state
   const [allUsers, setAllUsers] = useState([]);
   const [usersLoadError, setUsersLoadError] = useState(false);
@@ -112,6 +120,30 @@ export default function CreateMeetingModal({ prefill, onClose, onCreated, onRefr
       }).slice(0, 8)
     : [];
 
+  // Derive scheduling params from UI state
+  const daysForward = schedPreset === 'custom' ? Math.max(1, Math.min(90, customDays)) : parseInt(schedPreset);
+  const dateRangeStart = schedPreset === 'custom' && customFrom ? customFrom : undefined;
+  const preferredHours = timeWindow === 'morning'   ? [8, 9, 10, 11]
+                       : timeWindow === 'afternoon' ? [12, 13, 14, 15, 16]
+                       : timeWindow === 'evening'   ? [17, 18, 19, 20]
+                       : null;
+
+  const schedLabel = schedPreset === 'custom'
+    ? `${daysForward} days${customFrom ? ` from ${customFrom}` : ''}`
+    : schedPreset === '3' ? '3 days' : schedPreset === '7' ? '1 week'
+    : schedPreset === '14' ? '2 weeks' : '1 month';
+
+  const timeLabel = timeWindow === 'morning' ? 'Morning (8–12)'
+                  : timeWindow === 'afternoon' ? 'Afternoon (12–17)'
+                  : timeWindow === 'evening' ? 'Evening (17–20)'
+                  : 'All hours';
+
+  const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  const toggleWeekday = (d) => setExcludedWeekdays(prev =>
+    prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d]
+  );
+
   const handleCreate = async (e) => {
     e.preventDefault();
     if (selectedUsers.length === 0) return;
@@ -123,7 +155,10 @@ export default function CreateMeetingModal({ prefill, onClose, onCreated, onRefr
         durationMinutes: Number(newMeeting.durationMinutes),
         participantEmails: selectedUsers.map(u => u.email),
         participantIds: selectedUsers.map(u => u.userId),
-        daysForward: newMeeting.daysForward,
+        daysForward,
+        ...(dateRangeStart ? { dateRangeStart } : {}),
+        ...(preferredHours ? { preferredHours } : {}),
+        ...(excludedWeekdays.length ? { excludedWeekdays } : {}),
       });
       notify('Meeting created! AI is optimizing slots…', 'success');
       onRefresh?.();
@@ -294,17 +329,102 @@ export default function CreateMeetingModal({ prefill, onClose, onCreated, onRefr
                 <span className="form-hint">Search registered users. They'll see this in their dashboard.</span>
               </div>
 
+              {/* Scheduling range */}
               <div className="form-group">
-                <label>Scheduling Horizon</label>
-                <div className="dur-pills">
-                  {[{ days: 3, label: '3 days' }, { days: 7, label: '1 week' }, { days: 14, label: '2 weeks' }].map(({ days, label }) => (
-                    <button key={days} type="button"
-                      className={`dur-pill ${newMeeting.daysForward === days ? 'active' : ''}`}
-                      onClick={() => setNewMeeting({ ...newMeeting, daysForward: days })}
-                    >{label}</button>
+                <label>Scheduling Range</label>
+                <div className="dur-pills" style={{ flexWrap: 'wrap' }}>
+                  {[{ v: '3', l: '3 days' }, { v: '7', l: '1 week' }, { v: '14', l: '2 weeks' }, { v: '30', l: '1 month' }, { v: 'custom', l: 'Custom…' }].map(({ v, l }) => (
+                    <button key={v} type="button"
+                      className={`dur-pill ${schedPreset === v ? 'active' : ''}`}
+                      onClick={() => setSchedPreset(v)}
+                    >{l}</button>
                   ))}
                 </div>
+                {schedPreset === 'custom' && (
+                  <div style={{ display: 'flex', gap: '0.6rem', marginTop: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                      <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>Start date (optional)</span>
+                      <input
+                        type="date"
+                        value={customFrom}
+                        min={new Date().toISOString().slice(0, 10)}
+                        onChange={e => setCustomFrom(e.target.value)}
+                        style={{ padding: '0.3rem 0.5rem', fontSize: '0.82rem', width: '145px' }}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                      <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>Days to search</span>
+                      <input
+                        type="number" min={1} max={90}
+                        value={customDays}
+                        onChange={e => setCustomDays(Math.max(1, Math.min(90, parseInt(e.target.value) || 1)))}
+                        style={{ padding: '0.3rem 0.5rem', fontSize: '0.82rem', width: '80px' }}
+                      />
+                    </div>
+                  </div>
+                )}
                 <span className="form-hint">How far ahead the AI will search for available slots.</span>
+              </div>
+
+              {/* Advanced: time preferences */}
+              <div className="form-group">
+                <button
+                  type="button"
+                  onClick={() => setShowAdvanced(v => !v)}
+                  style={{
+                    background: 'none', border: 'none', cursor: 'pointer',
+                    color: 'var(--accent)', fontSize: '0.82rem', padding: 0,
+                    display: 'flex', alignItems: 'center', gap: '0.3rem',
+                  }}
+                >
+                  <span style={{ fontSize: '0.7rem' }}>{showAdvanced ? '▾' : '▸'}</span>
+                  Time & day preferences {(timeWindow !== 'all' || excludedWeekdays.length > 0) && (
+                    <span style={{ background: 'var(--accent-dim)', color: 'var(--accent)', borderRadius: '10px', padding: '0 0.4rem', fontSize: '0.72rem' }}>active</span>
+                  )}
+                </button>
+
+                {showAdvanced && (
+                  <div style={{ marginTop: '0.6rem', display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
+                    {/* Time of day */}
+                    <div>
+                      <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '0.35rem' }}>Time of day</span>
+                      <div className="dur-pills">
+                        {[
+                          { v: 'all', l: 'Any time' },
+                          { v: 'morning', l: 'Morning 8–12' },
+                          { v: 'afternoon', l: 'Afternoon 12–17' },
+                          { v: 'evening', l: 'Evening 17–20' },
+                        ].map(({ v, l }) => (
+                          <button key={v} type="button"
+                            className={`dur-pill ${timeWindow === v ? 'active' : ''}`}
+                            onClick={() => setTimeWindow(v)}
+                          >{l}</button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Exclude weekdays */}
+                    <div>
+                      <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '0.35rem' }}>
+                        Exclude days <span style={{ fontWeight: 400 }}>(click to skip)</span>
+                      </span>
+                      <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
+                        {DAY_NAMES.map((name, idx) => (
+                          <button key={idx} type="button"
+                            onClick={() => toggleWeekday(idx)}
+                            style={{
+                              padding: '0.25rem 0.6rem', borderRadius: '6px', fontSize: '0.78rem',
+                              border: '1px solid var(--border)', cursor: 'pointer',
+                              background: excludedWeekdays.includes(idx) ? 'rgba(239,68,68,0.12)' : 'var(--bg-raised)',
+                              color: excludedWeekdays.includes(idx) ? '#f87171' : 'var(--text-secondary)',
+                              textDecoration: excludedWeekdays.includes(idx) ? 'line-through' : 'none',
+                            }}
+                          >{name}</button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="modal-actions">
                 <button type="button" className="btn-cancel" onClick={() => setWizardStep(1)}>← Back</button>
@@ -338,9 +458,20 @@ export default function CreateMeetingModal({ prefill, onClose, onCreated, onRefr
                   </div>
                 </div>
                 <div className="review-row">
-                  <span className="review-label">Horizon</span>
-                  <span className="review-chip">{newMeeting.daysForward === 3 ? '3 days' : newMeeting.daysForward === 7 ? '1 week' : '2 weeks'}</span>
+                  <span className="review-label">Range</span>
+                  <span className="review-chip">{schedLabel}</span>
                 </div>
+                {(timeWindow !== 'all' || excludedWeekdays.length > 0) && (
+                  <div className="review-row">
+                    <span className="review-label">Preferences</span>
+                    <span className="review-chip">
+                      {[
+                        timeWindow !== 'all' ? timeLabel : null,
+                        excludedWeekdays.length ? `skip ${excludedWeekdays.map(d => DAY_NAMES[d]).join(', ')}` : null,
+                      ].filter(Boolean).join(' · ')}
+                    </span>
+                  </div>
+                )}
               </div>
               <div className="form-group">
                 <label style={{ display: 'flex', justifyContent: 'space-between' }}>

@@ -16,6 +16,8 @@ from src.core.fairness import engine
 logger = logging.getLogger(__name__)
 
 
+PREFERENCE_BOOST = 18  # pts added to slots matching user's preferred time window
+
 def handler(payload: dict) -> dict:
     profiles = payload.get("participant_profiles", [])
     participant_states = payload.get("participant_states", [])
@@ -23,6 +25,7 @@ def handler(payload: dict) -> dict:
     participant_busy = payload.get("participant_busy", {}) or {}
     duration_minutes = payload.get("duration_minutes", 60)
     tz_offset = float(payload.get("tz_offset_hours", 0.0))
+    preferred_hours = payload.get("preferred_hours")  # None = no preference set
 
     participant_tz_offsets = [get_tz_offset_hours(p.get("timezone", "UTC")) for p in profiles] or None
     participant_working_days = [p.get("workingDays", list(range(7))) for p in profiles] or None
@@ -81,6 +84,14 @@ def handler(payload: dict) -> dict:
     except openai_client.OpenAIScoreError as e:
         logger.warning(f"calculate_fairness: AI scoring failed, using engine fallback ({e})")
 
+    # Apply preference boost: slots in the user's preferred time window score higher.
+    # Only activated when preferred_hours is explicitly set; with no preference all
+    # slots are equally preferred (isPreferred=True for all) so no boost is needed.
+    if preferred_hours:
+        for s in scored:
+            if s.get("isPreferred"):
+                s["score"] = min(100.0, round(s["score"] + PREFERENCE_BOOST, 1))
+
     # Fill any empty explanations with heuristic fallback, then strip internal keys
     _internal = {"_hour", "_day", "_load_penalty", "_equity_bonus"}
     clean_scored = []
@@ -93,6 +104,8 @@ def handler(payload: dict) -> dict:
                 load_penalty=float(slot.get("_load_penalty", 0.0)),
                 equity_bonus=float(slot.get("_equity_bonus", 20.0)),
             )
+        if preferred_hours and slot.get("isPreferred") and not str(slot.get("explanation", "")).startswith("(preferred"):
+            slot["explanation"] = "(preferred time) " + slot.get("explanation", "")
         clean_scored.append({k: v for k, v in slot.items() if k not in _internal})
 
     payload["scored_slots"] = clean_scored
