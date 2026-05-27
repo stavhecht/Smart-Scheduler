@@ -54,7 +54,7 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
 
   // Split meetings by status then role
   const activeMeetings    = filteredMeetings.filter(m => m.status !== 'cancelled');
-  const cancelledMeetings = filteredMeetings.filter(m => m.status === 'cancelled');
+  const cancelledMeetings = meetings.filter(m => m.status === 'cancelled');
   const myActiveMeetings  = activeMeetings.filter(m => m.userRole === 'organizer');
 
   // Sort invitations so "needs action" ones appear first

@@ -33,6 +33,21 @@ terraform apply -var="lab_role_arn=arn:aws:iam::975049889875:role/LabRole"
 # api_deployment.zip must already exist in terraform/ before plan/apply
 ```
 
+**Quick Lambda deploy (no Terraform):**
+```bash
+python build_lambda.py
+aws lambda update-function-code --function-name smart_scheduler_api \
+  --zip-file "fileb://terraform/api_deployment.zip" --region us-east-1
+```
+
+**Frontend deploy to Amplify (manual — NOT connected to GitHub):**
+```bash
+# Build (from frontend/)
+VITE_API_URL=https://5xv230dk19.execute-api.us-east-1.amazonaws.com npm run build
+# Zip dist/ using .NET ZipFile API (PowerShell Compress-Archive produces wrong structure → assets 404)
+# Then: aws amplify create-deployment → PUT to zipUploadUrl → start-deployment
+```
+
 ## Architecture
 
 ### Request Flow (Critical: CORS Proxy Pattern)
@@ -43,7 +58,7 @@ All frontend API calls go through a single public GET endpoint — **`GET /healt
 - The backend's `/health` handler in `main.py` validates the token via `cognito-idp:GetUser` (see `src/common/auth.py:validate_access_token`), then calls `src/handlers/api/dispatcher.py:dispatch`.
 - The response is always HTTP 200 — even for backend errors. Frontend must check `body.status === 'error'`.
 - `apiGet` / `apiPost` in `apiClient.js` are thin wrappers that map URL patterns to action strings.
-- **Note:** The `decline` action (marked * in the table above) exists in the dispatcher but has no `apiClient.js` wrapper — it is not currently reachable from the frontend.
+- All actions including `decline` have `apiClient.js` wrappers. `apiGet` / `apiPost` map REST-style URL patterns to action strings via regex.
 
 There are also secondary REST endpoints (`/api/profile`, `/api/meetings`, etc.) with the JWT authorizer from API Gateway — these are a secondary path not used by the main frontend.
 
@@ -96,9 +111,9 @@ Key actions:
 |---|---|
 | `profile`, `update_profile`, `profile_stats`, `list_users`, `activity_feed` | `profile.py` |
 | `meetings`, `create_meeting`, `score_slot`, `parse_meeting_nl` | `meetings.py` |
-| `book:<id>:<slot>`, `accept:<id>`, `decline:<id>`*, `cancel:<id>`, `edit:<id>`, `reschedule:<id>`, `book_custom:<id>`, `meeting_log:<id>` | `meetings.py` |
+| `book:<id>:<slot>`, `accept:<id>`, `decline:<id>`, `cancel:<id>`, `edit:<id>`, `reschedule:<id>`, `book_custom:<id>`, `meeting_log:<id>` | `meetings.py` |
 | `calendar_status`, `calendar_events`, `oauth_url:<p>`, `oauth_callback:<p>`, `calendar_disconnect:<p>`, `update_ics_url`, `register_calendar_watch`, `stop_calendar_watch`, `check_calendar_sync` | `calendar.py` |
-| `get_public_profile:<id>`, `shared_meetings:<id>` | `profile.py` |
+| `reset_fairness`, `get_public_profile:<id>`, `shared_meetings:<id>` | `profile.py` |
 
 ### Step Functions Workflow
 
@@ -116,9 +131,19 @@ Two public entry points:
 ### Fairness Engine (`src/core/fairness.py`)
 
 Single `FairnessEngine` class, global `engine` singleton. Key concepts:
-- **User score** (0–100): starts at 100, penalised by meetings this week (−2 each) and cancellations (−5 each), boosted by suffering score (+3 each).
-- **Slot score**: combines `HOUR_WEIGHTS × DAY_WEIGHTS × 100` (base), load penalty (−30 max), social momentum bonus (+15 max), fairness variance penalty (−20 max).
-- **Reshuffling Engine**: activates when average slot score < 75 (`OPTIMIZATION_THRESHOLD`); filters slots < 60, re-selects best.
+- **User score** (0–100): credit/debt balance model. `score = 50 + balance` (clamped 0–100). 50 = neutral. Balance shifts on each booking:
+  - weekend/very-off-hours slot → +15 (sacrifice rewarded)
+  - off-peak slot → +8
+  - standard working-hours slot → −4
+  - prime-time slot → −10 (great deal costs you)
+  - cancellation → −5 (penalty for breaking others' plans)
+  - Balance drifts toward 0 at 2%/day (max 30%) so old history fades.
+- **Slot score** (0–100): `time_score − load_penalty + equity_bonus − conflict_penalty`
+  - `time_score` = avg of `HOUR_WEIGHTS × day_weight × 100` across all participant local times
+  - `load_penalty` = up to −30 based on participants' meetings this week
+  - `equity_bonus` = ±15 (rewards slots where high-fairness participants get convenient time)
+  - `conflict_penalty` = 12 pts per participant with a calendar conflict, capped at 36
+- **Reshuffling Engine**: activates when average slot score < 75 (`OPTIMIZATION_THRESHOLD`); filters slots below 60, re-selects best from viable pool.
 
 ### DynamoDB Access Pattern (`src/database/repository.py`)
 

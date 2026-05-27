@@ -89,7 +89,7 @@ function AppContent() {
       if (oauthPending && !oauthPending.oauthError && !oauthProcessed.current) {
         oauthProcessed.current = true;
         try {
-          await apiPost('/api/calendar/callback', oauthPending);
+          await apiPost('/api/calendar/callback', { ...oauthPending, redirect_origin: window.location.origin });
           toast('Google Calendar connected successfully!', 'success');
           navigate('/profile', { state: { initialTab: 'calendar' } });
         } catch (err) {

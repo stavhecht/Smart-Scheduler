@@ -45,6 +45,10 @@ def run_simulation(
     creator_tz = (creator_profile or {}).get("timezone", "UTC")
     tz_offset = get_tz_offset_hours(creator_tz)
 
+    participant_tz_offsets    = [get_tz_offset_hours(p.get("timezone", "UTC")) for p in participant_profiles] or None
+    participant_working_days  = [p.get("workingDays", list(range(7))) for p in participant_profiles] or None
+    participant_lunch_breaks  = [p.get("lunchBreak") for p in participant_profiles] or None
+
     wh_list = get_working_hours_list(participant_profiles)
     wd_list = get_working_days_intersection(participant_profiles)
 
@@ -117,6 +121,9 @@ def run_simulation(
         "participant_busy": participant_busy_payload,
         "duration_minutes": meeting.durationMinutes,
         "tz_offset_hours": tz_offset,
+        "participant_tz_offsets": participant_tz_offsets,
+        "participant_working_days": participant_working_days,
+        "participant_lunch_breaks": participant_lunch_breaks,
     })
     all_scored = cf_payload["scored_slots"]
     ai_summary = cf_payload.get("ai_summary")

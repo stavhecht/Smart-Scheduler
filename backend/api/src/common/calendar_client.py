@@ -43,6 +43,20 @@ if os.environ.get('ENVIRONMENT') == 'development':
 else:
     REDIRECT_URI = FRONTEND_URL if FRONTEND_URL.endswith('/') else FRONTEND_URL + '/'
 
+# Origins allowed to override the redirect_uri (validated in _resolve_redirect_uri)
+ALLOWED_REDIRECT_ORIGINS = {
+    FRONTEND_URL.rstrip('/'),
+    'http://localhost:5173',
+    'http://localhost:8080',
+}
+
+
+def _resolve_redirect_uri(origin: str = None) -> str:
+    """Return the OAuth redirect URI, using the caller's origin when it's in the allowlist."""
+    if origin and origin.rstrip('/') in ALLOWED_REDIRECT_ORIGINS:
+        return origin.rstrip('/') + '/'
+    return REDIRECT_URI
+
 GOOGLE_AUTH_URL   = 'https://accounts.google.com/o/oauth2/v2/auth'
 GOOGLE_TOKEN_URL  = 'https://oauth2.googleapis.com/token'
 GOOGLE_REVOKE_URL = 'https://oauth2.googleapis.com/revoke'
@@ -100,15 +114,16 @@ def _http_post(url: str, data: dict, headers: dict = None) -> dict:
 # Google Calendar OAuth
 # ---------------------------------------------------------------------------
 
-def get_google_auth_url(user_id: str) -> str:
+def get_google_auth_url(user_id: str, redirect_origin: str = None) -> str:
     """Build the Google OAuth2 authorization URL and store state nonce."""
     import secrets
+    redirect_uri = _resolve_redirect_uri(redirect_origin)
     state = secrets.token_urlsafe(24)
     _cal_repo.save_oauth_state(user_id, 'google', state)
 
     params = urllib.parse.urlencode({
         'client_id':     GOOGLE_CLIENT_ID,
-        'redirect_uri':  REDIRECT_URI,
+        'redirect_uri':  redirect_uri,
         'response_type': 'code',
         'scope':         'openid email https://www.googleapis.com/auth/calendar',
         'access_type':   'offline',
@@ -118,13 +133,13 @@ def get_google_auth_url(user_id: str) -> str:
     return f"{GOOGLE_AUTH_URL}?{params}"
 
 
-def exchange_google_code(code: str) -> dict:
+def exchange_google_code(code: str, redirect_origin: str = None) -> dict:
     """Exchange authorization code for access + refresh tokens."""
     return _http_post(GOOGLE_TOKEN_URL, {
         'code':          code,
         'client_id':     GOOGLE_CLIENT_ID,
         'client_secret': GOOGLE_CLIENT_SECRET,
-        'redirect_uri':  REDIRECT_URI,
+        'redirect_uri':  _resolve_redirect_uri(redirect_origin),
         'grant_type':    'authorization_code',
     })
 
