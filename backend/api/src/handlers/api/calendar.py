@@ -60,7 +60,7 @@ def handle_oauth_url(identity: dict, action: str, data: str | None = None) -> di
         except Exception:
             pass
     if provider == "google":
-        if not calendar_client.GOOGLE_CLIENT_ID:
+        if not calendar_client._gid():
             raise HTTPException(
                 status_code=503,
                 detail="Google Calendar not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in Lambda environment.",
