@@ -55,7 +55,23 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
   // Split meetings by status then role
   const activeMeetings    = filteredMeetings.filter(m => m.status !== 'cancelled');
   const cancelledMeetings = meetings.filter(m => m.status === 'cancelled');
-  const myActiveMeetings  = activeMeetings.filter(m => m.userRole === 'organizer');
+  const myActiveMeetings  = activeMeetings
+    .filter(m => m.userRole === 'organizer')
+    .sort((a, b) => {
+      const now = Date.now();
+      const aTime = a.selectedSlotStart ? new Date(a.selectedSlotStart).getTime() : 0;
+      const bTime = b.selectedSlotStart ? new Date(b.selectedSlotStart).getTime() : 0;
+      const aUpcoming = a.status === 'confirmed' && aTime > now;
+      const bUpcoming = b.status === 'confirmed' && bTime > now;
+      if (aUpcoming && !bUpcoming) return -1;
+      if (!aUpcoming && bUpcoming) return 1;
+      if (aUpcoming && bUpcoming) return aTime - bTime;
+      const aPending = a.status === 'pending' && (a.slots?.length > 0);
+      const bPending = b.status === 'pending' && (b.slots?.length > 0);
+      if (aPending && !bPending) return -1;
+      if (!aPending && bPending) return 1;
+      return 0;
+    });
 
   // Sort invitations so "needs action" ones appear first
   const invitations = activeMeetings
@@ -88,6 +104,17 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
   const fmtDate = (iso) => fmt(iso, { weekday: 'short', month: 'short', day: 'numeric' });
   const fmtTime = (iso) => fmt(iso, { hour: '2-digit', minute: '2-digit' });
   const fmtFull = (iso) => `${fmtDate(iso)} · ${fmtTime(iso)}`;
+  const fmtRelative = (iso) => {
+    const diffMs = new Date(iso) - Date.now();
+    if (diffMs < 0) return null;
+    const diffH = diffMs / 3600000;
+    if (diffH < 1) return 'in < 1h';
+    if (diffH < 24) return `in ${Math.round(diffH)}h`;
+    const diffD = Math.floor(diffMs / 86400000);
+    if (diffD === 1) return 'tomorrow';
+    if (diffD <= 7) return `in ${diffD} days`;
+    return null;
+  };
 
   /* ── Handlers ── */
   const handleBook = async (meetingId, slot) => {
@@ -332,9 +359,6 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
           </span>
         </div>
       )}
-
-
-
 
       {/* ── Edit Modal ── */}
       {editModal && (
@@ -786,9 +810,9 @@ function SlotCalendar({ slots, preferredHours, calEvents = null, ssMeetings = []
                 {getSSEventsForDay(day.date).map((ev, j) => (
                   <div key={`ss-${j}`} className="cv-event"
                     style={{ top: `calc(${ev.topPct}% + 1px)`, height: `calc(${ev.heightPct}% - 2px)`, left: '2px', right: '2px', background: '#6366f130', borderLeft: '3px solid #6366f1', color: '#818cf8', cursor: 'default', zIndex: 1, pointerEvents: 'none', overflow: 'hidden' }}
-                    title={`📌 ${ev.title} @ ${ev.startStr}`}
+                    title={`📌 ${ev.title} · ${ev.startStr}`}
                   >
-                    <span className="cv-ev-title" style={{ fontSize: '0.65rem' }}>📌 {ev.title} · {ev.startStr}</span>
+                    <span className="cv-ev-title" style={{ fontSize: '0.65rem', display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>📌 {ev.startStr}</span>
                   </div>
                 ))}
                 {getSlotsForDay(day.date).map((e, i) => {
@@ -928,6 +952,23 @@ function MeetingCard({
       }));
   }, [allMeetings, meeting.requestId]);
 
+  // Filter out proposed slots that conflict with already-confirmed SS meetings.
+  // Slots were generated at meeting-creation time; by now some times may be taken.
+  const visibleSlots = useMemo(() => {
+    if (!meeting.slots?.length) return [];
+    if (!ssMeetings.length) return meeting.slots;
+    const dur = (meeting.durationMinutes || 60) * 60000;
+    return meeting.slots.filter(slot => {
+      const sStart = new Date(slot.startIso).getTime();
+      const sEnd = new Date(slot.endIso).getTime() || (sStart + dur);
+      return !ssMeetings.some(m => {
+        const mStart = new Date(m.start).getTime();
+        const mEnd = new Date(m.end).getTime();
+        return sStart < mEnd && sEnd > mStart;
+      });
+    });
+  }, [meeting.slots, ssMeetings, meeting.durationMinutes]);
+
   const handleSlotSelect = (slot) => {
     const slotStart = new Date(slot.startIso).getTime();
     const slotEnd   = new Date(slot.endIso || slot.startIso).getTime() || (slotStart + (meeting.durationMinutes || 60) * 60000);
@@ -980,13 +1021,23 @@ function MeetingCard({
                 {overflowCount > 0 && <div className="p-avatar-overflow">+{overflowCount}</div>}
               </div>
             )}
-            {isConfirmed && meeting.selectedSlotStart && (
-              <span className="mc-confirmed-time">
-                <CalendarDays size={12} style={{ verticalAlign: 'middle', marginRight: '0.3rem' }} />{fmtFull(meeting.selectedSlotStart)}
+            {isConfirmed && meeting.selectedSlotStart && (() => {
+              const rel = fmtRelative(meeting.selectedSlotStart);
+              return (
+                <span className="mc-confirmed-time">
+                  <CalendarDays size={12} style={{ verticalAlign: 'middle', marginRight: '0.3rem' }} />
+                  {fmtFull(meeting.selectedSlotStart)}
+                  {rel && <span style={{ marginLeft: '0.4rem', color: '#22c55e', fontWeight: 600 }}>{rel}</span>}
+                </span>
+              );
+            })()}
+            {isOrganizer && isConfirmed && (meeting.participantUserIds || []).length > 0 && (
+              <span className="mc-slots-hint">
+                {(meeting.acceptedBy || []).length}/{(meeting.participantUserIds || []).length} participants accepted
               </span>
             )}
             {!isConfirmed && hasSlots && isOrganizer && (
-              <span className="mc-slots-hint">{meeting.slots.length} slots available</span>
+              <span className="mc-slots-hint">{visibleSlots.length} slots available — pick one</span>
             )}
           </div>
         </div>
@@ -1133,6 +1184,11 @@ function MeetingCard({
                   <button className={slotView === 'list' ? 'svt-btn active' : 'svt-btn'} onClick={() => setSlotView('list')}>☰ List</button>
                 </div>
               </div>
+              {hasSlots && visibleSlots.length === 0 && (
+                <div style={{ background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '6px', padding: '0.6rem 0.8rem', marginBottom: '0.5rem', fontSize: '0.82rem', color: '#fca5a5' }}>
+                  ⚠️ All proposed slots conflict with your existing meetings. Use the custom time picker below to choose a different time.
+                </div>
+              )}
               {conflictWarning && (
                 <div style={{ background: '#7f1d1d22', border: '1px solid #ef4444', borderRadius: '6px', padding: '0.6rem 0.8rem', marginBottom: '0.5rem', fontSize: '0.8rem' }}>
                   <span style={{ color: '#fca5a5' }}>
@@ -1152,7 +1208,7 @@ function MeetingCard({
               )}
               {slotView === 'calendar' ? (
                 <SlotCalendar
-                  slots={meeting.slots}
+                  slots={visibleSlots}
                   preferredHours={meeting.preferredHours}
                   calEvents={calEvents}
                   ssMeetings={ssMeetings}
@@ -1160,7 +1216,7 @@ function MeetingCard({
                 />
               ) : (
                 <SlotList
-                  slots={meeting.slots}
+                  slots={visibleSlots}
                   calEvents={calEvents}
                   ssMeetings={ssMeetings}
                   onBook={handleSlotSelect}
