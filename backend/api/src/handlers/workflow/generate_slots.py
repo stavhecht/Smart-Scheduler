@@ -74,6 +74,29 @@ def handler(payload: dict) -> dict:
                     pass
         return count
 
+    # Supplement creator busy with confirmed Smart Scheduler meetings (covers users
+    # without a connected external calendar so their accepted meetings are also filtered).
+    request_id = payload.get("request_id", "")
+    try:
+        from src.database.repository import MeetingRepository
+        _mtg_repo = MeetingRepository()
+        for m in _mtg_repo.get_user_meetings(creator_id):
+            if (
+                m.status == "confirmed"
+                and m.selectedSlotStart
+                and m.requestId != request_id
+            ):
+                try:
+                    s = datetime.fromisoformat(m.selectedSlotStart.rstrip("Z"))
+                    e = s + timedelta(minutes=int(m.durationMinutes or 60))
+                    all_busy.setdefault(creator_id, []).append(
+                        {"start": s.isoformat(), "end": e.isoformat()}
+                    )
+                except Exception:
+                    pass
+    except Exception as _exc:
+        logger.warning(f"[generate_slots] SS busy fetch failed for {creator_id}: {_exc}")
+
     # Hard-filter 1: remove slots where the creator has a conflict
     creator_busy = all_busy.get(creator_id, [])
     if creator_busy:

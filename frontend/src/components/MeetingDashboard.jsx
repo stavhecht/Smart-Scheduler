@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { apiPost, apiScoreSlot } from '../apiClient';
+import { apiPost, apiGet, apiScoreSlot } from '../apiClient';
 import { Mail, CalendarPlus, Pencil, Trash2, RefreshCw, Ban, X, Search, CalendarDays, ClipboardList } from 'lucide-react';
 import { useToast } from '../context/ToastContext.jsx';
 import './MeetingDashboard.css';
@@ -674,7 +674,7 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
 }
 
 /* SlotCalendar — full-week calendar reusing cv-* classes from CalendarView.css */
-function SlotCalendar({ slots, preferredHours, onBook }) {
+function SlotCalendar({ slots, preferredHours, calEvents = null, onBook }) {
   const scoreColor = sc => sc >= 80 ? '#22c55e' : sc >= 60 ? '#f59e0b' : '#ef4444';
 
   const slotHours = useMemo(() => slots.flatMap(s => {
@@ -708,6 +708,18 @@ function SlotCalendar({ slots, preferredHours, onBook }) {
 
   const weekLabel = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).formatRange(weekDays[0].date, weekDays[6].date);
   const topSlotIso = slots.length ? slots[0].startIso : null;
+
+  const getCalEventsForDay = (dayDate) => (calEvents || [])
+    .filter(ev => ev.start && new Date(ev.start).toDateString() === dayDate.toDateString())
+    .map(ev => {
+      const start = new Date(ev.start), end = new Date(ev.end || ev.start);
+      const h = start.getHours() + start.getMinutes() / 60;
+      const endH = end.getHours() + end.getMinutes() / 60;
+      const cs = Math.max(h, CAL_START), ce = Math.min(endH || h + 1, CAL_END);
+      const range = CAL_END - CAL_START;
+      return { title: ev.summary || 'Busy', topPct: (cs - CAL_START) / range * 100, heightPct: Math.max((ce - cs) / range * 100, 1.5), startStr: start.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }), visible: ce > cs };
+    })
+    .filter(e => e.visible);
 
   const getSlotsForDay = (dayDate) => slots
     .filter(s => new Date(s.startIso).toDateString() === dayDate.toDateString())
@@ -747,6 +759,14 @@ function SlotCalendar({ slots, preferredHours, onBook }) {
               </div>
               <div className="cv-day-body">
                 {CAL_HOURS.map(h => <div key={h} className="cv-hour-cell" />)}
+                {getCalEventsForDay(day.date).map((ev, j) => (
+                  <div key={`ce-${j}`} className="cv-event"
+                    style={{ top: `calc(${ev.topPct}% + 1px)`, height: `calc(${ev.heightPct}% - 2px)`, left: '2px', right: '2px', background: '#6b72801a', borderLeft: '3px solid #6b7280', color: '#9ca3af', cursor: 'default', zIndex: 0, pointerEvents: 'none', overflow: 'hidden' }}
+                    title={`${ev.title} @ ${ev.startStr}`}
+                  >
+                    <span className="cv-ev-title" style={{ fontSize: '0.65rem', opacity: 0.8 }}>{ev.title}</span>
+                  </div>
+                ))}
                 {getSlotsForDay(day.date).map((e, i) => {
                   const color = scoreColor(e.sc);
                   return (
@@ -773,7 +793,7 @@ function SlotCalendar({ slots, preferredHours, onBook }) {
 /* ─────────────────────────────────────────────
    SlotList sub-component — compact list view
 ───────────────────────────────────────────── */
-function SlotList({ slots, onBook }) {
+function SlotList({ slots, calEvents = null, onBook }) {
   const scoreColor = sc => sc >= 80 ? '#22c55e' : sc >= 60 ? '#f59e0b' : '#ef4444';
   return (
     <div className="slot-list">
@@ -781,23 +801,41 @@ function SlotList({ slots, onBook }) {
         const sc = Math.round(s.score);
         const color = scoreColor(sc);
         const dt = new Date(s.startIso);
+        const slotStart = new Date(s.startIso), slotEnd = new Date(s.endIso);
+        const nearby = calEvents ? calEvents.filter(ev => {
+          if (!ev.start) return false;
+          const evEnd = new Date(ev.end || ev.start);
+          const evStart = new Date(ev.start);
+          return evEnd > new Date(slotStart.getTime() - 2 * 3600000) &&
+                 evStart < new Date(slotEnd.getTime() + 2 * 3600000);
+        }) : null;
         return (
-          <div key={i} className="slot-list-item" onClick={() => onBook(s)}>
-            <div className="sli-left">
-              <span className="sli-date">
-                {i === 0 ? '⭐ ' : ''}
-                {dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-              </span>
-              <span className="sli-time">
-                {dt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
-                {s.aiScored && <span className="sli-ai">🧠 AI</span>}
-              </span>
-            </div>
-            <div className="sli-right">
-              <div className="slot-score-track" style={{ width: '80px' }}>
-                <div className="slot-score-fill" style={{ width: `${sc}%`, background: color }} />
+          <div key={i} className="slot-list-item" onClick={() => onBook(s)} style={{ flexDirection: 'column', alignItems: 'stretch', gap: '0.3rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div className="sli-left">
+                <span className="sli-date">
+                  {i === 0 ? '⭐ ' : ''}
+                  {dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                </span>
+                <span className="sli-time">
+                  {dt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                  {s.aiScored && <span className="sli-ai">🧠 AI</span>}
+                </span>
               </div>
-              <span className="sli-score" style={{ color }}>{sc}%</span>
+              <div className="sli-right">
+                <div className="slot-score-track" style={{ width: '80px' }}>
+                  <div className="slot-score-fill" style={{ width: `${sc}%`, background: color }} />
+                </div>
+                <span className="sli-score" style={{ color }}>{sc}%</span>
+              </div>
+            </div>
+            <div style={{ fontSize: '0.7rem', paddingLeft: '0.25rem' }}>
+              {nearby === null
+                ? <span style={{ color: '#6b7280' }}>⏳ Loading calendar…</span>
+                : nearby.length === 0
+                  ? <span style={{ color: '#22c55e' }}>✓ Clear</span>
+                  : <span style={{ color: '#9ca3af' }}>📅 {nearby.map(ev => ev.summary || 'Busy').join(', ')}</span>
+              }
             </div>
           </div>
         );
@@ -817,6 +855,7 @@ function MeetingCard({
   onParticipantClick, isCalendarConnected,
 }) {
   const [slotView, setSlotView] = useState('calendar');
+  const [calEvents, setCalEvents] = useState(null);
   const isOrganizer    = meeting.userRole === 'organizer';
   const isConfirmed    = meeting.status === 'confirmed';
   const hasSlots       = Array.isArray(meeting.slots) && meeting.slots.length > 0;
@@ -825,6 +864,17 @@ function MeetingCard({
   const needsAccept    = !isOrganizer && isConfirmed && !userAccepted && !userDeclined;
   const participantCount = (meeting.participantUserIds || []).length;
   const participantNames = meeting.participantNames || {};
+
+  // Fetch calendar events once when the slot panel first expands
+  useEffect(() => {
+    if (!isExpanded || !isOrganizer || isConfirmed || calEvents !== null) return;
+    const timeMin = meeting.dateRangeStart;
+    const timeMax = meeting.dateRangeEnd;
+    if (!timeMin || !timeMax) { setCalEvents([]); return; }
+    apiGet(`/api/calendar/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`)
+      .then(data => setCalEvents(Array.isArray(data) ? data : []))
+      .catch(() => setCalEvents([]));
+  }, [isExpanded, isOrganizer, isConfirmed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Avatar stack for header
   const topParticipants = (meeting.participantUserIds || []).slice(0, 3);
@@ -1020,11 +1070,13 @@ function MeetingCard({
                 <SlotCalendar
                   slots={meeting.slots}
                   preferredHours={meeting.preferredHours}
+                  calEvents={calEvents}
                   onBook={slot => onBook(meeting.requestId, slot)}
                 />
               ) : (
                 <SlotList
                   slots={meeting.slots}
+                  calEvents={calEvents}
                   onBook={slot => onBook(meeting.requestId, slot)}
                 />
               )}

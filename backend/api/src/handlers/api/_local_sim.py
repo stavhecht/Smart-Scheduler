@@ -86,6 +86,26 @@ def run_simulation(
                     pass
         return count
 
+    # Supplement creator busy with confirmed Smart Scheduler meetings (covers users
+    # without a connected external calendar so their accepted meetings are also filtered).
+    try:
+        for m in _meeting_repo.get_user_meetings(creator_id):
+            if (
+                m.status == "confirmed"
+                and m.selectedSlotStart
+                and m.requestId != meeting.requestId
+            ):
+                try:
+                    s = datetime.fromisoformat(m.selectedSlotStart.rstrip("Z"))
+                    e = s + timedelta(minutes=int(m.durationMinutes or 60))
+                    all_busy.setdefault(creator_id, []).append(
+                        {"start": s.isoformat(), "end": e.isoformat()}
+                    )
+                except Exception:
+                    pass
+    except Exception as _exc:
+        logger.warning(f"[local_sim] SS busy fetch failed for {creator_id}: {_exc}")
+
     creator_busy = all_busy.get(creator_id, [])
     if creator_busy:
         def _creator_conflicts(slot_dt: datetime) -> bool:

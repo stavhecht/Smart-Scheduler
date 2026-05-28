@@ -363,6 +363,11 @@ def handle_reschedule(identity: dict, action: str, data: str | None) -> dict:
     if ext_ids := meeting.get("externalEventIds", {}):
         calendar_client.remove_meeting_from_calendars(ext_ids)
 
+    # Reverse fairness for organizer + all participants who had accepted
+    accepted_pids = meeting.get("acceptedBy", [])
+    for uid in set([user_id] + list(accepted_pids)):
+        _reverse_personal_fairness(uid)
+
     meeting.update({
         "status": "pending",
         "selectedSlotStart": None,
@@ -586,6 +591,14 @@ def _apply_personal_fairness(uid: str, slot_utc: datetime, duration_minutes: int
         _user_repo.update_fairness_for_single(uid, impact, breakdown)
     except Exception as exc:
         logger.warning(f"[fairness_update] skipped for {uid}: {exc}")
+
+
+def _reverse_personal_fairness(uid: str) -> None:
+    """Undo the last booking's fairness delta for one user."""
+    try:
+        _user_repo.reverse_fairness_for_single(uid)
+    except Exception as exc:
+        logger.warning(f"[fairness_reversal] skipped for {uid}: {exc}")
 
 
 def _compute_end_iso(start_iso: str, slot_data: dict | None, meeting: dict) -> str:

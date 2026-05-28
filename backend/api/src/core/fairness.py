@@ -357,30 +357,35 @@ class FairnessEngine:
 
     def select_best_slots(self, scored_slots: List[dict], count: int = 3) -> List[dict]:
         """
-        Select the top-N slots ensuring they span different days
-        for maximum scheduling flexibility.
+        Select top-N slots with day diversity.
+        At least 25% of slots come from outside the organizer's preferred hours/days
+        so there are always alternative options even when preferences dominate.
         """
-        sorted_slots = sorted(scored_slots, key=lambda x: x['score'], reverse=True)
-        selected: List[dict] = []
-        used_days: set = set()
+        def _pick_diverse(pool: List[dict], n: int) -> List[dict]:
+            selected, used_days = [], set()
+            for slot in pool:
+                if len(selected) >= n:
+                    break
+                day = datetime.fromisoformat(slot["startIso"]).date()
+                if day not in used_days:
+                    selected.append(slot)
+                    used_days.add(day)
+            for slot in pool:
+                if len(selected) >= n:
+                    break
+                if slot not in selected:
+                    selected.append(slot)
+            return selected[:n]
 
-        # First pass: one slot per day
-        for slot in sorted_slots:
-            if len(selected) >= count:
-                break
-            day = datetime.fromisoformat(slot['startIso']).date()
-            if day not in used_days:
-                selected.append(slot)
-                used_days.add(day)
+        preferred = sorted([s for s in scored_slots if s.get("isPreferred")], key=lambda x: -x["score"])
+        outside   = sorted([s for s in scored_slots if not s.get("isPreferred") and s.get("score", 0) >= 40], key=lambda x: -x["score"])
 
-        # Second pass: fill remaining with best remaining slots
-        for slot in sorted_slots:
-            if len(selected) >= count:
-                break
-            if slot not in selected:
-                selected.append(slot)
+        min_outside = max(1, count // 4)
+        outside_count = min(min_outside, len(outside))
+        preferred_count = count - outside_count
 
-        return selected[:count]
+        chosen = _pick_diverse(preferred, preferred_count) + _pick_diverse(outside, outside_count)
+        return chosen[:count]
 
     # ---------------------------------------------------------------------------
     # Dynamic Reshuffling Engine
