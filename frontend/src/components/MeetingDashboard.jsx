@@ -11,6 +11,18 @@ const validateEmails = (str) => {
   return { list, invalid: list.filter(e => !EMAIL_REGEX.test(e)) };
 };
 
+const fmtRelative = (iso) => {
+  const diffMs = new Date(iso) - Date.now();
+  if (diffMs < 0) return null;
+  const diffH = diffMs / 3600000;
+  if (diffH < 1) return 'in < 1h';
+  if (diffH < 24) return `in ${Math.round(diffH)}h`;
+  const diffD = Math.floor(diffMs / 86400000);
+  if (diffD === 1) return 'tomorrow';
+  if (diffD <= 7) return `in ${diffD} days`;
+  return null;
+};
+
 /* ─────────────────────────────────────────────
    MeetingDashboard
    Props:
@@ -104,17 +116,6 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
   const fmtDate = (iso) => fmt(iso, { weekday: 'short', month: 'short', day: 'numeric' });
   const fmtTime = (iso) => fmt(iso, { hour: '2-digit', minute: '2-digit' });
   const fmtFull = (iso) => `${fmtDate(iso)} · ${fmtTime(iso)}`;
-  const fmtRelative = (iso) => {
-    const diffMs = new Date(iso) - Date.now();
-    if (diffMs < 0) return null;
-    const diffH = diffMs / 3600000;
-    if (diffH < 1) return 'in < 1h';
-    if (diffH < 24) return `in ${Math.round(diffH)}h`;
-    const diffD = Math.floor(diffMs / 86400000);
-    if (diffD === 1) return 'tomorrow';
-    if (diffD <= 7) return `in ${diffD} days`;
-    return null;
-  };
 
   /* ── Handlers ── */
   const handleBook = async (meetingId, slot) => {
