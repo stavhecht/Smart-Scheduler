@@ -788,7 +788,7 @@ function SlotCalendar({ slots, preferredHours, calEvents = null, ssMeetings = []
                     style={{ top: `calc(${ev.topPct}% + 1px)`, height: `calc(${ev.heightPct}% - 2px)`, left: '2px', right: '2px', background: '#6366f130', borderLeft: '3px solid #6366f1', color: '#818cf8', cursor: 'default', zIndex: 1, pointerEvents: 'none', overflow: 'hidden' }}
                     title={`📌 ${ev.title} @ ${ev.startStr}`}
                   >
-                    <span className="cv-ev-title" style={{ fontSize: '0.65rem' }}>📌 {ev.title}</span>
+                    <span className="cv-ev-title" style={{ fontSize: '0.65rem' }}>📌 {ev.title} · {ev.startStr}</span>
                   </div>
                 ))}
                 {getSlotsForDay(day.date).map((e, i) => {
@@ -885,6 +885,7 @@ function MeetingCard({
 }) {
   const [slotView, setSlotView] = useState('calendar');
   const [calEvents, setCalEvents] = useState(null);
+  const [conflictWarning, setConflictWarning] = useState(null); // { slot, existingMeeting }
   const isOrganizer    = meeting.userRole === 'organizer';
   const isConfirmed    = meeting.status === 'confirmed';
   const hasSlots       = Array.isArray(meeting.slots) && meeting.slots.length > 0;
@@ -894,12 +895,17 @@ function MeetingCard({
   const participantCount = (meeting.participantUserIds || []).length;
   const participantNames = meeting.participantNames || {};
 
-  // Fetch calendar events once when the slot panel first expands
+  // Fetch calendar events once when the slot panel first expands.
+  // Use actual slot dates (not stale dateRangeStart/End from meeting creation).
   useEffect(() => {
     if (!isExpanded || !isOrganizer || isConfirmed || calEvents !== null) return;
-    const timeMin = meeting.dateRangeStart;
-    const timeMax = meeting.dateRangeEnd;
-    if (!timeMin || !timeMax) { setCalEvents([]); return; }
+    const slots = meeting.slots;
+    if (!slots || slots.length === 0) { setCalEvents([]); return; }
+    const starts = slots.map(s => new Date(s.startIso).getTime()).filter(t => !isNaN(t));
+    const ends   = slots.map(s => new Date(s.endIso || s.startIso).getTime()).filter(t => !isNaN(t));
+    if (!starts.length) { setCalEvents([]); return; }
+    const timeMin = new Date(Math.min(...starts)).toISOString();
+    const timeMax = new Date(Math.max(...ends) + 3600000).toISOString(); // +1hr buffer
     apiGet(`/api/calendar/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`)
       .then(data => setCalEvents(Array.isArray(data) ? data : []))
       .catch(() => setCalEvents([]));
@@ -921,6 +927,21 @@ function MeetingCard({
         ).toISOString(),
       }));
   }, [allMeetings, meeting.requestId]);
+
+  const handleSlotSelect = (slot) => {
+    const slotStart = new Date(slot.startIso).getTime();
+    const slotEnd   = new Date(slot.endIso || slot.startIso).getTime() || (slotStart + (meeting.durationMinutes || 60) * 60000);
+    const conflict  = ssMeetings.find(m => {
+      const mStart = new Date(m.start).getTime();
+      const mEnd   = new Date(m.end).getTime();
+      return slotStart < mEnd && slotEnd > mStart;
+    });
+    if (conflict) {
+      setConflictWarning({ slot, existingMeeting: conflict });
+    } else {
+      onBook(meeting.requestId, slot);
+    }
+  };
 
   // Avatar stack for header
   const topParticipants = (meeting.participantUserIds || []).slice(0, 3);
@@ -1112,20 +1133,37 @@ function MeetingCard({
                   <button className={slotView === 'list' ? 'svt-btn active' : 'svt-btn'} onClick={() => setSlotView('list')}>☰ List</button>
                 </div>
               </div>
+              {conflictWarning && (
+                <div style={{ background: '#7f1d1d22', border: '1px solid #ef4444', borderRadius: '6px', padding: '0.6rem 0.8rem', marginBottom: '0.5rem', fontSize: '0.8rem' }}>
+                  <span style={{ color: '#fca5a5' }}>
+                    ⚠️ This slot overlaps with <strong>{conflictWarning.existingMeeting.summary}</strong>. Book anyway?
+                  </span>
+                  <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.4rem' }}>
+                    <button onClick={() => { onBook(meeting.requestId, conflictWarning.slot); setConflictWarning(null); }}
+                      style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: '4px', padding: '0.25rem 0.6rem', cursor: 'pointer', fontSize: '0.75rem' }}>
+                      Book anyway
+                    </button>
+                    <button onClick={() => setConflictWarning(null)}
+                      style={{ background: 'transparent', color: '#9ca3af', border: '1px solid #374151', borderRadius: '4px', padding: '0.25rem 0.6rem', cursor: 'pointer', fontSize: '0.75rem' }}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
               {slotView === 'calendar' ? (
                 <SlotCalendar
                   slots={meeting.slots}
                   preferredHours={meeting.preferredHours}
                   calEvents={calEvents}
                   ssMeetings={ssMeetings}
-                  onBook={slot => onBook(meeting.requestId, slot)}
+                  onBook={handleSlotSelect}
                 />
               ) : (
                 <SlotList
                   slots={meeting.slots}
                   calEvents={calEvents}
                   ssMeetings={ssMeetings}
-                  onBook={slot => onBook(meeting.requestId, slot)}
+                  onBook={handleSlotSelect}
                 />
               )}
             </>
