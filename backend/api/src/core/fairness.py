@@ -9,7 +9,7 @@ Implements:
 
 import math
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 
 class FairnessEngine:
@@ -197,6 +197,91 @@ class FairnessEngine:
         elif day >= 4:
             return -6.0   # Critical: personal time boundary
         return -4.5       # Outside normal hours
+
+    def personal_impact_for_participant(
+        self,
+        slot_utc: datetime,
+        timezone_offset: float,
+        working_days: List[int],
+        working_hours: dict,
+        lunch_break: Optional[dict],
+        meetings_this_week: int,
+        calendar_events: List[dict],
+        duration_minutes: int,
+    ) -> Tuple[float, dict]:
+        """
+        Returns (impact, breakdown) for one participant.
+        impact in [-6.0, 0.0]: lower = worse for them (raises their balance = they sacrificed).
+        breakdown is stored in meetingLoadMetrics for UI transparency.
+        """
+        # Step 1 — time quality in participant's local timezone
+        local_dt = slot_utc + timedelta(hours=timezone_offset)
+        hour_weight = (
+            self.LUNCH_BREAK_WEIGHT
+            if self._is_lunch_hour(local_dt.hour, lunch_break)
+            else self.HOUR_WEIGHTS.get(local_dt.hour, 0.15)
+        )
+        day_weight = self.WORKING_DAY_WEIGHT if local_dt.weekday() in working_days else self.REST_DAY_WEIGHT
+        time_quality = hour_weight * day_weight  # 0.0 – 1.0
+
+        # Step 2 — meeting gap penalty (only when calendar data is available)
+        gap_penalty = 0.0
+        if calendar_events:
+            slot_end = slot_utc + timedelta(minutes=duration_minutes)
+            before_ends = []
+            after_starts = []
+            for ev in calendar_events:
+                try:
+                    ev_end   = datetime.fromisoformat(ev["end"].replace("Z", "+00:00")).replace(tzinfo=None)
+                    ev_start = datetime.fromisoformat(ev["start"].replace("Z", "+00:00")).replace(tzinfo=None)
+                    if ev_end <= slot_utc:
+                        before_ends.append(ev_end)
+                    if ev_start >= slot_end:
+                        after_starts.append(ev_start)
+                except Exception:
+                    continue
+            if before_ends:
+                gap_before = (slot_utc - max(before_ends)).total_seconds() / 60
+                if gap_before < 15:
+                    gap_penalty -= 0.25
+                elif gap_before < 30:
+                    gap_penalty -= 0.15
+            if after_starts:
+                gap_after = (min(after_starts) - slot_end).total_seconds() / 60
+                if gap_after < 15:
+                    gap_penalty -= 0.25
+                elif gap_after < 30:
+                    gap_penalty -= 0.15
+            gap_penalty = max(gap_penalty, -0.50)
+
+        # Step 3 — weekly load factor
+        if meetings_this_week >= 6:
+            load_factor = -0.20
+        elif meetings_this_week >= 3:
+            load_factor = -0.10
+        else:
+            load_factor = 0.0
+
+        # Step 4 — map raw score → impact
+        raw = time_quality + gap_penalty + load_factor
+        if raw >= 0.85:
+            impact = 0.0
+        elif raw >= 0.65:
+            impact = -1.5
+        elif raw >= 0.45:
+            impact = -3.5
+        elif raw >= 0.25:
+            impact = -5.0
+        else:
+            impact = -6.0
+
+        breakdown = {
+            "time_quality": round(time_quality, 2),
+            "gap_penalty":  round(gap_penalty, 2),
+            "load_factor":  round(load_factor, 2),
+            "impact":       round(impact, 2),
+        }
+        return impact, breakdown
 
     def explain_slot(self, hour: int, day: int, score: float, load_penalty: float, equity_bonus: float) -> str:
         """Heuristic explanation used when AI ranking is unavailable."""

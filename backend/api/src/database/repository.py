@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from boto3.dynamodb.conditions import Attr
 from botocore.exceptions import ClientError
@@ -166,6 +169,48 @@ class UserRepository:
                 "lastWeekReset": raw.get("lastWeekReset", now),
                 "lastUpdatedAt": now,
             })
+
+    def update_fairness_for_single(
+        self,
+        user_id: str,
+        personal_impact: float,
+        breakdown: Optional[dict] = None,
+    ) -> None:
+        """Update one participant's fairness using their personal impact value."""
+        from src.core.fairness import engine
+        try:
+            fairness = self.get_fairness(user_id)
+            if not fairness:
+                self.ensure_profile(user_id, "", user_id[:8])
+                fairness = self.get_fairness(user_id)
+            if not fairness:
+                return
+            now = datetime.now().isoformat()
+            raw = self._maybe_reset_weekly(fairness.model_dump(mode="json"))
+            updated = engine.update_score_after_booking(
+                {
+                    "fairnessScore":      float(raw["fairnessScore"]),
+                    "meetingLoadMetrics": raw["meetingLoadMetrics"],
+                    "lastUpdatedAt":      raw.get("lastUpdatedAt", now),
+                },
+                personal_impact,
+            )
+            metrics = updated["meetingLoadMetrics"]
+            if breakdown:
+                metrics["last_booking_breakdown"] = breakdown
+            self._db.put(f"USER#{user_id}", "FAIRNESS", {
+                "userId": user_id,
+                **updated,
+                "meetingLoadMetrics": metrics,
+                "inconvenientMeetingsCount": (
+                    fairness.inconvenientMeetingsCount + updated["inconvenientMeetingsCount"]
+                ),
+                "cancellation_timestamps": raw["meetingLoadMetrics"].get("cancellation_timestamps", []),
+                "lastWeekReset":   raw.get("lastWeekReset", now),
+                "lastUpdatedAt":   now,
+            })
+        except Exception as exc:
+            logger.warning(f"[fairness_update] failed for {user_id}: {exc}")
 
     def update_fairness_on_cancel(self, user_id: str) -> None:
         """Add a cancellation timestamp to the organizer's fairness record (expires in 30 days)."""
