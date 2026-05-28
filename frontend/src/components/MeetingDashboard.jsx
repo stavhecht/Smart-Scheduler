@@ -547,6 +547,7 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
                 fmtFull={fmtFull}
                 onParticipantClick={onParticipantClick}
                 isCalendarConnected={isCalendarConnected}
+                allMeetings={meetings}
               />
             ))}
           </div>
@@ -620,6 +621,7 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
                 onScoreCustom={() => handleScoreCustomTime(m.requestId, m)}
                 onBookCustom={() => handleBookCustom(m.requestId, m)}
                 onParticipantClick={onParticipantClick}
+                allMeetings={meetings}
               />
             ))}
           </div>
@@ -674,7 +676,7 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
 }
 
 /* SlotCalendar — full-week calendar reusing cv-* classes from CalendarView.css */
-function SlotCalendar({ slots, preferredHours, calEvents = null, onBook }) {
+function SlotCalendar({ slots, preferredHours, calEvents = null, ssMeetings = [], onBook }) {
   const scoreColor = sc => sc >= 80 ? '#22c55e' : sc >= 60 ? '#f59e0b' : '#ef4444';
 
   const slotHours = useMemo(() => slots.flatMap(s => {
@@ -709,16 +711,23 @@ function SlotCalendar({ slots, preferredHours, calEvents = null, onBook }) {
   const weekLabel = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).formatRange(weekDays[0].date, weekDays[6].date);
   const topSlotIso = slots.length ? slots[0].startIso : null;
 
+  const _evPos = (ev) => {
+    const start = new Date(ev.start), end = new Date(ev.end || ev.start);
+    const h = start.getHours() + start.getMinutes() / 60;
+    const endH = end.getHours() + end.getMinutes() / 60;
+    const cs = Math.max(h, CAL_START), ce = Math.min(endH || h + 1, CAL_END);
+    const range = CAL_END - CAL_START;
+    return { topPct: (cs - CAL_START) / range * 100, heightPct: Math.max((ce - cs) / range * 100, 1.5), startStr: start.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }), visible: ce > cs };
+  };
+
   const getCalEventsForDay = (dayDate) => (calEvents || [])
     .filter(ev => ev.start && new Date(ev.start).toDateString() === dayDate.toDateString())
-    .map(ev => {
-      const start = new Date(ev.start), end = new Date(ev.end || ev.start);
-      const h = start.getHours() + start.getMinutes() / 60;
-      const endH = end.getHours() + end.getMinutes() / 60;
-      const cs = Math.max(h, CAL_START), ce = Math.min(endH || h + 1, CAL_END);
-      const range = CAL_END - CAL_START;
-      return { title: ev.summary || 'Busy', topPct: (cs - CAL_START) / range * 100, heightPct: Math.max((ce - cs) / range * 100, 1.5), startStr: start.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }), visible: ce > cs };
-    })
+    .map(ev => ({ title: ev.summary || 'Busy', ..._evPos(ev) }))
+    .filter(e => e.visible);
+
+  const getSSEventsForDay = (dayDate) => (ssMeetings || [])
+    .filter(ev => ev.start && new Date(ev.start).toDateString() === dayDate.toDateString())
+    .map(ev => ({ title: ev.summary || 'Meeting', ..._evPos(ev) }))
     .filter(e => e.visible);
 
   const getSlotsForDay = (dayDate) => slots
@@ -745,6 +754,13 @@ function SlotCalendar({ slots, preferredHours, calEvents = null, onBook }) {
         </div>
         <span className="cv-week-label">{weekLabel}</span>
       </div>
+      {(ssMeetings.length > 0 || (calEvents && calEvents.length > 0)) && (
+        <div style={{ display: 'flex', gap: '1rem', padding: '0.3rem 0.5rem', fontSize: '0.7rem', color: 'var(--text-muted)', flexWrap: 'wrap' }}>
+          {ssMeetings.length > 0 && <span><span style={{ color: '#6366f1' }}>■</span> Existing meetings</span>}
+          {calEvents && calEvents.length > 0 && <span><span style={{ color: '#6b7280' }}>■</span> Calendar events</span>}
+          <span><span style={{ color: '#22c55e' }}>■</span> Proposed slots</span>
+        </div>
+      )}
       <div className="cv-scroll">
         <div className="cv-grid">
           <div className="cv-time-col">
@@ -761,10 +777,18 @@ function SlotCalendar({ slots, preferredHours, calEvents = null, onBook }) {
                 {CAL_HOURS.map(h => <div key={h} className="cv-hour-cell" />)}
                 {getCalEventsForDay(day.date).map((ev, j) => (
                   <div key={`ce-${j}`} className="cv-event"
-                    style={{ top: `calc(${ev.topPct}% + 1px)`, height: `calc(${ev.heightPct}% - 2px)`, left: '2px', right: '2px', background: '#6b72801a', borderLeft: '3px solid #6b7280', color: '#9ca3af', cursor: 'default', zIndex: 0, pointerEvents: 'none', overflow: 'hidden' }}
+                    style={{ top: `calc(${ev.topPct}% + 1px)`, height: `calc(${ev.heightPct}% - 2px)`, left: '2px', right: '2px', background: '#6b728030', borderLeft: '3px solid #6b7280', color: '#9ca3af', cursor: 'default', zIndex: 0, pointerEvents: 'none', overflow: 'hidden' }}
                     title={`${ev.title} @ ${ev.startStr}`}
                   >
                     <span className="cv-ev-title" style={{ fontSize: '0.65rem', opacity: 0.8 }}>{ev.title}</span>
+                  </div>
+                ))}
+                {getSSEventsForDay(day.date).map((ev, j) => (
+                  <div key={`ss-${j}`} className="cv-event"
+                    style={{ top: `calc(${ev.topPct}% + 1px)`, height: `calc(${ev.heightPct}% - 2px)`, left: '2px', right: '2px', background: '#6366f130', borderLeft: '3px solid #6366f1', color: '#818cf8', cursor: 'default', zIndex: 1, pointerEvents: 'none', overflow: 'hidden' }}
+                    title={`📌 ${ev.title} @ ${ev.startStr}`}
+                  >
+                    <span className="cv-ev-title" style={{ fontSize: '0.65rem' }}>📌 {ev.title}</span>
                   </div>
                 ))}
                 {getSlotsForDay(day.date).map((e, i) => {
@@ -793,7 +817,7 @@ function SlotCalendar({ slots, preferredHours, calEvents = null, onBook }) {
 /* ─────────────────────────────────────────────
    SlotList sub-component — compact list view
 ───────────────────────────────────────────── */
-function SlotList({ slots, calEvents = null, onBook }) {
+function SlotList({ slots, calEvents = null, ssMeetings = [], onBook }) {
   const scoreColor = sc => sc >= 80 ? '#22c55e' : sc >= 60 ? '#f59e0b' : '#ef4444';
   return (
     <div className="slot-list">
@@ -802,13 +826,17 @@ function SlotList({ slots, calEvents = null, onBook }) {
         const color = scoreColor(sc);
         const dt = new Date(s.startIso);
         const slotStart = new Date(s.startIso), slotEnd = new Date(s.endIso);
-        const nearby = calEvents ? calEvents.filter(ev => {
+        const isNearby = (ev) => {
           if (!ev.start) return false;
           const evEnd = new Date(ev.end || ev.start);
           const evStart = new Date(ev.start);
           return evEnd > new Date(slotStart.getTime() - 2 * 3600000) &&
                  evStart < new Date(slotEnd.getTime() + 2 * 3600000);
-        }) : null;
+        };
+        const nearbyGcal  = (calEvents || []).filter(isNearby);
+        const nearbySS    = (ssMeetings || []).filter(isNearby);
+        const nearbyAll   = [...nearbySS, ...nearbyGcal];
+        const stillLoading = calEvents === null && nearbySS.length === 0;
         return (
           <div key={i} className="slot-list-item" onClick={() => onBook(s)} style={{ flexDirection: 'column', alignItems: 'stretch', gap: '0.3rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -830,11 +858,11 @@ function SlotList({ slots, calEvents = null, onBook }) {
               </div>
             </div>
             <div style={{ fontSize: '0.7rem', paddingLeft: '0.25rem' }}>
-              {nearby === null
+              {stillLoading
                 ? <span style={{ color: '#6b7280' }}>⏳ Loading calendar…</span>
-                : nearby.length === 0
+                : nearbyAll.length === 0
                   ? <span style={{ color: '#22c55e' }}>✓ Clear</span>
-                  : <span style={{ color: '#9ca3af' }}>📅 {nearby.map(ev => ev.summary || 'Busy').join(', ')}</span>
+                  : <span style={{ color: '#9ca3af' }}>📅 {nearbyAll.map(ev => ev.summary || 'Busy').join(', ')}</span>
               }
             </div>
           </div>
@@ -853,6 +881,7 @@ function MeetingCard({
   fmtDate, fmtTime, fmtFull,
   customPicker = {}, onCustomPickerChange, onScoreCustom, onBookCustom,
   onParticipantClick, isCalendarConnected,
+  allMeetings = [],
 }) {
   const [slotView, setSlotView] = useState('calendar');
   const [calEvents, setCalEvents] = useState(null);
@@ -875,6 +904,23 @@ function MeetingCard({
       .then(data => setCalEvents(Array.isArray(data) ? data : []))
       .catch(() => setCalEvents([]));
   }, [isExpanded, isOrganizer, isConfirmed]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Confirmed Smart Scheduler meetings (other than this one) to overlay on the slot calendar
+  const ssMeetings = useMemo(() => {
+    return (allMeetings || [])
+      .filter(m =>
+        m.status === 'confirmed' &&
+        m.requestId !== meeting.requestId &&
+        m.selectedSlotStart
+      )
+      .map(m => ({
+        summary: m.title,
+        start: m.selectedSlotStart,
+        end: new Date(
+          new Date(m.selectedSlotStart).getTime() + (m.durationMinutes || 60) * 60000
+        ).toISOString(),
+      }));
+  }, [allMeetings, meeting.requestId]);
 
   // Avatar stack for header
   const topParticipants = (meeting.participantUserIds || []).slice(0, 3);
@@ -1071,12 +1117,14 @@ function MeetingCard({
                   slots={meeting.slots}
                   preferredHours={meeting.preferredHours}
                   calEvents={calEvents}
+                  ssMeetings={ssMeetings}
                   onBook={slot => onBook(meeting.requestId, slot)}
                 />
               ) : (
                 <SlotList
                   slots={meeting.slots}
                   calEvents={calEvents}
+                  ssMeetings={ssMeetings}
                   onBook={slot => onBook(meeting.requestId, slot)}
                 />
               )}
