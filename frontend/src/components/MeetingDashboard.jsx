@@ -158,7 +158,7 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
         preferredHours: editPreferredHours,
         excludedWeekdays: editModal.excludedWeekdays || [],
       });
-      notify(result?.slotsRegenerated ? 'Meeting updated — regenerating slots…' : result?.reopened ? 'Meeting re-opened — participants must accept again.' : 'Meeting updated!', 'success');
+      notify(result?.slotsRegenerated ? 'Meeting updated — new slots generated!' : result?.reopened ? 'Meeting re-opened — participants must accept again.' : 'Preferences saved — click Regenerate to get new slots.', 'success');
       setEditModal(null);
       onRefresh();
     } catch (err) {
@@ -393,7 +393,10 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
                     <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>days from today</span>
                   </div>
                 )}
-                {editModal.isPending && <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)', margin: '0.3rem 0 0' }}>Saving will regenerate slot suggestions.</p>}
+                {editModal.isPending
+                  ? <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)', margin: '0.3rem 0 0' }}>Saving will regenerate slot suggestions.</p>
+                  : <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)', margin: '0.3rem 0 0' }}>Preferences saved. Click <strong>Regenerate</strong> after saving to get new slots.</p>
+                }
               </div>
               <div className="form-group">
                 <label>Time of Day</label>
@@ -945,45 +948,28 @@ function MeetingCard({
       {/* Slot selection panel — organizer, pending, expanded, not in-flight */}
       {isExpanded && isOrganizer && !isConfirmed && busyId !== meeting.requestId && (
         <div className="mc-panel slots-panel">
-          {/* AI strategic summary — meeting-wide verdict + calendar suggestions */}
+          {/* AI strategic summary — one-line verdict */}
           {meeting.aiSummary && (
             <div style={{
               border: '1px solid #8b5cf644',
               background: 'linear-gradient(135deg, #8b5cf60d, #8b5cf604)',
               borderRadius: '10px',
-              padding: '0.75rem 0.9rem',
+              padding: '0.65rem 0.9rem',
               marginBottom: '0.75rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.75rem',
+              flexWrap: 'wrap',
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.4rem' }}>
-                <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#8b5cf6', background: '#8b5cf61a', border: '1px solid #8b5cf644', borderRadius: '10px', padding: '0.15rem 0.5rem' }}>
-                  🧠 AI Verdict
+              <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#8b5cf6', background: '#8b5cf61a', border: '1px solid #8b5cf644', borderRadius: '10px', padding: '0.15rem 0.5rem', flexShrink: 0 }}>
+                🧠 AI Verdict
+              </span>
+              {typeof meeting.aiMeetingScore === 'number' && (
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', flexShrink: 0 }}>
+                  <strong style={{ color: '#8b5cf6' }}>{Math.round(meeting.aiMeetingScore)}%</strong>
                 </span>
-                {typeof meeting.aiMeetingScore === 'number' && (
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                    Slate score: <strong style={{ color: '#8b5cf6' }}>{Math.round(meeting.aiMeetingScore)}%</strong>
-                  </span>
-                )}
-              </div>
-              <div style={{ fontSize: '0.85rem', marginBottom: meeting.aiBestSlotReason ? '0.5rem' : 0 }}>
-                {meeting.aiSummary}
-              </div>
-              {meeting.aiBestSlotReason && (
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: meeting.aiCalendarSuggestions?.length ? '0.5rem' : 0 }}>
-                  <strong>Best pick:</strong> {meeting.aiBestSlotReason}
-                </div>
               )}
-              {meeting.aiCalendarSuggestions?.length > 0 && (
-                <div style={{ marginTop: '0.4rem' }}>
-                  <div style={{ fontSize: '0.72rem', fontWeight: 600, color: '#8b5cf6', marginBottom: '0.25rem' }}>
-                    💡 To unlock better slots:
-                  </div>
-                  <ul style={{ margin: 0, paddingLeft: '1.1rem', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                    {meeting.aiCalendarSuggestions.map((s, i) => (
-                      <li key={i} style={{ marginBottom: '0.2rem' }}>{s}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+              <span style={{ fontSize: '0.82rem', flex: 1, minWidth: 0 }}>{meeting.aiSummary}</span>
             </div>
           )}
 
