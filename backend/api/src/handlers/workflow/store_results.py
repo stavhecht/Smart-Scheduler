@@ -46,7 +46,7 @@ def handler(payload: dict) -> dict:
         days_forward = max(1, (_dt.fromisoformat(payload["date_range_end"]) - _dt.fromisoformat(payload["date_range_start"])).days)
     except Exception:
         days_forward = 7
-    slot_count = min(30, max(8, days_forward * 3))
+    slot_count = min(50, max(10, days_forward * 4))
     logger.info(f"store_results: scored={len(scored_slots)} days_forward={days_forward} slot_count={slot_count} has_final={'final_slots' in payload}")
     best_slots = (
         payload["final_slots"]
@@ -65,6 +65,7 @@ def handler(payload: dict) -> dict:
             explanation=slot_data["explanation"],
             aiScored=bool(slot_data.get("aiScored", False)),
             aiSuggestions=slot_data.get("aiSuggestions"),
+            isPreferred=bool(slot_data.get("isPreferred", False)),
         )
         _meeting_repo.write_slot(
             request_id,

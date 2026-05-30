@@ -9,15 +9,18 @@ Implements:
 
 import math
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 
 class FairnessEngine:
-    # Preference weights per hour of day (0.0 - 1.0)
+    # Preference weights per hour of day (0.0 - 1.0).
+    # Hours outside this table default to 0.15 (very off-peak).
     HOUR_WEIGHTS: Dict[int, float] = {
+        6: 0.25,
         7: 0.45, 8: 0.65, 9: 0.85, 10: 1.00, 11: 1.00,
         12: 0.15,  # Default lunch hour — very low (avoid scheduling during lunch)
-        13: 0.90, 14: 1.00, 15: 0.95, 16: 0.85, 17: 0.65, 18: 0.45
+        13: 0.90, 14: 1.00, 15: 0.95, 16: 0.85,
+        17: 0.70, 18: 0.55, 19: 0.40, 20: 0.30, 21: 0.20,
     }
 
     # Day-of-week weights derived from per-user working days.
@@ -27,7 +30,7 @@ class FairnessEngine:
     LUNCH_BREAK_WEIGHT: float  = 0.15  # Applied to any configured lunch break hour
 
     # Threshold below which the Reshuffling Engine activates
-    OPTIMIZATION_THRESHOLD: float = 75.0
+    OPTIMIZATION_THRESHOLD: float = 60.0
 
     # Working hours for slot generation
     WORKING_HOURS: List[int] = [10, 11, 13, 14, 15, 16]
@@ -118,14 +121,14 @@ class FairnessEngine:
             for i, offset in enumerate(participant_tz_offsets):
                 p_local = slot_dt + timedelta(hours=offset)
                 lb  = participant_lunch_breaks[i] if participant_lunch_breaks and i < len(participant_lunch_breaks) else None
-                hw  = self.LUNCH_BREAK_WEIGHT if self._is_lunch_hour(p_local.hour, lb) else self.HOUR_WEIGHTS.get(p_local.hour, 0.3)
+                hw  = self.LUNCH_BREAK_WEIGHT if self._is_lunch_hour(p_local.hour, lb) else self.HOUR_WEIGHTS.get(p_local.hour, 0.15)
                 pwd = participant_working_days[i] if participant_working_days and i < len(participant_working_days) else [0, 1, 2, 3, 4]
                 dw  = self.WORKING_DAY_WEIGHT if p_local.weekday() in pwd else self.REST_DAY_WEIGHT
                 p_time_qualities.append(hw * dw * 100.0)
             time_score = sum(p_time_qualities) / len(p_time_qualities)
         else:
             lb0         = participant_lunch_breaks[0] if participant_lunch_breaks else None
-            hour_weight = self.LUNCH_BREAK_WEIGHT if self._is_lunch_hour(hour, lb0) else self.HOUR_WEIGHTS.get(hour, 0.3)
+            hour_weight = self.LUNCH_BREAK_WEIGHT if self._is_lunch_hour(hour, lb0) else self.HOUR_WEIGHTS.get(hour, 0.15)
             pwd         = participant_working_days[0] if participant_working_days else [0, 1, 2, 3, 4]
             day_weight  = self.WORKING_DAY_WEIGHT if day in pwd else self.REST_DAY_WEIGHT
             tq          = hour_weight * day_weight * 100.0
@@ -194,6 +197,91 @@ class FairnessEngine:
         elif day >= 4:
             return -6.0   # Critical: personal time boundary
         return -4.5       # Outside normal hours
+
+    def personal_impact_for_participant(
+        self,
+        slot_utc: datetime,
+        timezone_offset: float,
+        working_days: List[int],
+        working_hours: dict,
+        lunch_break: Optional[dict],
+        meetings_this_week: int,
+        calendar_events: List[dict],
+        duration_minutes: int,
+    ) -> Tuple[float, dict]:
+        """
+        Returns (impact, breakdown) for one participant.
+        impact in [-6.0, 0.0]: lower = worse for them (raises their balance = they sacrificed).
+        breakdown is stored in meetingLoadMetrics for UI transparency.
+        """
+        # Step 1 — time quality in participant's local timezone
+        local_dt = slot_utc + timedelta(hours=timezone_offset)
+        hour_weight = (
+            self.LUNCH_BREAK_WEIGHT
+            if self._is_lunch_hour(local_dt.hour, lunch_break)
+            else self.HOUR_WEIGHTS.get(local_dt.hour, 0.15)
+        )
+        day_weight = self.WORKING_DAY_WEIGHT if local_dt.weekday() in working_days else self.REST_DAY_WEIGHT
+        time_quality = hour_weight * day_weight  # 0.0 – 1.0
+
+        # Step 2 — meeting gap penalty (only when calendar data is available)
+        gap_penalty = 0.0
+        if calendar_events:
+            slot_end = slot_utc + timedelta(minutes=duration_minutes)
+            before_ends = []
+            after_starts = []
+            for ev in calendar_events:
+                try:
+                    ev_end   = datetime.fromisoformat(ev["end"].replace("Z", "+00:00")).replace(tzinfo=None)
+                    ev_start = datetime.fromisoformat(ev["start"].replace("Z", "+00:00")).replace(tzinfo=None)
+                    if ev_end <= slot_utc:
+                        before_ends.append(ev_end)
+                    if ev_start >= slot_end:
+                        after_starts.append(ev_start)
+                except Exception:
+                    continue
+            if before_ends:
+                gap_before = (slot_utc - max(before_ends)).total_seconds() / 60
+                if gap_before < 15:
+                    gap_penalty -= 0.25
+                elif gap_before < 30:
+                    gap_penalty -= 0.15
+            if after_starts:
+                gap_after = (min(after_starts) - slot_end).total_seconds() / 60
+                if gap_after < 15:
+                    gap_penalty -= 0.25
+                elif gap_after < 30:
+                    gap_penalty -= 0.15
+            gap_penalty = max(gap_penalty, -0.50)
+
+        # Step 3 — weekly load factor
+        if meetings_this_week >= 6:
+            load_factor = -0.20
+        elif meetings_this_week >= 3:
+            load_factor = -0.10
+        else:
+            load_factor = 0.0
+
+        # Step 4 — map raw score → impact
+        raw = time_quality + gap_penalty + load_factor
+        if raw >= 0.85:
+            impact = 0.0
+        elif raw >= 0.65:
+            impact = -1.5
+        elif raw >= 0.45:
+            impact = -3.5
+        elif raw >= 0.25:
+            impact = -5.0
+        else:
+            impact = -6.0
+
+        breakdown = {
+            "time_quality": round(time_quality, 2),
+            "gap_penalty":  round(gap_penalty, 2),
+            "load_factor":  round(load_factor, 2),
+            "impact":       round(impact, 2),
+        }
+        return impact, breakdown
 
     def explain_slot(self, hour: int, day: int, score: float, load_penalty: float, equity_bonus: float) -> str:
         """Heuristic explanation used when AI ranking is unavailable."""
@@ -269,30 +357,35 @@ class FairnessEngine:
 
     def select_best_slots(self, scored_slots: List[dict], count: int = 3) -> List[dict]:
         """
-        Select the top-N slots ensuring they span different days
-        for maximum scheduling flexibility.
+        Select top-N slots with day diversity.
+        At least 25% of slots come from outside the organizer's preferred hours/days
+        so there are always alternative options even when preferences dominate.
         """
-        sorted_slots = sorted(scored_slots, key=lambda x: x['score'], reverse=True)
-        selected: List[dict] = []
-        used_days: set = set()
+        def _pick_diverse(pool: List[dict], n: int) -> List[dict]:
+            selected, used_days = [], set()
+            for slot in pool:
+                if len(selected) >= n:
+                    break
+                day = datetime.fromisoformat(slot["startIso"]).date()
+                if day not in used_days:
+                    selected.append(slot)
+                    used_days.add(day)
+            for slot in pool:
+                if len(selected) >= n:
+                    break
+                if slot not in selected:
+                    selected.append(slot)
+            return selected[:n]
 
-        # First pass: one slot per day
-        for slot in sorted_slots:
-            if len(selected) >= count:
-                break
-            day = datetime.fromisoformat(slot['startIso']).date()
-            if day not in used_days:
-                selected.append(slot)
-                used_days.add(day)
+        preferred = sorted([s for s in scored_slots if s.get("isPreferred")], key=lambda x: -x["score"])
+        outside   = sorted([s for s in scored_slots if not s.get("isPreferred") and s.get("score", 0) >= 40], key=lambda x: -x["score"])
 
-        # Second pass: fill remaining with best remaining slots
-        for slot in sorted_slots:
-            if len(selected) >= count:
-                break
-            if slot not in selected:
-                selected.append(slot)
+        min_outside = max(1, count // 4)
+        outside_count = min(min_outside, len(outside))
+        preferred_count = count - outside_count
 
-        return selected[:count]
+        chosen = _pick_diverse(preferred, preferred_count) + _pick_diverse(outside, outside_count)
+        return chosen[:count]
 
     # ---------------------------------------------------------------------------
     # Dynamic Reshuffling Engine
@@ -310,12 +403,18 @@ class FairnessEngine:
 
     def reshuffle(self, all_scored_slots: List[dict], count: int = 8) -> List[dict]:
         """
-        Dynamic Reshuffling Engine:
-        Filters out low-quality slots and re-selects the best available options.
-        Called when the initial selection average score is below the threshold.
+        Dynamic Reshuffling Engine: re-selects the best available slots.
+        Preferred slots (user-requested time window) are always included regardless
+        of score; non-preferred slots are filtered to score >= 40.
         """
-        viable = [s for s in all_scored_slots if s['score'] >= 60]
-        pool = viable if viable else all_scored_slots
+        preferred = [s for s in all_scored_slots if s.get("isPreferred")]
+        rest = [s for s in all_scored_slots if not s.get("isPreferred") and s["score"] >= 40]
+        pool = (
+            sorted(preferred, key=lambda s: -s["score"]) +
+            sorted(rest, key=lambda s: -s["score"])
+        )
+        if not pool:
+            pool = sorted(all_scored_slots, key=lambda s: -s["score"])
         return self.select_best_slots(pool, count=count)
 
     # ---------------------------------------------------------------------------

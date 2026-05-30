@@ -112,14 +112,12 @@ Then produce a meeting-wide summary:
   - meetingScore: average quality across the slate (0-100)
   - summary: one sentence overall verdict
   - bestSlotIso: startIso of the single best slot — MUST match an input slot
-  - bestSlotReason: 2-3 sentences on why it is best and who benefits. Refer to
-    participants by their displayName (e.g. "Sarah Cohen") — NEVER by userId
-    and never invent names not present in the input.
+  - bestSlotReason: 2-3 sentences on why it is best and who benefits (refer to
+    participants by their displayName field, e.g. "Alice benefits because...")
   - calendarSuggestions: 2-4 SPECIFIC actionable changes participants could
     make to unlock even better slots. Each must reference a participant by
-    their displayName and a specific day/time (e.g. "Sarah Cohen could shift
-    her recurring Tuesday 13:00 event so Tue 14:00 becomes high-quality for
-    the group").
+    displayName and a specific day/time (e.g. "Alice could shift her Tuesday
+    13:00 event so Tue 14:00 becomes high-quality for the group").
 
 PRIVACY: never mention event titles or attendee emails — refer to events
 generically ("a focus block", "a back-to-back meeting"). Participant
@@ -340,6 +338,11 @@ def build_participant_context(
         metrics = state.get("meetingLoadMetrics", {}) or {}
         # Fairness trend: most recent N cancellation timestamps as a coarse trend signal
         trend = [str(t) for t in (metrics.get("cancellation_timestamps", []) or [])][-MAX_HISTORY_ENTRIES:]
+        display_name = (
+            profile.get("displayName")
+            or profile.get("email", "").split("@")[0]
+            or (uid or "")[:8]
+        )
         out.append({
             "userId": uid,
             "displayName": profile.get("displayName") or uid,

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from boto3.dynamodb.conditions import Attr
 from botocore.exceptions import ClientError
@@ -167,6 +170,92 @@ class UserRepository:
                 "lastUpdatedAt": now,
             })
 
+    def update_fairness_for_single(
+        self,
+        user_id: str,
+        personal_impact: float,
+        breakdown: Optional[dict] = None,
+    ) -> None:
+        """Update one participant's fairness using their personal impact value."""
+        from src.core.fairness import engine
+        try:
+            fairness = self.get_fairness(user_id)
+            if not fairness:
+                self.ensure_profile(user_id, "", user_id[:8])
+                fairness = self.get_fairness(user_id)
+            if not fairness:
+                return
+            now = datetime.now().isoformat()
+            raw = self._maybe_reset_weekly(fairness.model_dump(mode="json"))
+            updated = engine.update_score_after_booking(
+                {
+                    "fairnessScore":      float(raw["fairnessScore"]),
+                    "meetingLoadMetrics": raw["meetingLoadMetrics"],
+                    "lastUpdatedAt":      raw.get("lastUpdatedAt", now),
+                },
+                personal_impact,
+            )
+            metrics = updated["meetingLoadMetrics"]
+            delta = engine._impact_to_balance_delta(personal_impact)
+            if breakdown is not None:
+                breakdown = dict(breakdown)
+                breakdown["delta"] = delta
+            else:
+                breakdown = {"delta": delta}
+            metrics["last_booking_breakdown"] = breakdown
+            self._db.put(f"USER#{user_id}", "FAIRNESS", {
+                "userId": user_id,
+                **updated,
+                "meetingLoadMetrics": metrics,
+                "inconvenientMeetingsCount": (
+                    fairness.inconvenientMeetingsCount + updated["inconvenientMeetingsCount"]
+                ),
+                "cancellation_timestamps": raw["meetingLoadMetrics"].get("cancellation_timestamps", []),
+                "lastWeekReset":   raw.get("lastWeekReset", now),
+                "lastUpdatedAt":   now,
+            })
+        except Exception as exc:
+            logger.warning(f"[fairness_update] failed for {user_id}: {exc}")
+
+    def reverse_fairness_for_single(self, user_id: str) -> None:
+        """Undo the last booking's fairness delta for one user."""
+        from src.core.fairness import engine
+        try:
+            fairness = self.get_fairness(user_id)
+            if not fairness:
+                return
+            breakdown = (fairness.meetingLoadMetrics or {}).get("last_booking_breakdown")
+            if not breakdown:
+                return
+            delta = int(breakdown.get("delta", 0))
+            if delta == 0:
+                return
+            now = datetime.now().isoformat()
+            raw = self._maybe_reset_weekly(fairness.model_dump(mode="json"))
+            metrics = dict(raw["meetingLoadMetrics"])
+            balance = float(metrics.get("fairness_balance", 0.0))
+            balance = max(-50.0, min(50.0, balance - delta))
+            was_inconvenient = delta > 0
+            metrics.update({
+                "fairness_balance": round(balance, 1),
+                "meetings_this_week": max(0, int(metrics.get("meetings_this_week", 1)) - 1),
+                "inconvenient_count": max(0, int(metrics.get("inconvenient_count", 0)) - (1 if was_inconvenient else 0)),
+                "convenient_count": max(0, int(metrics.get("convenient_count", 0)) - (0 if was_inconvenient else 1)),
+                "last_booking_breakdown": None,
+            })
+            new_score = engine.calculate_user_score(metrics, raw.get("lastUpdatedAt"))
+            self._db.put(f"USER#{user_id}", "FAIRNESS", {
+                "userId": user_id,
+                "fairnessScore": new_score,
+                "meetingLoadMetrics": metrics,
+                "inconvenientMeetingsCount": max(0, fairness.inconvenientMeetingsCount - (1 if was_inconvenient else 0)),
+                "cancellation_timestamps": metrics.get("cancellation_timestamps", []),
+                "lastWeekReset": raw.get("lastWeekReset", now),
+                "lastUpdatedAt": now,
+            })
+        except Exception as exc:
+            logger.warning(f"[fairness_reversal] failed for {user_id}: {exc}")
+
     def update_fairness_on_cancel(self, user_id: str) -> None:
         """Add a cancellation timestamp to the organizer's fairness record (expires in 30 days)."""
         from src.core.fairness import engine
@@ -299,6 +388,12 @@ class MeetingRepository:
         self, req_data: models.MeetingCreateSchema, creator_id: str
     ) -> models.MeetingRequest:
         req_id = f"m{uuid.uuid4().hex[:6]}"
+        range_start = datetime.now()
+        if getattr(req_data, "dateRangeStart", None):
+            try:
+                range_start = datetime.fromisoformat(req_data.dateRangeStart)
+            except (ValueError, TypeError):
+                pass
         meeting = models.MeetingRequest(
             requestId=req_id,
             creatorUserId=creator_id,
@@ -306,9 +401,12 @@ class MeetingRepository:
             title=req_data.title,
             description=getattr(req_data, "description", "") or "",
             durationMinutes=req_data.durationMinutes,
-            dateRangeStart=datetime.now(),
-            dateRangeEnd=datetime.now() + timedelta(days=req_data.daysForward),
+            dateRangeStart=range_start,
+            dateRangeEnd=range_start + timedelta(days=req_data.daysForward),
             status="pending",
+            daysForward=req_data.daysForward,
+            preferredHours=getattr(req_data, "preferredHours", None),
+            excludedWeekdays=getattr(req_data, "excludedWeekdays", None),
         )
         self._db.put(f"MEET#{req_id}", "META", meeting.model_dump(mode="json"))
         self._write_participation_records(meeting)

@@ -89,7 +89,7 @@ export async function apiGet(path) {
 
     // /api/calendar/oauth_url?provider=<provider>
     const oauthUrlMatch = path.match(/^\/api\/calendar\/oauth_url\?provider=(.+)$/);
-    if (oauthUrlMatch) return apiProxy(`oauth_url:${oauthUrlMatch[1]}`);
+    if (oauthUrlMatch) return apiProxy(`oauth_url:${oauthUrlMatch[1]}`, { redirect_origin: window.location.origin });
 
     if (path === '/api/profile/stats') return apiProxy('profile_stats');
 

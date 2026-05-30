@@ -30,6 +30,8 @@ def handler(payload: dict) -> dict:
         if profile:
             participant_profiles.append({
                 "userId": uid,
+                "displayName": profile.get("displayName", ""),
+                "email": profile.get("email", ""),
                 "timezone": profile.get("timezone", "UTC"),
                 "workingHours": profile.get("workingHours", {"start": "09:00", "end": "18:00"}),
                 "workingDays": profile.get("workingDays", [0, 1, 2, 3, 4]),

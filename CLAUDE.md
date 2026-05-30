@@ -33,6 +33,21 @@ terraform apply -var="lab_role_arn=arn:aws:iam::975049889875:role/LabRole"
 # api_deployment.zip must already exist in terraform/ before plan/apply
 ```
 
+**Quick Lambda deploy (no Terraform):**
+```bash
+python build_lambda.py
+aws lambda update-function-code --function-name smart_scheduler_api \
+  --zip-file "fileb://terraform/api_deployment.zip" --region us-east-1
+```
+
+**Frontend deploy to Amplify (manual — NOT connected to GitHub):**
+```bash
+# Build (from frontend/)
+VITE_API_URL=https://5xv230dk19.execute-api.us-east-1.amazonaws.com npm run build
+# Zip dist/ using .NET ZipFile API (PowerShell Compress-Archive produces wrong structure → assets 404)
+# Then: aws amplify create-deployment → PUT to zipUploadUrl → start-deployment
+```
+
 ## Architecture
 
 ### Request Flow (Critical: CORS Proxy Pattern)
@@ -49,16 +64,14 @@ Key action strings (full list in `apiClient.js`):
 | Action | Triggered by |
 |---|---|
 | `profile`, `meetings`, `calendar_status` | `apiGet` |
-| `activity_feed`, `list_users`, `get_messages`, `profile_stats` | `apiGet` |
+| `activity_feed`, `list_users`, `profile_stats` | `apiGet` |
 | `get_public_profile:<userId>`, `shared_meetings:<userId>` | `apiGet` |
 | `meeting_log:<id>`, `oauth_url:<provider>` | `apiGet` |
 | `create_meeting`, `accept:<id>`, `book:<id>:<slot>` | `apiPost` |
-| `cancel:<id>`, `edit:<id>`, `reschedule:<id>` | `apiPost` |
-| `ai_fairness:<id>` | `apiGet` (poll for async AI fairness verdict) |
-| `book_custom:<id>`, `update_profile`, `send_message:<userId>` | `apiPost` |
+| `cancel:<id>`, `edit:<id>`, `reschedule:<id>`, `decline:<id>` | `apiPost` |
+| `book_custom:<id>`, `update_profile` | `apiPost` |
 | `oauth_callback:<provider>`, `calendar_disconnect:<provider>` | `apiPost` |
 | `score_slot`, `update_ics_url` | direct `apiProxy` calls |
-- **Note:** The `decline` action (marked * in the table above) exists in the dispatcher but has no `apiClient.js` wrapper — it is not currently reachable from the frontend.
 
 There are also secondary REST endpoints (`/api/profile`, `/api/meetings`, etc.) with the JWT authorizer from API Gateway — these are a secondary path not used by the main frontend.
 
@@ -73,10 +86,11 @@ src/
 │   ├── openai_client.py     # AI slot scoring + NL meeting parsing (gpt-4.1-nano, stdlib urllib only)
 │   └── timezone.py          # get_tz_offset_hours()
 ├── core/
-│   └── fairness.py          # FairnessEngine class + global `engine` singleton
+│   ├── fairness.py          # FairnessEngine class + global `engine` singleton
+│   └── ai_fairness.py       # score_meeting_with_ai() — primary AI scorer (gpt-4o-mini)
 ├── database/
 │   ├── models.py            # Pydantic models (UserProfile, MeetingRequest, SuggestedTimeSlot, FairnessState, MeetingLogEntry)
-│   └── repository.py        # UserRepository, MeetingRepository, CalendarRepository
+│   └── repository.py        # UserRepository, MeetingRepository, CalendarRepository, AIFairnessRepository
 └── handlers/
     ├── api/
     │   ├── dispatcher.py    # Routes action strings → handler functions
@@ -111,9 +125,9 @@ Key actions:
 |---|---|
 | `profile`, `update_profile`, `profile_stats`, `list_users`, `activity_feed` | `profile.py` |
 | `meetings`, `create_meeting`, `score_slot`, `parse_meeting_nl` | `meetings.py` |
-| `book:<id>:<slot>`, `accept:<id>`, `decline:<id>`*, `cancel:<id>`, `edit:<id>`, `reschedule:<id>`, `book_custom:<id>`, `meeting_log:<id>` | `meetings.py` |
+| `book:<id>:<slot>`, `accept:<id>`, `decline:<id>`, `cancel:<id>`, `edit:<id>`, `reschedule:<id>`, `book_custom:<id>`, `meeting_log:<id>` | `meetings.py` |
 | `calendar_status`, `calendar_events`, `oauth_url:<p>`, `oauth_callback:<p>`, `calendar_disconnect:<p>`, `update_ics_url`, `register_calendar_watch`, `stop_calendar_watch`, `check_calendar_sync` | `calendar.py` |
-| `get_public_profile:<id>`, `shared_meetings:<id>` | `profile.py` |
+| `reset_fairness`, `get_public_profile:<id>`, `shared_meetings:<id>` | `profile.py` |
 
 ### Step Functions Workflow
 
@@ -122,21 +136,20 @@ Key actions:
 
 Each step maps to a `sfn_*` function in `db.py`. The workflow is triggered from `main.py` when creating a meeting.
 
-### AI Fairness Workflow (async — `SmartSchedulerFairnessAI`)
+### AI Fairness Scoring (inline — `_scheduling._run_ai_inline`)
 
-A second STANDARD-type Step Function runs in the background after meeting creation. It calls **gpt-4o-mini** via `src/core/ai_fairness.py` to produce a calibrated fairness verdict on top of the heuristic `FairnessEngine` output.
+AI scoring runs **synchronously** within the same `create_meeting` / `reschedule` request, immediately after the heuristic SFN workflow completes. The result is returned directly in the meeting creation response — no async polling needed.
 
-- **Trigger**: `_scheduling.run_or_schedule` calls `start_execution` (async, fire-and-forget) on `SmartSchedulerFairnessAI` immediately after the sync slot-generation workflow returns. Failures are logged but never raised — the user-facing meeting flow is decoupled from AI scoring.
-- **Steps**: `AIFetchContext` → `AIScoreMeeting` → `AIStoreScore`, with a shared `Catch → RecordError` that writes an error marker so the frontend poll stops spinning.
-- **Hybrid blend (Method C)**: AI may shift a heuristic score by at most ±15 pts (`AI_MAX_DELTA`). This preserves Method A as the source of truth and prevents the LLM from inventing wild swings.
+- **Trigger**: `_scheduling.run_or_schedule` calls `_run_ai_inline()` after `SmartSchedulerWorkflow` (or its local fallback) stores slots. Failures are caught and logged; the meeting flow continues with heuristic scores already in DynamoDB.
+- **AI is primary**: `src/core/ai_fairness.py` calls **gpt-4o-mini** and the AI score **replaces** the heuristic score as the primary `score` field on each slot. The heuristic score is preserved in the `explanation` text as a fallback reference.
 - **Storage**:
-  - `MEET#<id> / AISCORE` — latest verdict (frontend polls via `ai_fairness:<id>`)
-  - `MEET#<id> / AIHIST#<ts>` — audit trail (TTL 90 days)
+  - Each slot's `score` and `aiScore` fields are updated in DynamoDB with the AI value
+  - `MEET#<id> / META` — `aiAnalysis` dict added (bestSlot, bestSlotReason, summary, calendarSuggestions, meetingFairnessScore)
+  - `MEET#<id> / AIHIST#<ts>` — audit trail (TTL 90 days) via `AIFairnessRepository`
   - `USER#<id> / AIFAIRHIST#<ts>` — per-user fairness trajectory (TTL 365 days), feeds back into the next AI call as historical context
-- **Privacy**: calendar event titles/locations/attendee emails are stripped before being sent to OpenAI; only start/end/duration/attendee-count is sent (`ai_fairness._redact_events`).
+- **Privacy**: calendar event titles/locations/attendee emails are stripped before sending to OpenAI; only start/end/duration/attendee-count is sent.
 - **Cost guard**: participants capped at 25, events per participant capped at 40, history entries capped at 20 — bounded context window per call.
-- **Failure mode**: if `OPENAI_API_KEY` is unset or the API errors, the agent returns a `heuristic_fallback` verdict (heuristic average), so the poll endpoint always resolves.
-- **Observability**: state machine logs to `/aws/states/SmartSchedulerFairnessAI` (CloudWatch, 14-day retention). Handler logs use the `[ai_*]` prefix.
+- **Failure mode**: if `OPENAI_API_KEY` is unset or the API errors, `_run_ai_inline` returns `None` and the meeting is returned with heuristic-only scores. Handler logs use the `[ai_inline]` prefix.
 ### AI Scoring (`src/common/openai_client.py`)
 
 Uses `gpt-4.1-nano` via stdlib `urllib` (no OpenAI SDK in the Lambda ZIP). A single batched API call per meeting scores all candidate slots and produces a strategic summary. Hard-fails with `OpenAIScoreError` on any error — the deterministic fairness engine always runs first and AI scoring is additive. Requires `OPENAI_API_KEY` in Lambda env.
@@ -148,9 +161,19 @@ Two public entry points:
 ### Fairness Engine (`src/core/fairness.py`)
 
 Single `FairnessEngine` class, global `engine` singleton. Key concepts:
-- **User score** (0–100): starts at 100, penalised by meetings this week (−2 each) and cancellations (−5 each), boosted by suffering score (+3 each).
-- **Slot score**: combines `HOUR_WEIGHTS × DAY_WEIGHTS × 100` (base), load penalty (−30 max), social momentum bonus (+15 max), fairness variance penalty (−20 max).
-- **Reshuffling Engine**: activates when average slot score < 75 (`OPTIMIZATION_THRESHOLD`); filters slots < 60, re-selects best.
+- **User score** (0–100): credit/debt balance model. `score = 50 + balance` (clamped 0–100). 50 = neutral. Balance shifts on each booking:
+  - weekend/very-off-hours slot → +15 (sacrifice rewarded)
+  - off-peak slot → +8
+  - standard working-hours slot → −4
+  - prime-time slot → −10 (great deal costs you)
+  - cancellation → −5 (penalty for breaking others' plans)
+  - Balance drifts toward 0 at 2%/day (max 30%) so old history fades.
+- **Slot score** (0–100): `time_score − load_penalty + equity_bonus − conflict_penalty`
+  - `time_score` = avg of `HOUR_WEIGHTS × day_weight × 100` across all participant local times
+  - `load_penalty` = up to −30 based on participants' meetings this week
+  - `equity_bonus` = ±15 (rewards slots where high-fairness participants get convenient time)
+  - `conflict_penalty` = 12 pts per participant with a calendar conflict, capped at 36
+- **Reshuffling Engine**: activates when average slot score < 75 (`OPTIMIZATION_THRESHOLD`); filters slots below 60, re-selects best from viable pool.
 
 ### DynamoDB Access Pattern (`src/database/repository.py`)
 
@@ -163,6 +186,8 @@ Single-table design (`SmartScheduler_V1`). Three repository classes: `UserReposi
 - `PK=MEET#<requestId>`, `SK=META` — meeting metadata (`MeetingRequest`)
 - `PK=MEET#<requestId>`, `SK=SLOT#<startIso>` — candidate time slots (`SuggestedTimeSlot`)
 - `PK=MEET#<requestId>`, `SK=LOG#<timestamp>` — audit log entries
+- `PK=MEET#<requestId>`, `SK=AIHIST#<ts>` — AI scoring audit trail (TTL 90 days)
+- `PK=USER#<id>`, `SK=AIFAIRHIST#<ts>` — per-user AI fairness trajectory (TTL 365 days)
 - `PK=GCAL_CHANNEL#<channelId>`, `SK=LOOKUP` — reverse lookup: channelId → userId
 
 `BaseDBModel` in `models.py` has a `model_validator` that recursively converts `Decimal` → `int`/`float` on every DynamoDB read. All writes must convert floats → `Decimal` before storing.
@@ -199,12 +224,10 @@ Supports Google Calendar (OAuth2) and Microsoft Outlook (.ics feed URL). Google 
 | `TABLE_NAME` | Lambda / `.env` | DynamoDB table name |
 | `AWS_ACCOUNT_ID` | Lambda | Used to construct SFN ARN; **absent locally** → `_local_sim` path |
 | `FRONTEND_URL` | Lambda | CORS allow-origin |
-| `OPENAI_API_KEY` | Lambda | gpt-4o-mini for AI fairness workflow (optional — heuristic fallback if unset) |
+| `OPENAI_API_KEY` | Lambda | gpt-4o-mini for inline AI scoring + NL meeting parsing; absent → heuristic-only fallback |
 | `AI_FAIRNESS_MODEL` | Lambda | Defaults to `gpt-4o-mini`; override to pin a different model |
-| `ENVIRONMENT` | local only | Set to `development` for local uvicorn |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Lambda | Google Calendar OAuth |
-| `OPENAI_API_KEY` | Lambda | AI slot scoring + NL meeting parsing; absent → AI scoring silently skipped |
-| `ENVIRONMENT` | local only | Set to `development` for local uvicorn + .env loading |
+| `ENVIRONMENT` | local only | Set to `development` for local uvicorn + `.env` loading |
 | `VITE_API_URL` | frontend `.env.local` | Backend URL for the Vite dev server (default: `http://localhost:8000`) |
 
 ### Local `.env` file
