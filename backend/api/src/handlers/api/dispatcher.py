@@ -34,7 +34,7 @@ def dispatch(action: str, identity: dict, data: str | None) -> dict:
     PREFIX: list = [
         ("book:",               lambda: _mtg.handle_book(identity, action, data)),
         ("accept:",             lambda: _mtg.handle_accept(identity, action)),
-        ("decline:",            lambda: _mtg.handle_decline(identity, action)),
+        ("decline:",            lambda: _mtg.handle_decline(identity, action, data)),
         ("cancel:",             lambda: _mtg.handle_cancel(identity, action)),
         ("edit:",               lambda: _mtg.handle_edit(identity, action, data)),
         ("book_custom:",        lambda: _mtg.handle_book_custom(identity, action, data)),

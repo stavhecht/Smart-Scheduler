@@ -76,6 +76,8 @@ class MeetingRequest(BaseDBModel):
     selectedSlotStart: Optional[str] = None
     acceptedBy: List[str] = []
     declinedBy: List[str] = []
+    # Per-user decline details: { userId: { reason, slotIso, declinedAt, comment? } }
+    declineDetails: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     createdAt: datetime = Field(default_factory=datetime.now)
     updatedAt: Optional[datetime] = None
     cancelledAt: Optional[datetime] = None
@@ -112,6 +114,11 @@ class MeetingEditSchema(BaseModel):
     daysForward: Optional[int] = Field(default=None, ge=1, le=90)
     preferredHours: Optional[List[int]] = None
     excludedWeekdays: Optional[List[int]] = None
+
+
+class MeetingDeclineSchema(BaseModel):
+    reason: str = Field(pattern="^(personal|busy|other)$")
+    comment: Optional[str] = Field(default=None, max_length=500)
 
 
 class SuggestedTimeSlot(BaseDBModel):

@@ -132,9 +132,16 @@ def handle_accept(identity: dict, action: str) -> dict:
     return {"status": "success", "message": "Meeting accepted", "acceptedBy": accepted}
 
 
-def handle_decline(identity: dict, action: str) -> dict:
+def handle_decline(identity: dict, action: str, data: str | None) -> dict:
     request_id = action.split(":", 1)[1]
     user_id = identity["user_id"]
+    if not data:
+        raise HTTPException(status_code=400, detail="Missing data for decline (reason required)")
+    try:
+        payload = models.MeetingDeclineSchema(**json.loads(data))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid decline data: {exc}")
+
     meeting = _meeting_repo.get_meta(request_id)
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
@@ -142,36 +149,81 @@ def handle_decline(identity: dict, action: str) -> dict:
         raise HTTPException(status_code=403, detail="The organizer cannot decline their own meeting")
     if user_id not in meeting.get("participantUserIds", []):
         raise HTTPException(status_code=403, detail="You are not a participant in this meeting")
+
     declined = meeting.get("declinedBy", [])
     if user_id not in declined:
         declined.append(user_id)
     now = datetime.now()
+    details = dict(meeting.get("declineDetails") or {})
+    details[user_id] = {
+        "reason": payload.reason,
+        "comment": payload.comment,
+        "slotIso": meeting.get("selectedSlotStart"),
+        "declinedAt": now.isoformat(),
+    }
     meeting["declinedBy"] = declined
+    meeting["declineDetails"] = details
     meeting["acceptedBy"] = [u for u in meeting.get("acceptedBy", []) if u != user_id]
-    meeting["status"] = "cancelled"
-    meeting["cancelledAt"] = now.isoformat()
-    meeting["cancelledBy"] = user_id
     meeting["updatedAt"] = now.isoformat()
-    if ext_ids := meeting.get("externalEventIds"):
-        try:
-            calendar_client.remove_meeting_from_calendars(ext_ids)
-        except Exception as exc:
-            logger.error(f"Calendar delete failed on decline-cancel for {request_id}: {exc}")
-        meeting["externalEventIds"] = {}
-    _meeting_repo.update_meta(request_id, meeting)
-    _meeting_repo.log_activity(request_id, "declined", user_id)
+
+    invited = meeting.get("participantUserIds", [])
+    all_declined = bool(invited) and all(u in declined for u in invited)
+
+    reshuffled = False
+    if all_declined and meeting.get("status") == "confirmed":
+        # All invited users declined — reshuffle: release the slot, regenerate, back to pending
+        if ext_ids := meeting.get("externalEventIds"):
+            try:
+                calendar_client.remove_meeting_from_calendars(ext_ids)
+            except Exception as exc:
+                logger.error(f"Calendar delete failed on all-decline reshuffle for {request_id}: {exc}")
+        days_forward = int(meeting.get("daysForward") or 7)
+        meeting.update({
+            "status": "pending",
+            "selectedSlotStart": None,
+            "acceptedBy": [],
+            "declinedBy": [],
+            "declineDetails": {},
+            "externalEventIds": {},
+            "dateRangeStart": now.isoformat(),
+            "dateRangeEnd": (now + timedelta(days=days_forward)).isoformat(),
+        })
+        _meeting_repo.update_meta(request_id, meeting)
+        _meeting_repo.delete_slots(request_id)
+        from src.handlers.api._scheduling import build_reschedule_payload, run_local_steps
+        sched_payload = build_reschedule_payload(meeting, meeting.get("creatorUserId", ""), request_id, days_forward)
+        run_local_steps(sched_payload)
+        _meeting_repo.log_activity(request_id, "reshuffled_all_declined", user_id)
+        reshuffled = True
+    else:
+        _meeting_repo.update_meta(request_id, meeting)
+
+    _meeting_repo.log_activity(request_id, "declined", user_id, {"reason": payload.reason})
+
     try:
         decliner_profile = _user_repo.get_profile(user_id)
         decliner_name = decliner_profile.displayName if decliner_profile else "A participant"
+        msg = (
+            f'All invited users declined your meeting "{meeting.get("title", "Meeting")}". '
+            'New slots have been generated — please pick a new time.'
+            if reshuffled else
+            f'{decliner_name} declined your meeting: "{meeting.get("title", "Meeting")}" ({payload.reason}).'
+        )
         _user_repo.send_message(
             from_uid=user_id,
             to_uid=meeting.get("creatorUserId", ""),
-            content=f'{decliner_name} declined your meeting: "{meeting.get("title", "Meeting")}" — the meeting has been cancelled.',
+            content=msg,
             msg_type="general",
         )
     except Exception as e:
         logger.warning(f"Failed to send decline notification: {e}")
-    return {"status": "success", "message": "Meeting declined and cancelled", "declinedBy": declined}
+
+    return {
+        "status": "success",
+        "message": "Meeting declined" + (" — all participants declined, slots reshuffled" if reshuffled else ""),
+        "declinedBy": declined,
+        "reshuffled": reshuffled,
+    }
 
 
 def handle_cancel(identity: dict, action: str) -> dict:
@@ -208,16 +260,10 @@ def handle_edit(identity: dict, action: str, data: str | None) -> dict:
     if meeting.get("creatorUserId") != user_id:
         raise HTTPException(status_code=403, detail="Only the organizer can edit a meeting")
 
-    original_status = meeting.get("status")
-    # Allow re-opening only when cancelled by a participant decline (cancelledBy != organizer)
-    declined_cancelled = (
-        original_status == "cancelled"
-        and meeting.get("cancelledBy") is not None
-        and meeting.get("cancelledBy") != user_id
-    )
-    if original_status == "cancelled" and not declined_cancelled:
+    if meeting.get("status") == "cancelled":
         raise HTTPException(status_code=400, detail="Cannot edit a cancelled meeting")
 
+    original_status = meeting.get("status")
     needs_regen = original_status == "pending"
 
     if payload.daysForward is not None:
@@ -257,9 +303,8 @@ def handle_edit(identity: dict, action: str, data: str | None) -> dict:
         )
         run_local_steps(sched_payload)
 
-    # For confirmed meetings or meetings being re-opened after a participant decline,
-    # clear participant responses so everyone must accept/decline the updated meeting.
-    if updated and (original_status == "confirmed" or declined_cancelled):
+    # Editing a confirmed meeting clears participant responses so everyone must respond again.
+    if updated and original_status == "confirmed":
         if payload.preferredHours is not None:
             updated["preferredHours"] = payload.preferredHours
         if payload.excludedWeekdays is not None:
@@ -267,29 +312,25 @@ def handle_edit(identity: dict, action: str, data: str | None) -> dict:
         now = datetime.now()
         updated["acceptedBy"] = []
         updated["declinedBy"] = []
-        updated["status"] = "confirmed"
-        updated["cancelledAt"] = None
-        updated["cancelledBy"] = None
+        updated["declineDetails"] = {}
         updated["updatedAt"] = now.isoformat()
         _meeting_repo.update_meta(request_id, updated)
-        # Sync updated title/time to external calendars (only when already confirmed with a slot)
-        if original_status == "confirmed":
-            external_ids = updated.get("externalEventIds") or {}
-            if external_ids:
-                try:
-                    start_iso = updated.get("selectedSlotStart", "")
-                    dur = int(updated.get("durationMinutes", 60))
-                    if start_iso:
-                        end_iso = (datetime.fromisoformat(start_iso) + timedelta(minutes=dur)).isoformat()
-                        calendar_client.update_meeting_in_calendars(
-                            external_ids=external_ids,
-                            title=updated.get("title", "Meeting"),
-                            start_iso=start_iso, end_iso=end_iso,
-                        )
-                except Exception:
-                    pass
+        external_ids = updated.get("externalEventIds") or {}
+        if external_ids:
+            try:
+                start_iso = updated.get("selectedSlotStart", "")
+                dur = int(updated.get("durationMinutes", 60))
+                if start_iso:
+                    end_iso = (datetime.fromisoformat(start_iso) + timedelta(minutes=dur)).isoformat()
+                    calendar_client.update_meeting_in_calendars(
+                        external_ids=external_ids,
+                        title=updated.get("title", "Meeting"),
+                        start_iso=start_iso, end_iso=end_iso,
+                    )
+            except Exception:
+                pass
     _meeting_repo.log_activity(request_id, "edited", user_id)
-    return {"status": "success", "meeting": updated, "slotsRegenerated": needs_regen, "reopened": declined_cancelled}
+    return {"status": "success", "meeting": updated, "slotsRegenerated": needs_regen}
 
 
 def handle_book_custom(identity: dict, action: str, data: str | None) -> dict:
