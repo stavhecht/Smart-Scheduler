@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { createPortal } from 'react-dom';
 import { apiGet, apiRegisterCalendarWatch, apiCheckCalendarSync } from '../apiClient';
 import { useToast } from '../context/ToastContext';
+import MeetingTooltip from './MeetingTooltip.jsx';
+import { ROLE_COLOR, PENDING_COLOR, gcalColor } from './calendarConstants.js';
 import './CalendarView.css';
 
 const HOUR_START  = 7;
@@ -9,38 +10,7 @@ const HOUR_END    = 22;
 const TOTAL_HOURS = HOUR_END - HOUR_START;
 const hours = Array.from({ length: TOTAL_HOURS }, (_, i) => HOUR_START + i);
 
-const ROLE_COLOR = {
-  organizer:   { bg: 'rgba(56,189,248,0.78)',  border: '#38bdf8', text: '#002a3a' },
-  participant: { bg: 'rgba(129,140,248,0.78)', border: '#818cf8', text: '#1a1a40' },
-};
-const PENDING_COLOR = { bg: 'rgba(251,191,36,0.18)', border: '#fbbf24', text: '#78350f' };
-
-// Maps Google Calendar colorId values (1–11) to visual styles.
-// Text colors are light so they're readable on dark-mode semi-transparent backgrounds.
-// Light mode overrides dark text via [data-theme="light"] .cv-event-gcal in CSS.
-const GCAL_COLOR_MAP = {
-  '':   { bg: 'rgba(52,211,153,0.20)',  border: '#34d399', text: '#6ee7b7' }, // default green
-  '1':  { bg: 'rgba(121,134,203,0.20)', border: '#7986cb', text: '#c7d2fe' }, // Lavender
-  '2':  { bg: 'rgba(51,182,121,0.20)',  border: '#33b679', text: '#6ee7b7' }, // Sage
-  '3':  { bg: 'rgba(192,86,234,0.20)',  border: '#c056ea', text: '#e9d5ff' }, // Grape
-  '4':  { bg: 'rgba(230,124,115,0.20)', border: '#e67c73', text: '#fca5a5' }, // Flamingo
-  '5':  { bg: 'rgba(246,191,38,0.20)',  border: '#f6bf26', text: '#fde68a' }, // Banana
-  '6':  { bg: 'rgba(244,81,30,0.20)',   border: '#f4511e', text: '#fdba74' }, // Tangerine
-  '7':  { bg: 'rgba(3,155,229,0.20)',   border: '#039be5', text: '#7dd3fc' }, // Peacock
-  '8':  { bg: 'rgba(99,102,241,0.20)',  border: '#6366f1', text: '#c7d2fe' }, // Blueberry
-  '9':  { bg: 'rgba(52,211,153,0.20)',  border: '#34d399', text: '#a7f3d0' }, // Basil
-  '10': { bg: 'rgba(239,68,68,0.20)',   border: '#ef4444', text: '#fca5a5' }, // Tomato
-  '11': { bg: 'rgba(156,163,175,0.20)', border: '#9ca3af', text: '#e5e7eb' }, // Graphite
-};
-// ICS calendar gets a distinct purple tint to differentiate from Google events
-const ICS_COLOR = { bg: 'rgba(168,85,247,0.20)', border: '#a855f7', text: '#e9d5ff' };
-
 const hasTime = (iso) => iso && iso.includes('T');
-
-function gcalColor(ev) {
-  if (ev.source === 'ics') return ICS_COLOR;
-  return GCAL_COLOR_MAP[ev.colorId || ''] ?? GCAL_COLOR_MAP[''];
-}
 
 export default function CalendarView({ meetings, calendarStatus, profile, onMeetingClick, onCreateAt }) {
   const toast = useToast();
@@ -55,7 +25,6 @@ export default function CalendarView({ meetings, calendarStatus, profile, onMeet
   const lastChangeToken    = useRef(null);
   const scrollContainerRef = useRef(null);
   const tokenErrorShown    = useRef(false);
-  const tooltipDomRef      = useRef(null);
 
   const googleConnected = calendarStatus?.google?.connected;
   const icsConnected    = calendarStatus?.ics?.connected;
@@ -74,32 +43,6 @@ export default function CalendarView({ meetings, calendarStatus, profile, onMeet
   useEffect(() => {
     scrollContainerRef.current = document.querySelector('.main-content') || document.body;
   }, []);
-
-  // Close tooltip when clicking outside of it
-  useEffect(() => {
-    if (!tooltip) return;
-    const close = (e) => { if (!e.target.closest('.cv-tooltip')) setTooltip(null); };
-    document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
-  }, [tooltip]);
-
-  // Keep tooltip pinned to its event element while the page scrolls.
-  // capture:true catches scroll in any container (e.g. .main-content with overflow-y:auto).
-  useEffect(() => {
-    if (!tooltip?.el) return;
-    const TW = 310, TH = 260, GAP = 12;
-    const reposition = () => {
-      if (!tooltipDomRef.current) return;
-      const r = tooltip.el.getBoundingClientRect();
-      const spaceRight = window.innerWidth - r.right;
-      const left = spaceRight >= TW + GAP ? r.right + GAP : Math.max(GAP, r.left - TW - GAP);
-      const top  = Math.max(GAP, Math.min(r.top, window.innerHeight - TH - GAP));
-      tooltipDomRef.current.style.top  = `${top}px`;
-      tooltipDomRef.current.style.left = `${left}px`;
-    };
-    document.addEventListener('scroll', reposition, { passive: true, capture: true });
-    return () => document.removeEventListener('scroll', reposition, { capture: true });
-  }, [tooltip]);
 
 
   /* ── Week dates (derived from weekOffset) ── */
@@ -158,14 +101,35 @@ export default function CalendarView({ meetings, calendarStatus, profile, onMeet
     }
   };
 
-  // Fetch on mount / week change / connection change; poll every 60 s as fallback
+  // Fetch on mount / week change / connection change.
+  // When the Google push channel is active, poll the cheap changeToken endpoint
+  // every 10s and only re-fetch events when the token actually changes. When
+  // the webhook is unavailable (e.g. WEBHOOK_BASE_URL unset, ICS-only), fall
+  // back to an unconditional 60s event re-fetch.
   useEffect(() => {
     if (!anyCalConnected) { setGcalEvents([]); return; }
     fetchGcalEvents(weekOffset);
+
+    if (webhookActive) {
+      apiCheckCalendarSync()
+        .then(r => { lastChangeToken.current = r?.changeToken ?? null; })
+        .catch(() => {});
+      const id = setInterval(async () => {
+        try {
+          const { changeToken } = await apiCheckCalendarSync();
+          if (changeToken !== lastChangeToken.current) {
+            lastChangeToken.current = changeToken;
+            fetchGcalEvents(weekOffsetRef.current);
+          }
+        } catch { /* transient sync-check failures are fine; next tick retries */ }
+      }, 10_000);
+      return () => clearInterval(id);
+    }
+
     const id = setInterval(() => fetchGcalEvents(weekOffsetRef.current), 60_000);
     return () => clearInterval(id);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [weekOffset, anyCalConnected]);
+  }, [weekOffset, anyCalConnected, webhookActive]);
 
   // Re-sync when the user returns to this tab
   useEffect(() => {
@@ -323,98 +287,6 @@ export default function CalendarView({ meetings, calendarStatus, profile, onMeet
     })
   );
 
-  /* ── Tooltip renderer ── */
-  const renderTooltip = () => {
-    if (!tooltip) return null;
-    const ev = tooltip.ev;
-    const isGcal = ev._type === 'gcal';
-
-    const gcalContent = () => {
-      const colors = gcalColor(ev);
-      const sourceLabel = ev.source === 'ics' ? 'ICS Calendar' : 'Google Calendar';
-      return (
-        <>
-          <div className="cv-tt-title" style={{ borderLeft: `3px solid ${colors.border}`, paddingLeft: 8 }}>
-            {ev.title}
-          </div>
-          <div className="cv-tt-row">🕐 {ev.startStr}{ev.endStr ? ` – ${ev.endStr}` : ''}</div>
-          {ev.location && <div className="cv-tt-row">📍 {ev.location}</div>}
-          {ev.description && (
-            <div className="cv-tt-row cv-tt-desc">
-              {ev.description.length > 120 ? ev.description.slice(0, 120) + '…' : ev.description}
-            </div>
-          )}
-          {ev.attendees?.length > 0 && (
-            <div className="cv-tt-row">
-              👥 {ev.attendees.slice(0, 3).join(', ')}
-              {ev.attendees.length > 3 ? ` +${ev.attendees.length - 3} more` : ''}
-            </div>
-          )}
-          <div className="cv-tt-role">{sourceLabel}</div>
-          {ev.htmlLink && (
-            <a className="cv-tt-link" href={ev.htmlLink} target="_blank" rel="noreferrer">
-              Open in Google Calendar ↗
-            </a>
-          )}
-        </>
-      );
-    };
-
-    const appContent = () => {
-      const m = ev.meeting;
-      const colors = ev.status === 'pending' ? PENDING_COLOR : (ROLE_COLOR[ev.userRole] || ROLE_COLOR.organizer);
-      const participantCount = m?.participantUserIds?.length || 0;
-
-      // Build Google Calendar link: direct event link if we have an externalEventId, else day view
-      let gcalLink = null;
-      if (googleConnected && ev.status === 'confirmed' && m?.selectedSlotStart) {
-        const d = new Date(m.selectedSlotStart);
-        const rawId = m.externalEventIds?.[profile?.userId];
-        const eventId = rawId?.startsWith('google:') ? rawId.slice(7) : null;
-        const url = eventId
-          ? `https://www.google.com/calendar/event?eid=${btoa(eventId + ' primary')}`
-          : `https://calendar.google.com/calendar/r/day/${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
-        gcalLink = <a className="cv-tt-link" href={url} target="_blank" rel="noreferrer">📅 Open in Google Calendar ↗</a>;
-      }
-
-      return (
-        <>
-          <div className="cv-tt-title" style={{ borderLeft: `3px solid ${colors.border}`, paddingLeft: 8 }}>
-            {ev.title}
-          </div>
-          <div className="cv-tt-row">🕐 {ev.startStr} · {m?.durationMinutes ?? '?'} min</div>
-          {participantCount > 0 && (
-            <div className="cv-tt-row">👥 {participantCount} participant{participantCount !== 1 ? 's' : ''}</div>
-          )}
-          <div className="cv-tt-row">
-            📋 {ev.status === 'confirmed' ? '✅ Confirmed' : '⏳ Pending'}
-            {' · '}{ev.userRole === 'organizer' ? 'You organized' : 'You were invited'}
-          </div>
-          {gcalLink}
-          <button
-            className="cv-tt-btn"
-            onClick={() => { setTooltip(null); onMeetingClick?.(ev.meeting); }}
-          >
-            View Details →
-          </button>
-        </>
-      );
-    };
-
-    const TW = 310, TH = 260, GAP = 12;
-    const r = tooltip.el.getBoundingClientRect();
-    const spaceRight = window.innerWidth - r.right;
-    const tooltipLeft = spaceRight >= TW + GAP ? r.right + GAP : Math.max(GAP, r.left - TW - GAP);
-    const tooltipTop  = Math.max(GAP, Math.min(r.top, window.innerHeight - TH - GAP));
-    return createPortal(
-      <div className="cv-tooltip" ref={tooltipDomRef} style={{ top: tooltipTop, left: tooltipLeft }}>
-        <button className="cv-tt-close" onClick={() => setTooltip(null)}>✕</button>
-        {isGcal ? gcalContent() : appContent()}
-      </div>,
-      document.body
-    );
-  };
-
   return (
     <div className="cv-wrap">
 
@@ -545,7 +417,13 @@ export default function CalendarView({ meetings, calendarStatus, profile, onMeet
       </div>
 
       {/* ── Tooltip (fixed, click-triggered) ── */}
-      {renderTooltip()}
+      <MeetingTooltip
+        tooltip={tooltip}
+        setTooltip={setTooltip}
+        onMeetingClick={onMeetingClick}
+        googleConnected={googleConnected}
+        profile={profile}
+      />
 
       {/* ── Empty state ── */}
       {confirmed.length === 0 && gcalEvents.length === 0 && (

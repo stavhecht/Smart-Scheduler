@@ -20,6 +20,7 @@ backend/api/debug_slots.py
 node_modules/
 dist/
 .env
+.env.local
 
 # Junk
 *.json
