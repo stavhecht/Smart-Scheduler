@@ -24,7 +24,7 @@ logging.basicConfig(level=logging.INFO)
 
 app = FastAPI()
 
-_FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://main.dndn8x61u1xu5.amplifyapp.com')
+_FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://main.dhcxa23q98ibd.amplifyapp.com')
 
 app.add_middleware(
     CORSMiddleware,
@@ -61,7 +61,15 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
     the JWT authorizer OPTIONS pre-flight issue on ANY /{proxy+}.
     """
     if not action or not token:
-        return {"status": "ok", "db": "DynamoDB Active", "sfn": "SmartSchedulerWorkflow"}
+        try:
+            import boto3 as _boto3
+            _boto3.client("dynamodb", region_name="us-east-1").describe_table(
+                TableName=os.environ.get("TABLE_NAME", "SmartScheduler_V1")
+            )
+            db_status = "DynamoDB Active"
+        except Exception as _e:
+            db_status = f"DynamoDB ERROR: {str(_e)[:100]}"
+        return {"status": "ok", "db": db_status, "sfn": "SmartSchedulerWorkflow"}
 
     try:
         identity = validate_access_token(token)

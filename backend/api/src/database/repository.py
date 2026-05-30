@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from boto3.dynamodb.conditions import Attr
 from botocore.exceptions import ClientError
@@ -55,16 +58,20 @@ def get_working_hours_list(participant_profiles: List[dict]) -> List[int]:
 
 
 def get_working_days_intersection(participant_profiles: List[dict]) -> List[int]:
-    """Intersection of participants' working days."""
+    """Intersection of participants' working days. Defaults missing/empty
+    workingDays to Mon–Fri so a participant without an explicit setting can't
+    silently expand availability to weekends."""
+    default_days = [0, 1, 2, 3, 4]
     if not participant_profiles:
-        return list(range(7))
+        return default_days
     try:
         common = set(range(7))
         for p in participant_profiles:
-            common &= set(p.get("workingDays", list(range(7))))
-        return sorted(common) if common else list(range(7))
+            days = p.get("workingDays") or default_days
+            common &= set(days)
+        return sorted(common) if common else default_days
     except Exception:
-        return list(range(7))
+        return default_days
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +169,92 @@ class UserRepository:
                 "lastWeekReset": raw.get("lastWeekReset", now),
                 "lastUpdatedAt": now,
             })
+
+    def update_fairness_for_single(
+        self,
+        user_id: str,
+        personal_impact: float,
+        breakdown: Optional[dict] = None,
+    ) -> None:
+        """Update one participant's fairness using their personal impact value."""
+        from src.core.fairness import engine
+        try:
+            fairness = self.get_fairness(user_id)
+            if not fairness:
+                self.ensure_profile(user_id, "", user_id[:8])
+                fairness = self.get_fairness(user_id)
+            if not fairness:
+                return
+            now = datetime.now().isoformat()
+            raw = self._maybe_reset_weekly(fairness.model_dump(mode="json"))
+            updated = engine.update_score_after_booking(
+                {
+                    "fairnessScore":      float(raw["fairnessScore"]),
+                    "meetingLoadMetrics": raw["meetingLoadMetrics"],
+                    "lastUpdatedAt":      raw.get("lastUpdatedAt", now),
+                },
+                personal_impact,
+            )
+            metrics = updated["meetingLoadMetrics"]
+            delta = engine._impact_to_balance_delta(personal_impact)
+            if breakdown is not None:
+                breakdown = dict(breakdown)
+                breakdown["delta"] = delta
+            else:
+                breakdown = {"delta": delta}
+            metrics["last_booking_breakdown"] = breakdown
+            self._db.put(f"USER#{user_id}", "FAIRNESS", {
+                "userId": user_id,
+                **updated,
+                "meetingLoadMetrics": metrics,
+                "inconvenientMeetingsCount": (
+                    fairness.inconvenientMeetingsCount + updated["inconvenientMeetingsCount"]
+                ),
+                "cancellation_timestamps": raw["meetingLoadMetrics"].get("cancellation_timestamps", []),
+                "lastWeekReset":   raw.get("lastWeekReset", now),
+                "lastUpdatedAt":   now,
+            })
+        except Exception as exc:
+            logger.warning(f"[fairness_update] failed for {user_id}: {exc}")
+
+    def reverse_fairness_for_single(self, user_id: str) -> None:
+        """Undo the last booking's fairness delta for one user."""
+        from src.core.fairness import engine
+        try:
+            fairness = self.get_fairness(user_id)
+            if not fairness:
+                return
+            breakdown = (fairness.meetingLoadMetrics or {}).get("last_booking_breakdown")
+            if not breakdown:
+                return
+            delta = int(breakdown.get("delta", 0))
+            if delta == 0:
+                return
+            now = datetime.now().isoformat()
+            raw = self._maybe_reset_weekly(fairness.model_dump(mode="json"))
+            metrics = dict(raw["meetingLoadMetrics"])
+            balance = float(metrics.get("fairness_balance", 0.0))
+            balance = max(-50.0, min(50.0, balance - delta))
+            was_inconvenient = delta > 0
+            metrics.update({
+                "fairness_balance": round(balance, 1),
+                "meetings_this_week": max(0, int(metrics.get("meetings_this_week", 1)) - 1),
+                "inconvenient_count": max(0, int(metrics.get("inconvenient_count", 0)) - (1 if was_inconvenient else 0)),
+                "convenient_count": max(0, int(metrics.get("convenient_count", 0)) - (0 if was_inconvenient else 1)),
+                "last_booking_breakdown": None,
+            })
+            new_score = engine.calculate_user_score(metrics, raw.get("lastUpdatedAt"))
+            self._db.put(f"USER#{user_id}", "FAIRNESS", {
+                "userId": user_id,
+                "fairnessScore": new_score,
+                "meetingLoadMetrics": metrics,
+                "inconvenientMeetingsCount": max(0, fairness.inconvenientMeetingsCount - (1 if was_inconvenient else 0)),
+                "cancellation_timestamps": metrics.get("cancellation_timestamps", []),
+                "lastWeekReset": raw.get("lastWeekReset", now),
+                "lastUpdatedAt": now,
+            })
+        except Exception as exc:
+            logger.warning(f"[fairness_reversal] failed for {user_id}: {exc}")
 
     def update_fairness_on_cancel(self, user_id: str) -> None:
         """Add a cancellation timestamp to the organizer's fairness record (expires in 30 days)."""
@@ -295,6 +388,12 @@ class MeetingRepository:
         self, req_data: models.MeetingCreateSchema, creator_id: str
     ) -> models.MeetingRequest:
         req_id = f"m{uuid.uuid4().hex[:6]}"
+        range_start = datetime.now()
+        if getattr(req_data, "dateRangeStart", None):
+            try:
+                range_start = datetime.fromisoformat(req_data.dateRangeStart)
+            except (ValueError, TypeError):
+                pass
         meeting = models.MeetingRequest(
             requestId=req_id,
             creatorUserId=creator_id,
@@ -302,9 +401,12 @@ class MeetingRepository:
             title=req_data.title,
             description=getattr(req_data, "description", "") or "",
             durationMinutes=req_data.durationMinutes,
-            dateRangeStart=datetime.now(),
-            dateRangeEnd=datetime.now() + timedelta(days=req_data.daysForward),
+            dateRangeStart=range_start,
+            dateRangeEnd=range_start + timedelta(days=req_data.daysForward),
             status="pending",
+            daysForward=req_data.daysForward,
+            preferredHours=getattr(req_data, "preferredHours", None),
+            excludedWeekdays=getattr(req_data, "excludedWeekdays", None),
         )
         self._db.put(f"MEET#{req_id}", "META", meeting.model_dump(mode="json"))
         self._write_participation_records(meeting)
@@ -570,3 +672,76 @@ class CalendarRepository:
     def get_change_token(self, user_id: str) -> str:
         channel = self.get_watch_channel(user_id)
         return (channel or {}).get("changeToken", "0")
+
+
+# ---------------------------------------------------------------------------
+# AIFairnessRepository — persists AI-generated fairness verdicts + trend history
+# ---------------------------------------------------------------------------
+
+class AIFairnessRepository:
+    """
+    Storage layout (single-table):
+      MEET#<id>   / AISCORE                → latest AI verdict for a meeting
+      MEET#<id>   / AIHIST#<iso_ts>        → audit trail (TTL: 90 days)
+      USER#<id>   / AIFAIRHIST#<iso_ts>    → per-user fairness trajectory (TTL: 365 days)
+    """
+
+    AI_HIST_TTL_DAYS = 90
+    USER_HIST_TTL_DAYS = 365
+
+    def __init__(self) -> None:
+        self._db = get_db()
+
+    # --- Meeting-level ---
+
+    def write_meeting_score(self, request_id: str, result: dict) -> None:
+        item = {
+            "requestId": request_id,
+            "method":    result.get("method", "unknown"),
+            "model":     result.get("model", ""),
+            "meetingFairnessScore": float(result.get("meeting_fairness_score", 0.0)),
+            "summary":             str(result.get("summary", ""))[:280],
+            "slotScores":          result.get("slot_scores", []),
+            "participantEquity":   result.get("participant_equity", []),
+            "error":               result.get("error", ""),
+            "computedAt":          datetime.now().isoformat(),
+        }
+        self._db.put(f"MEET#{request_id}", "AISCORE", item)
+
+    def get_meeting_score(self, request_id: str) -> Optional[dict]:
+        return self._db.get(f"MEET#{request_id}", "AISCORE")
+
+    def append_meeting_history(self, request_id: str, result: dict) -> None:
+        ts = datetime.now().isoformat()
+        self._db.put(f"MEET#{request_id}", f"AIHIST#{ts}", {
+            "requestId": request_id,
+            "method":    result.get("method", "unknown"),
+            "meetingFairnessScore": float(result.get("meeting_fairness_score", 0.0)),
+            "summary":   str(result.get("summary", ""))[:280],
+            "recordedAt": ts,
+            "ttlExpiry": int(time.time()) + (self.AI_HIST_TTL_DAYS * 86400),
+        })
+
+    # --- User-level ---
+
+    def append_user_fairness_point(self, user_id: str, request_id: str, score: float) -> None:
+        ts = datetime.now().isoformat()
+        self._db.put(f"USER#{user_id}", f"AIFAIRHIST#{ts}", {
+            "userId":      user_id,
+            "requestId":   request_id,
+            "score":       float(score),
+            "recordedAt":  ts,
+            "ttlExpiry":   int(time.time()) + (self.USER_HIST_TTL_DAYS * 86400),
+        })
+
+    def get_recent_fairness_trend(self, user_id: str, limit: int = 20) -> List[dict]:
+        """
+        Return up to `limit` most recent {recordedAt, score} entries for the user.
+        Sorted newest-first.
+        """
+        items = self._db.query_prefix(f"USER#{user_id}", "AIFAIRHIST#")
+        items.sort(key=lambda x: x.get("recordedAt", ""), reverse=True)
+        return [
+            {"recordedAt": it.get("recordedAt", ""), "score": float(it.get("score", 0.0))}
+            for it in items[:limit]
+        ]

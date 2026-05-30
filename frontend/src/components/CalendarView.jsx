@@ -55,6 +55,7 @@ export default function CalendarView({ meetings, calendarStatus, profile, onMeet
   const lastChangeToken    = useRef(null);
   const scrollContainerRef = useRef(null);
   const tokenErrorShown    = useRef(false);
+  const tooltipDomRef      = useRef(null);
 
   const googleConnected = calendarStatus?.google?.connected;
   const icsConnected    = calendarStatus?.ics?.connected;
@@ -80,6 +81,24 @@ export default function CalendarView({ meetings, calendarStatus, profile, onMeet
     const close = (e) => { if (!e.target.closest('.cv-tooltip')) setTooltip(null); };
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
+  }, [tooltip]);
+
+  // Keep tooltip pinned to its event element while the page scrolls.
+  // capture:true catches scroll in any container (e.g. .main-content with overflow-y:auto).
+  useEffect(() => {
+    if (!tooltip?.el) return;
+    const TW = 310, TH = 260, GAP = 12;
+    const reposition = () => {
+      if (!tooltipDomRef.current) return;
+      const r = tooltip.el.getBoundingClientRect();
+      const spaceRight = window.innerWidth - r.right;
+      const left = spaceRight >= TW + GAP ? r.right + GAP : Math.max(GAP, r.left - TW - GAP);
+      const top  = Math.max(GAP, Math.min(r.top, window.innerHeight - TH - GAP));
+      tooltipDomRef.current.style.top  = `${top}px`;
+      tooltipDomRef.current.style.left = `${left}px`;
+    };
+    document.addEventListener('scroll', reposition, { passive: true, capture: true });
+    return () => document.removeEventListener('scroll', reposition, { capture: true });
   }, [tooltip]);
 
 
@@ -382,13 +401,17 @@ export default function CalendarView({ meetings, calendarStatus, profile, onMeet
       );
     };
 
-    const portalTarget = scrollContainerRef.current || document.body;
+    const TW = 310, TH = 260, GAP = 12;
+    const r = tooltip.el.getBoundingClientRect();
+    const spaceRight = window.innerWidth - r.right;
+    const tooltipLeft = spaceRight >= TW + GAP ? r.right + GAP : Math.max(GAP, r.left - TW - GAP);
+    const tooltipTop  = Math.max(GAP, Math.min(r.top, window.innerHeight - TH - GAP));
     return createPortal(
-      <div className="cv-tooltip" style={{ top: tooltip.top, left: tooltip.left }}>
+      <div className="cv-tooltip" ref={tooltipDomRef} style={{ top: tooltipTop, left: tooltipLeft }}>
         <button className="cv-tt-close" onClick={() => setTooltip(null)}>✕</button>
         {isGcal ? gcalContent() : appContent()}
       </div>,
-      portalTarget
+      document.body
     );
   };
 
@@ -507,16 +530,7 @@ export default function CalendarView({ meetings, calendarStatus, profile, onMeet
                       onClick={(e) => {
                         e.stopPropagation();
                         if (tooltip?.ev._id === ev._id) { setTooltip(null); return; }
-                        const TW = 310, GAP = 12;
-                        const scrollEl = scrollContainerRef.current || document.body;
-                        const parentRect = scrollEl.getBoundingClientRect();
-                        const r = e.currentTarget.getBoundingClientRect();
-                        // top/left are relative to .main-content (the scroll container)
-                        const top = r.top - parentRect.top + scrollEl.scrollTop;
-                        const spaceRight = window.innerWidth - r.right;
-                        const viewLeft = spaceRight >= TW + GAP ? r.right + GAP : Math.max(GAP, r.left - TW - GAP);
-                        const left = viewLeft - parentRect.left;
-                        setTooltip({ ev, top, left });
+                        setTooltip({ ev, el: e.currentTarget });
                       }}
                     >
                       <span className="cv-ev-title">{ev.title}</span>

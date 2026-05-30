@@ -17,7 +17,7 @@ locals {
 
 variable "google_client_id" {
   type    = string
-  default = ""
+  default = "590649260340-qansuooma76qck2774fbsl45opj9qetv.apps.googleusercontent.com"
 }
 
 variable "google_client_secret" {
@@ -27,8 +27,9 @@ variable "google_client_secret" {
 }
 
 variable "openai_api_key" {
-  type    = string
-  default = ""
+  type      = string
+  sensitive = true
+  default   = ""
 }
 variable "frontend_url" {
   description = "Amplify frontend URL (used for CORS and Lambda FRONTEND_URL env var)"

@@ -6,11 +6,11 @@
 resource "aws_lambda_function" "api_handler" {
   filename      = "${path.module}/api_deployment.zip"
   function_name = "smart_scheduler_api"
-  memory_size = 512
-  role          = local.lab_role_arn
-  handler       = "main.handler"
-  runtime       = "python3.12"
-  timeout       = 30
+  memory_size                    = 512
+  role                           = local.lab_role_arn
+  handler                        = "main.handler"
+  runtime                        = "python3.12"
+  timeout                        = 30
   reserved_concurrent_executions = 8
 
   environment {
@@ -21,6 +21,7 @@ resource "aws_lambda_function" "api_handler" {
       GOOGLE_CLIENT_ID     = var.google_client_id
       GOOGLE_CLIENT_SECRET = var.google_client_secret
       OPENAI_API_KEY       = var.openai_api_key
+      AI_FAIRNESS_MODEL    = "gpt-4o-mini"
       WEBHOOK_BASE_URL     = aws_apigatewayv2_api.api_gateway.api_endpoint
     }
   }

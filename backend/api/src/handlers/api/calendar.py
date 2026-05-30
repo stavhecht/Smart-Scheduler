@@ -51,15 +51,21 @@ def handle_calendar_status(identity: dict) -> dict:
         }
 
 
-def handle_oauth_url(identity: dict, action: str) -> dict:
+def handle_oauth_url(identity: dict, action: str, data: str | None = None) -> dict:
     provider = action.split(":", 1)[1]
+    redirect_origin = None
+    if data:
+        try:
+            redirect_origin = json.loads(data).get('redirect_origin')
+        except Exception:
+            pass
     if provider == "google":
-        if not calendar_client.GOOGLE_CLIENT_ID:
+        if not calendar_client._gid():
             raise HTTPException(
                 status_code=503,
                 detail="Google Calendar not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in Lambda environment.",
             )
-        return {"url": calendar_client.get_google_auth_url(identity["user_id"]), "provider": "google"}
+        return {"url": calendar_client.get_google_auth_url(identity["user_id"], redirect_origin), "provider": "google"}
     if provider == "microsoft":
         if not getattr(calendar_client, 'MS_CLIENT_ID', ''):
             raise HTTPException(
@@ -94,9 +100,11 @@ def handle_oauth_callback(identity: dict, action: str, data: str | None) -> dict
     if not validated_provider:
         raise HTTPException(status_code=400, detail="Invalid or expired state. Please try connecting again.")
 
+    redirect_origin = cb.get('redirect_origin')
+
     if provider == "google":
         try:
-            tokens = calendar_client.exchange_google_code(code)
+            tokens = calendar_client.exchange_google_code(code, redirect_origin)
         except Exception as exc:
             logger.error(f"[oauth_callback] Google token exchange failed for {user_id}: {exc}")
             raise HTTPException(status_code=400, detail=f"Token exchange failed: {exc}")

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { apiPost, apiScoreSlot } from '../apiClient';
+import { apiPost, apiGet, apiScoreSlot } from '../apiClient';
 import { Mail, CalendarPlus, Pencil, Trash2, RefreshCw, Ban, X, Search, CalendarDays, ClipboardList } from 'lucide-react';
 import { useToast } from '../context/ToastContext.jsx';
 import './MeetingDashboard.css';
@@ -9,6 +9,18 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const validateEmails = (str) => {
   const list = str.split(',').map(s => s.trim()).filter(Boolean);
   return { list, invalid: list.filter(e => !EMAIL_REGEX.test(e)) };
+};
+
+const fmtRelative = (iso) => {
+  const diffMs = new Date(iso) - Date.now();
+  if (diffMs < 0) return null;
+  const diffH = diffMs / 3600000;
+  if (diffH < 1) return 'in < 1h';
+  if (diffH < 24) return `in ${Math.round(diffH)}h`;
+  const diffD = Math.floor(diffMs / 86400000);
+  if (diffD === 1) return 'tomorrow';
+  if (diffD <= 7) return `in ${diffD} days`;
+  return null;
 };
 
 /* ─────────────────────────────────────────────
@@ -54,8 +66,24 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
 
   // Split meetings by status then role
   const activeMeetings    = filteredMeetings.filter(m => m.status !== 'cancelled');
-  const cancelledMeetings = filteredMeetings.filter(m => m.status === 'cancelled');
-  const myActiveMeetings  = activeMeetings.filter(m => m.userRole === 'organizer');
+  const cancelledMeetings = meetings.filter(m => m.status === 'cancelled');
+  const myActiveMeetings  = activeMeetings
+    .filter(m => m.userRole === 'organizer')
+    .sort((a, b) => {
+      const now = Date.now();
+      const aTime = a.selectedSlotStart ? new Date(a.selectedSlotStart).getTime() : 0;
+      const bTime = b.selectedSlotStart ? new Date(b.selectedSlotStart).getTime() : 0;
+      const aUpcoming = a.status === 'confirmed' && aTime > now;
+      const bUpcoming = b.status === 'confirmed' && bTime > now;
+      if (aUpcoming && !bUpcoming) return -1;
+      if (!aUpcoming && bUpcoming) return 1;
+      if (aUpcoming && bUpcoming) return aTime - bTime;
+      const aPending = a.status === 'pending' && (a.slots?.length > 0);
+      const bPending = b.status === 'pending' && (b.slots?.length > 0);
+      if (aPending && !bPending) return -1;
+      if (!aPending && bPending) return 1;
+      return 0;
+    });
 
   // Sort invitations so "needs action" ones appear first
   const invitations = activeMeetings
@@ -143,13 +171,22 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
     if (!editModal) return;
     setLoading(true);
     try {
+      const editDaysForward = editModal.schedPreset === 'custom'
+        ? Math.max(1, Math.min(90, editModal.customDays || 7))
+        : parseInt(editModal.schedPreset || '7');
+      const editPreferredHours = editModal.timeWindow === 'morning' ? [8, 9, 10, 11]
+        : editModal.timeWindow === 'afternoon' ? [12, 13, 14, 15, 16]
+        : editModal.timeWindow === 'evening' ? [17, 18, 19, 20]
+        : [];
       const result = await apiPost(`/api/meetings/${editModal.requestId}/edit`, {
         title: editModal.title,
         description: editModal.description ?? '',
         durationMinutes: Number(editModal.durationMinutes),
-        daysForward: Number(editModal.daysForward),
+        daysForward: editDaysForward,
+        preferredHours: editPreferredHours,
+        excludedWeekdays: editModal.excludedWeekdays || [],
       });
-      notify(result?.slotsRegenerated ? 'Meeting updated — regenerating slots…' : 'Meeting updated!', 'success');
+      notify(result?.slotsRegenerated ? 'Meeting updated — new slots generated!' : result?.reopened ? 'Meeting re-opened — participants must accept again.' : 'Preferences saved — click Regenerate to get new slots.', 'success');
       setEditModal(null);
       onRefresh();
     } catch (err) {
@@ -324,9 +361,6 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
         </div>
       )}
 
-
-
-
       {/* ── Edit Modal ── */}
       {editModal && (
         <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setEditModal(null)}>
@@ -359,19 +393,68 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
                 </div>
               </div>
               <div className="form-group">
-                <label>Scheduling Horizon</label>
+                <label>Scheduling Range</label>
                 <div className="dur-pills">
-                  {[{ label: '3 days', value: 3 }, { label: '1 week', value: 7 }, { label: '2 weeks', value: 14 }].map(opt => (
+                  {[{ label: '3 days', value: '3' }, { label: '1 week', value: '7' }, { label: '2 weeks', value: '14' }, { label: '1 month', value: '30' }, { label: 'Custom', value: 'custom' }].map(opt => (
                     <button
                       key={opt.value} type="button"
-                      className={`dur-pill ${editModal.daysForward === opt.value ? 'active' : ''}`}
-                      onClick={() => setEditModal({ ...editModal, daysForward: opt.value })}
+                      className={`dur-pill ${editModal.schedPreset === opt.value ? 'active' : ''}`}
+                      onClick={() => setEditModal({ ...editModal, schedPreset: opt.value })}
                     >
                       {opt.label}
                     </button>
                   ))}
                 </div>
-                {editModal.isPending && <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)', margin: '0.3rem 0 0' }}>Changing duration or horizon will regenerate slots.</p>}
+                {editModal.schedPreset === 'custom' && (
+                  <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', alignItems: 'center' }}>
+                    <input
+                      type="number"
+                      min={1}
+                      max={90}
+                      value={editModal.customDays || 14}
+                      onChange={e => setEditModal({ ...editModal, customDays: parseInt(e.target.value) || 14 })}
+                      style={{ width: '80px' }}
+                    />
+                    <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>days from today</span>
+                  </div>
+                )}
+                {editModal.isPending
+                  ? <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)', margin: '0.3rem 0 0' }}>Saving will regenerate slot suggestions.</p>
+                  : <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)', margin: '0.3rem 0 0' }}>Preferences saved. Click <strong>Regenerate</strong> after saving to get new slots.</p>
+                }
+              </div>
+              <div className="form-group">
+                <label>Time of Day</label>
+                <div className="dur-pills">
+                  {[{ label: 'Any time', value: 'all' }, { label: 'Morning 8–12', value: 'morning' }, { label: 'Afternoon 12–17', value: 'afternoon' }, { label: 'Evening 17–20', value: 'evening' }].map(opt => (
+                    <button
+                      key={opt.value} type="button"
+                      className={`dur-pill ${editModal.timeWindow === opt.value ? 'active' : ''}`}
+                      onClick={() => setEditModal({ ...editModal, timeWindow: opt.value })}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Skip Weekdays <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontWeight: 400 }}>(optional)</span></label>
+                <div className="dur-pills" style={{ flexWrap: 'wrap' }}>
+                  {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day, i) => (
+                    <button
+                      key={i} type="button"
+                      className={`dur-pill ${(editModal.excludedWeekdays || []).includes(i) ? 'active' : ''}`}
+                      style={(editModal.excludedWeekdays || []).includes(i) ? { background: 'rgba(239,68,68,0.15)', borderColor: 'rgba(239,68,68,0.5)', color: '#ef4444' } : {}}
+                      onClick={() => {
+                        const curr = editModal.excludedWeekdays || [];
+                        const next = curr.includes(i) ? curr.filter(d => d !== i) : [...curr, i];
+                        setEditModal({ ...editModal, excludedWeekdays: next });
+                      }}
+                    >
+                      {day}
+                    </button>
+                  ))}
+                </div>
               </div>
               <div className="form-group">
                 <label>Agenda / Notes</label>
@@ -489,6 +572,7 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
                 fmtFull={fmtFull}
                 onParticipantClick={onParticipantClick}
                 isCalendarConnected={isCalendarConnected}
+                allMeetings={meetings}
               />
             ))}
           </div>
@@ -529,7 +613,29 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
                 onToggle={() => toggle(m.requestId)}
                 onAccept={() => {}}
                 onBook={handleBook}
-                onEdit={() => setEditModal({ requestId: m.requestId, title: m.title, durationMinutes: m.durationMinutes, description: m.description || '', daysForward: m.daysForward || 7, isPending: m.status === 'pending' })}
+                onEdit={() => {
+                  // daysForward may be missing for older meetings — derive from stored date range
+                  const daysForward = m.daysForward
+                    ?? Math.max(1, Math.round((new Date(m.dateRangeEnd) - new Date(m.dateRangeStart)) / 864e5));
+                  const presets = ['3', '7', '14', '30'];
+                  const schedPreset = presets.includes(String(daysForward)) ? String(daysForward) : 'custom';
+                  let timeWindow = 'all';
+                  if (m.preferredHours?.length) {
+                    const first = m.preferredHours[0];
+                    timeWindow = first <= 11 ? 'morning' : first <= 16 ? 'afternoon' : 'evening';
+                  }
+                  setEditModal({
+                    requestId: m.requestId,
+                    title: m.title,
+                    durationMinutes: m.durationMinutes,
+                    description: m.description || '',
+                    isPending: m.status === 'pending',
+                    schedPreset,
+                    customDays: daysForward,
+                    timeWindow,
+                    excludedWeekdays: m.excludedWeekdays || [],
+                  });
+                }}
                 onCancel={() => setCancelConfirmId(m.requestId)}
                 onReschedule={() => setRescheduleConfirmId(m.requestId)}
                 fmtDate={fmtDate}
@@ -540,6 +646,7 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
                 onScoreCustom={() => handleScoreCustomTime(m.requestId, m)}
                 onBookCustom={() => handleBookCustom(m.requestId, m)}
                 onParticipantClick={onParticipantClick}
+                allMeetings={meetings}
               />
             ))}
           </div>
@@ -594,10 +701,17 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
 }
 
 /* SlotCalendar — full-week calendar reusing cv-* classes from CalendarView.css */
-const CAL_HOURS = Array.from({ length: 15 }, (_, i) => 7 + i); // 7 am – 10 pm
-
-function SlotCalendar({ slots, onBook }) {
+function SlotCalendar({ slots, preferredHours, calEvents = null, ssMeetings = [], onBook }) {
   const scoreColor = sc => sc >= 80 ? '#22c55e' : sc >= 60 ? '#f59e0b' : '#ef4444';
+
+  const slotHours = useMemo(() => slots.flatMap(s => {
+    const h = new Date(s.startIso).getHours();
+    const eh = new Date(s.endIso).getHours() + (new Date(s.endIso).getMinutes() > 0 ? 1 : 0);
+    return [h, eh];
+  }), [slots]);
+  const CAL_START = slots.length ? Math.max(0, Math.min(7, ...slotHours) - 1) : 7;
+  const CAL_END   = slots.length ? Math.min(24, Math.max(22, ...slotHours) + 1) : 22;
+  const CAL_HOURS = Array.from({ length: CAL_END - CAL_START }, (_, i) => CAL_START + i);
 
   const initialOffset = useMemo(() => {
     if (!slots.length) return 0;
@@ -622,14 +736,34 @@ function SlotCalendar({ slots, onBook }) {
   const weekLabel = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).formatRange(weekDays[0].date, weekDays[6].date);
   const topSlotIso = slots.length ? slots[0].startIso : null;
 
+  const _evPos = (ev) => {
+    const start = new Date(ev.start), end = new Date(ev.end || ev.start);
+    const h = start.getHours() + start.getMinutes() / 60;
+    const endH = end.getHours() + end.getMinutes() / 60;
+    const cs = Math.max(h, CAL_START), ce = Math.min(endH || h + 1, CAL_END);
+    const range = CAL_END - CAL_START;
+    return { topPct: (cs - CAL_START) / range * 100, heightPct: Math.max((ce - cs) / range * 100, 1.5), startStr: start.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }), visible: ce > cs };
+  };
+
+  const getCalEventsForDay = (dayDate) => (calEvents || [])
+    .filter(ev => ev.start && new Date(ev.start).toDateString() === dayDate.toDateString())
+    .map(ev => ({ title: ev.summary || 'Busy', ..._evPos(ev) }))
+    .filter(e => e.visible);
+
+  const getSSEventsForDay = (dayDate) => (ssMeetings || [])
+    .filter(ev => ev.start && new Date(ev.start).toDateString() === dayDate.toDateString())
+    .map(ev => ({ title: ev.summary || 'Meeting', ..._evPos(ev) }))
+    .filter(e => e.visible);
+
   const getSlotsForDay = (dayDate) => slots
     .filter(s => new Date(s.startIso).toDateString() === dayDate.toDateString())
     .map(s => {
       const start = new Date(s.startIso), end = new Date(s.endIso);
       const h = start.getHours() + start.getMinutes() / 60;
       const endH = end.getHours() + end.getMinutes() / 60;
-      const cs = Math.max(h, 7), ce = Math.min(endH, 22);
-      return { s, topPct: (cs - 7) / 15 * 100, heightPct: Math.max((ce - cs) / 15 * 100, 2), startStr: start.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }), sc: Math.round(s.score), isTop: s.startIso === topSlotIso, visible: ce > cs };
+      const cs = Math.max(h, CAL_START), ce = Math.min(endH, CAL_END);
+      const range = CAL_END - CAL_START;
+      return { s, topPct: (cs - CAL_START) / range * 100, heightPct: Math.max((ce - cs) / range * 100, 2), startStr: start.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }), sc: Math.round(s.score), isTop: s.startIso === topSlotIso, visible: ce > cs };
     })
     .filter(e => e.visible);
 
@@ -645,6 +779,13 @@ function SlotCalendar({ slots, onBook }) {
         </div>
         <span className="cv-week-label">{weekLabel}</span>
       </div>
+      {(ssMeetings.length > 0 || (calEvents && calEvents.length > 0)) && (
+        <div style={{ display: 'flex', gap: '1rem', padding: '0.3rem 0.5rem', fontSize: '0.7rem', color: 'var(--text-muted)', flexWrap: 'wrap' }}>
+          {ssMeetings.length > 0 && <span><span style={{ color: '#6366f1' }}>■</span> Existing meetings</span>}
+          {calEvents && calEvents.length > 0 && <span><span style={{ color: '#6b7280' }}>■</span> Calendar events</span>}
+          <span><span style={{ color: '#22c55e' }}>■</span> Proposed slots</span>
+        </div>
+      )}
       <div className="cv-scroll">
         <div className="cv-grid">
           <div className="cv-time-col">
@@ -659,13 +800,29 @@ function SlotCalendar({ slots, onBook }) {
               </div>
               <div className="cv-day-body">
                 {CAL_HOURS.map(h => <div key={h} className="cv-hour-cell" />)}
+                {getCalEventsForDay(day.date).map((ev, j) => (
+                  <div key={`ce-${j}`} className="cv-event"
+                    style={{ top: `calc(${ev.topPct}% + 1px)`, height: `calc(${ev.heightPct}% - 2px)`, left: '2px', right: '2px', background: '#6b728030', borderLeft: '3px solid #6b7280', color: '#9ca3af', cursor: 'default', zIndex: 0, pointerEvents: 'none', overflow: 'hidden' }}
+                    title={`${ev.title} @ ${ev.startStr}`}
+                  >
+                    <span className="cv-ev-title" style={{ fontSize: '0.65rem', opacity: 0.8 }}>{ev.title}</span>
+                  </div>
+                ))}
+                {getSSEventsForDay(day.date).map((ev, j) => (
+                  <div key={`ss-${j}`} className="cv-event"
+                    style={{ top: `calc(${ev.topPct}% + 1px)`, height: `calc(${ev.heightPct}% - 2px)`, left: '2px', right: '2px', background: '#6366f130', borderLeft: '3px solid #6366f1', color: '#818cf8', cursor: 'default', zIndex: 1, pointerEvents: 'none', overflow: 'hidden' }}
+                    title={`📌 ${ev.title} · ${ev.startStr}`}
+                  >
+                    <span className="cv-ev-title" style={{ fontSize: '0.65rem', display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>📌 {ev.startStr}</span>
+                  </div>
+                ))}
                 {getSlotsForDay(day.date).map((e, i) => {
                   const color = scoreColor(e.sc);
                   return (
                     <div key={i} className="cv-event"
                       style={{ top: `calc(${e.topPct}% + 1px)`, height: `calc(${e.heightPct}% - 2px)`, left: '2px', right: '2px', background: `${color}1a`, borderLeft: `3px solid ${color}`, color, cursor: 'pointer' }}
                       onClick={() => onBook(e.s)}
-                      title={`${e.sc}% fairness${e.s.aiScored ? ' (AI-scored)' : ''}${e.s.explanation ? ' — ' + e.s.explanation : ''}${e.s.aiSuggestions ? '\n💡 ' + e.s.aiSuggestions : ''}`}
+                      title={`${e.sc}% fairness${e.s.isPreferred && preferredHours?.length > 0 ? ' ⏰ preferred' : ''}${e.s.aiScored ? ' (AI-scored)' : ''}${e.s.explanation ? ' — ' + e.s.explanation : ''}${e.s.aiSuggestions ? '\n💡 ' + e.s.aiSuggestions : ''}`}
                     >
                       <span className="cv-ev-title">{e.isTop ? '⭐ ' : ''}{e.s.aiScored ? '🧠 ' : ''}{e.startStr}</span>
                       <span className="cv-ev-time">{e.sc}% fair</span>
@@ -683,6 +840,64 @@ function SlotCalendar({ slots, onBook }) {
 }
 
 /* ─────────────────────────────────────────────
+   SlotList sub-component — compact list view
+───────────────────────────────────────────── */
+function SlotList({ slots, calEvents = null, ssMeetings = [], onBook }) {
+  const scoreColor = sc => sc >= 80 ? '#22c55e' : sc >= 60 ? '#f59e0b' : '#ef4444';
+  return (
+    <div className="slot-list">
+      {slots.map((s, i) => {
+        const sc = Math.round(s.score);
+        const color = scoreColor(sc);
+        const dt = new Date(s.startIso);
+        const slotStart = new Date(s.startIso), slotEnd = new Date(s.endIso);
+        const isNearby = (ev) => {
+          if (!ev.start) return false;
+          const evEnd = new Date(ev.end || ev.start);
+          const evStart = new Date(ev.start);
+          return evEnd > new Date(slotStart.getTime() - 2 * 3600000) &&
+                 evStart < new Date(slotEnd.getTime() + 2 * 3600000);
+        };
+        const nearbyGcal  = (calEvents || []).filter(isNearby);
+        const nearbySS    = (ssMeetings || []).filter(isNearby);
+        const nearbyAll   = [...nearbySS, ...nearbyGcal];
+        const stillLoading = calEvents === null && nearbySS.length === 0;
+        return (
+          <div key={i} className="slot-list-item" onClick={() => onBook(s)} style={{ flexDirection: 'column', alignItems: 'stretch', gap: '0.3rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div className="sli-left">
+                <span className="sli-date">
+                  {i === 0 ? '⭐ ' : ''}
+                  {dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                </span>
+                <span className="sli-time">
+                  {dt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                  {s.aiScored && <span className="sli-ai">🧠 AI</span>}
+                </span>
+              </div>
+              <div className="sli-right">
+                <div className="slot-score-track" style={{ width: '80px' }}>
+                  <div className="slot-score-fill" style={{ width: `${sc}%`, background: color }} />
+                </div>
+                <span className="sli-score" style={{ color }}>{sc}%</span>
+              </div>
+            </div>
+            <div style={{ fontSize: '0.7rem', paddingLeft: '0.25rem' }}>
+              {stillLoading
+                ? <span style={{ color: '#6b7280' }}>⏳ Loading calendar…</span>
+                : nearbyAll.length === 0
+                  ? <span style={{ color: '#22c55e' }}>✓ Clear</span>
+                  : <span style={{ color: '#9ca3af' }}>📅 {nearbyAll.map(ev => ev.summary || 'Busy').join(', ')}</span>
+              }
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────
    MeetingCard sub-component
 ───────────────────────────────────────────── */
 function MeetingCard({
@@ -691,8 +906,11 @@ function MeetingCard({
   fmtDate, fmtTime, fmtFull,
   customPicker = {}, onCustomPickerChange, onScoreCustom, onBookCustom,
   onParticipantClick, isCalendarConnected,
+  allMeetings = [],
 }) {
-  const [slotView, setSlotView] = useState('timeline');
+  const [slotView, setSlotView] = useState('calendar');
+  const [calEvents, setCalEvents] = useState(null);
+  const [conflictWarning, setConflictWarning] = useState(null); // { slot, existingMeeting }
   const isOrganizer    = meeting.userRole === 'organizer';
   const isConfirmed    = meeting.status === 'confirmed';
   const hasSlots       = Array.isArray(meeting.slots) && meeting.slots.length > 0;
@@ -701,6 +919,71 @@ function MeetingCard({
   const needsAccept    = !isOrganizer && isConfirmed && !userAccepted && !userDeclined;
   const participantCount = (meeting.participantUserIds || []).length;
   const participantNames = meeting.participantNames || {};
+
+  // Fetch calendar events once when the slot panel first expands.
+  // Use actual slot dates (not stale dateRangeStart/End from meeting creation).
+  useEffect(() => {
+    if (!isExpanded || !isOrganizer || isConfirmed || calEvents !== null) return;
+    const slots = meeting.slots;
+    if (!slots || slots.length === 0) { setCalEvents([]); return; }
+    const starts = slots.map(s => new Date(s.startIso).getTime()).filter(t => !isNaN(t));
+    const ends   = slots.map(s => new Date(s.endIso || s.startIso).getTime()).filter(t => !isNaN(t));
+    if (!starts.length) { setCalEvents([]); return; }
+    const timeMin = new Date(Math.min(...starts)).toISOString();
+    const timeMax = new Date(Math.max(...ends) + 3600000).toISOString(); // +1hr buffer
+    apiGet(`/api/calendar/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`)
+      .then(data => setCalEvents(Array.isArray(data) ? data : []))
+      .catch(() => setCalEvents([]));
+  }, [isExpanded, isOrganizer, isConfirmed]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Confirmed Smart Scheduler meetings (other than this one) to overlay on the slot calendar
+  const ssMeetings = useMemo(() => {
+    return (allMeetings || [])
+      .filter(m =>
+        m.status === 'confirmed' &&
+        m.requestId !== meeting.requestId &&
+        m.selectedSlotStart
+      )
+      .map(m => ({
+        summary: m.title,
+        start: m.selectedSlotStart,
+        end: new Date(
+          new Date(m.selectedSlotStart).getTime() + (m.durationMinutes || 60) * 60000
+        ).toISOString(),
+      }));
+  }, [allMeetings, meeting.requestId]);
+
+  // Filter out proposed slots that conflict with already-confirmed SS meetings.
+  // Slots were generated at meeting-creation time; by now some times may be taken.
+  const visibleSlots = useMemo(() => {
+    if (!meeting.slots?.length) return [];
+    if (!ssMeetings.length) return meeting.slots;
+    const dur = (meeting.durationMinutes || 60) * 60000;
+    return meeting.slots.filter(slot => {
+      const sStart = new Date(slot.startIso).getTime();
+      const sEnd = new Date(slot.endIso).getTime() || (sStart + dur);
+      return !ssMeetings.some(m => {
+        const mStart = new Date(m.start).getTime();
+        const mEnd = new Date(m.end).getTime();
+        return sStart < mEnd && sEnd > mStart;
+      });
+    });
+  }, [meeting.slots, ssMeetings, meeting.durationMinutes]);
+
+  const handleSlotSelect = (slot) => {
+    const slotStart = new Date(slot.startIso).getTime();
+    const slotEnd   = new Date(slot.endIso || slot.startIso).getTime() || (slotStart + (meeting.durationMinutes || 60) * 60000);
+    const conflict  = ssMeetings.find(m => {
+      const mStart = new Date(m.start).getTime();
+      const mEnd   = new Date(m.end).getTime();
+      return slotStart < mEnd && slotEnd > mStart;
+    });
+    if (conflict) {
+      setConflictWarning({ slot, existingMeeting: conflict });
+    } else {
+      onBook(meeting.requestId, slot);
+    }
+  };
 
   // Avatar stack for header
   const topParticipants = (meeting.participantUserIds || []).slice(0, 3);
@@ -721,6 +1004,11 @@ function MeetingCard({
           </div>
           <div className="mc-meta">
             <span>⏱ {meeting.durationMinutes}m</span>
+            {!isOrganizer && (
+              <span className="mc-organizer">
+                👤 {participantNames[meeting.creatorUserId]?.name || 'Unknown'}
+              </span>
+            )}
             {participantCount > 0 && (
               <div className="participant-avatars">
                 {topParticipants.map(pid => {
@@ -734,13 +1022,23 @@ function MeetingCard({
                 {overflowCount > 0 && <div className="p-avatar-overflow">+{overflowCount}</div>}
               </div>
             )}
-            {isConfirmed && meeting.selectedSlotStart && (
-              <span className="mc-confirmed-time">
-                <CalendarDays size={12} style={{ verticalAlign: 'middle', marginRight: '0.3rem' }} />{fmtFull(meeting.selectedSlotStart)}
+            {isConfirmed && meeting.selectedSlotStart && (() => {
+              const rel = fmtRelative(meeting.selectedSlotStart);
+              return (
+                <span className="mc-confirmed-time">
+                  <CalendarDays size={12} style={{ verticalAlign: 'middle', marginRight: '0.3rem' }} />
+                  {fmtFull(meeting.selectedSlotStart)}
+                  {rel && <span style={{ marginLeft: '0.4rem', color: '#22c55e', fontWeight: 600 }}>{rel}</span>}
+                </span>
+              );
+            })()}
+            {isOrganizer && isConfirmed && (meeting.participantUserIds || []).length > 0 && (
+              <span className="mc-slots-hint">
+                {(meeting.acceptedBy || []).length}/{(meeting.participantUserIds || []).length} participants accepted
               </span>
             )}
             {!isConfirmed && hasSlots && isOrganizer && (
-              <span className="mc-slots-hint">{meeting.slots.length} slots available</span>
+              <span className="mc-slots-hint">{visibleSlots.length} slots available — pick one</span>
             )}
           </div>
         </div>
@@ -819,44 +1117,60 @@ function MeetingCard({
       {/* Slot selection panel — organizer, pending, expanded, not in-flight */}
       {isExpanded && isOrganizer && !isConfirmed && busyId !== meeting.requestId && (
         <div className="mc-panel slots-panel">
-          {/* AI strategic summary — meeting-wide verdict + calendar suggestions */}
+          {/* AI strategic summary — one-line verdict */}
           {meeting.aiSummary && (
             <div style={{
               border: '1px solid #8b5cf644',
               background: 'linear-gradient(135deg, #8b5cf60d, #8b5cf604)',
               borderRadius: '10px',
-              padding: '0.75rem 0.9rem',
+              padding: '0.65rem 0.9rem',
               marginBottom: '0.75rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.75rem',
+              flexWrap: 'wrap',
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.4rem' }}>
-                <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#8b5cf6', background: '#8b5cf61a', border: '1px solid #8b5cf644', borderRadius: '10px', padding: '0.15rem 0.5rem' }}>
-                  🧠 AI Verdict
+              <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#8b5cf6', background: '#8b5cf61a', border: '1px solid #8b5cf644', borderRadius: '10px', padding: '0.15rem 0.5rem', flexShrink: 0 }}>
+                🧠 AI Verdict
+              </span>
+              {typeof meeting.aiMeetingScore === 'number' && (
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', flexShrink: 0 }}>
+                  <strong style={{ color: '#8b5cf6' }}>{Math.round(meeting.aiMeetingScore)}%</strong>
                 </span>
-                {typeof meeting.aiMeetingScore === 'number' && (
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                    Slate score: <strong style={{ color: '#8b5cf6' }}>{Math.round(meeting.aiMeetingScore)}%</strong>
-                  </span>
-                )}
-              </div>
-              <div style={{ fontSize: '0.85rem', marginBottom: meeting.aiBestSlotReason ? '0.5rem' : 0 }}>
-                {meeting.aiSummary}
-              </div>
-              {meeting.aiBestSlotReason && (
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: meeting.aiCalendarSuggestions?.length ? '0.5rem' : 0 }}>
-                  <strong>Best pick:</strong> {meeting.aiBestSlotReason}
-                </div>
               )}
-              {meeting.aiCalendarSuggestions?.length > 0 && (
-                <div style={{ marginTop: '0.4rem' }}>
-                  <div style={{ fontSize: '0.72rem', fontWeight: 600, color: '#8b5cf6', marginBottom: '0.25rem' }}>
-                    💡 To unlock better slots:
-                  </div>
-                  <ul style={{ margin: 0, paddingLeft: '1.1rem', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                    {meeting.aiCalendarSuggestions.map((s, i) => (
-                      <li key={i} style={{ marginBottom: '0.2rem' }}>{s}</li>
-                    ))}
-                  </ul>
-                </div>
+              <span style={{ fontSize: '0.82rem', flex: 1, minWidth: 0 }}>{meeting.aiSummary}</span>
+            </div>
+          )}
+
+          {/* Empty-state when slot generation produced no slots */}
+          {!hasSlots && (
+            <div style={{
+              border: '1px solid rgba(245,158,11,0.3)',
+              background: 'rgba(245,158,11,0.06)',
+              borderRadius: '10px',
+              padding: '0.9rem 1rem',
+              marginBottom: '0.9rem',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.6rem',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ fontSize: '1rem' }}>⚠️</span>
+                <strong style={{ fontSize: '0.88rem' }}>No AI slots available yet</strong>
+              </div>
+              <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                Slot generation hasn't completed for this meeting. Click <strong>Regenerate</strong> to
+                run the scheduler again, or pick a custom time below.
+              </div>
+              {onReschedule && (
+                <button
+                  className="btn-score"
+                  style={{ alignSelf: 'flex-start' }}
+                  onClick={onReschedule}
+                >
+                  <RefreshCw size={12} style={{ verticalAlign: 'middle', marginRight: '0.3rem' }} />
+                  Regenerate slots
+                </button>
               )}
             </div>
           )}
@@ -864,81 +1178,50 @@ function MeetingCard({
           {/* AI-generated slots */}
           {hasSlots && (
             <>
-              <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>AI-Optimised Time Slots — click to confirm</span>
+              <div className="slots-view-header">
+                <span className="panel-title" style={{ margin: 0 }}>AI-Optimised Time Slots — click to confirm</span>
                 <div className="slot-view-toggle">
-                  <button
-                    className={`slot-view-btn${slotView === 'timeline' ? ' active' : ''}`}
-                    onClick={() => setSlotView('timeline')}
-                    title="Timeline view"
-                  >▦ Timeline</button>
-                  <button
-                    className={`slot-view-btn${slotView === 'list' ? ' active' : ''}`}
-                    onClick={() => setSlotView('list')}
-                    title="List view"
-                  >☰ List</button>
+                  <button className={slotView === 'calendar' ? 'svt-btn active' : 'svt-btn'} onClick={() => setSlotView('calendar')}>📅 Calendar</button>
+                  <button className={slotView === 'list' ? 'svt-btn active' : 'svt-btn'} onClick={() => setSlotView('list')}>☰ List</button>
                 </div>
               </div>
-
-              {slotView === 'timeline' ? (
+              {hasSlots && visibleSlots.length === 0 && (
+                <div style={{ background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '6px', padding: '0.6rem 0.8rem', marginBottom: '0.5rem', fontSize: '0.82rem', color: '#fca5a5' }}>
+                  ⚠️ All proposed slots conflict with your existing meetings. Use the custom time picker below to choose a different time.
+                </div>
+              )}
+              {conflictWarning && (
+                <div style={{ background: '#7f1d1d22', border: '1px solid #ef4444', borderRadius: '6px', padding: '0.6rem 0.8rem', marginBottom: '0.5rem', fontSize: '0.8rem' }}>
+                  <span style={{ color: '#fca5a5' }}>
+                    ⚠️ This slot overlaps with <strong>{conflictWarning.existingMeeting.summary}</strong>. Book anyway?
+                  </span>
+                  <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.4rem' }}>
+                    <button onClick={() => { onBook(meeting.requestId, conflictWarning.slot); setConflictWarning(null); }}
+                      style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: '4px', padding: '0.25rem 0.6rem', cursor: 'pointer', fontSize: '0.75rem' }}>
+                      Book anyway
+                    </button>
+                    <button onClick={() => setConflictWarning(null)}
+                      style={{ background: 'transparent', color: '#9ca3af', border: '1px solid #374151', borderRadius: '4px', padding: '0.25rem 0.6rem', cursor: 'pointer', fontSize: '0.75rem' }}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+              {slotView === 'calendar' ? (
                 <SlotCalendar
-                  slots={meeting.slots}
-                  onBook={slot => onBook(meeting.requestId, slot)}
+                  slots={visibleSlots}
+                  preferredHours={meeting.preferredHours}
+                  calEvents={calEvents}
+                  ssMeetings={ssMeetings}
+                  onBook={handleSlotSelect}
                 />
               ) : (
-                /* List view — sorted by fairness score descending, all slots shown */
-                (() => {
-                  const sorted = [...meeting.slots].sort((a, b) => b.score - a.score);
-                  const qualityLabel = sc => sc >= 80 ? { text: 'Best', color: '#22c55e' } : sc >= 60 ? { text: 'Good', color: '#f59e0b' } : { text: 'Acceptable', color: '#ef4444' };
-                  return (
-                    <div className="slots-grid">
-                      {sorted.map((slot, rank) => {
-                        const sc = Math.round(slot.score);
-                        const borderColor = sc >= 80 ? '#22c55e' : sc >= 60 ? '#f59e0b' : '#ef4444';
-                        const quality = qualityLabel(sc);
-                        const isTop = rank === 0;
-                        return (
-                          <div
-                            key={rank}
-                            className={`slot-card ${isTop ? 'top-pick' : ''}`}
-                            style={{ borderLeft: `3px solid ${borderColor}` }}
-                            onClick={() => onBook(meeting.requestId, slot)}
-                            title={slot.explanation}
-                          >
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.2rem' }}>
-                              <div className="slot-time">{fmtDate(slot.startIso)} · {fmtTime(slot.startIso)} – {fmtTime(slot.endIso)}</div>
-                              <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
-                                {slot.aiScored && (
-                                  <span title="Scored by AI" style={{ fontSize: '0.62rem', fontWeight: 700, color: '#8b5cf6', background: '#8b5cf61a', border: '1px solid #8b5cf644', borderRadius: '10px', padding: '0.1rem 0.4rem' }}>
-                                    🧠 AI
-                                  </span>
-                                )}
-                                <span style={{ fontSize: '0.68rem', fontWeight: 700, color: quality.color, background: quality.color + '1a', border: `1px solid ${quality.color}44`, borderRadius: '10px', padding: '0.1rem 0.5rem' }}>
-                                  {isTop ? '⭐ ' : ''}{quality.text}
-                                </span>
-                              </div>
-                            </div>
-                            <div className="slot-score-row">
-                              <span className="slot-score-label">Fairness</span>
-                              <div className="slot-score-track">
-                                <div className="slot-score-fill" style={{ width: `${Math.min(100, sc)}%`, background: borderColor }} />
-                              </div>
-                              <span className="slot-score-val" style={{ color: borderColor }}>{sc}%</span>
-                            </div>
-                            {slot.explanation && (
-                              <div className="slot-explain">{slot.explanation}</div>
-                            )}
-                            {slot.aiSuggestions && (
-                              <div className="slot-explain" style={{ marginTop: '0.25rem', color: '#8b5cf6', fontStyle: 'normal' }}>
-                                💡 {slot.aiSuggestions}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  );
-                })()
+                <SlotList
+                  slots={visibleSlots}
+                  calEvents={calEvents}
+                  ssMeetings={ssMeetings}
+                  onBook={handleSlotSelect}
+                />
               )}
             </>
           )}
@@ -998,11 +1281,6 @@ function MeetingCard({
             </div>
           )}
 
-          {!hasSlots && !customPicker.scored && (
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
-              AI is still generating slots… pick a custom time above to proceed immediately.
-            </p>
-          )}
         </div>
       )}
 

@@ -23,9 +23,11 @@ def handle_meetings(identity: dict) -> list:
     user_id = identity["user_id"]
     try:
         meetings = _meeting_repo.get_user_meetings(user_id)
+        logger.info(f"[meetings] user_id={user_id} → found {len(meetings)} meetings")
         all_pids: set = set()
         for m in meetings:
             all_pids.update(m.participantUserIds)
+            all_pids.add(m.creatorUserId)
         name_map = _user_repo.get_by_ids(list(all_pids))
         result = []
         for m in meetings:
@@ -35,12 +37,12 @@ def handle_meetings(identity: dict) -> list:
             d["userRole"] = "organizer" if m.creatorUserId == user_id else "participant"
             d["participantNames"] = {
                 pid: name_map.get(pid, {"name": pid, "email": ""})
-                for pid in m.participantUserIds
+                for pid in (set(m.participantUserIds) | {m.creatorUserId})
             }
             result.append(d)
         return result
     except Exception as exc:
-        logger.warning(f"[meetings] failed for {user_id}: {exc}")
+        logger.error(f"[meetings] failed for {user_id}: {exc}", exc_info=True)
         return []
 
 
@@ -80,13 +82,12 @@ def handle_book(identity: dict, action: str, data: str | None) -> dict:
         raise HTTPException(status_code=409, detail="This meeting has already been booked — please refresh and try another slot")
 
     slot_data = _meeting_repo.get_slot(request_id, slot_start_iso)
-    fairness_impact = float(slot_data.get("fairnessImpact", -2.0)) if slot_data else -2.0
-    all_pids = list(set([meeting.get("creatorUserId", "")] + meeting.get("participantUserIds", [])))
 
     # Confirm slot first (conditional write — raises 409 if slot already taken)
     _meeting_repo.confirm_slot(request_id, slot_start_iso)
-    # Update fairness only after successful confirmation to avoid double-penalising on concurrent books
-    _user_repo.update_fairness_on_booking(all_pids, fairness_impact)
+    # Update organizer's personal fairness only after successful confirmation
+    slot_utc = datetime.fromisoformat(slot_start_iso)
+    _apply_personal_fairness(user_id, slot_utc, int(meeting.get("durationMinutes", 60)))
     _meeting_repo.log_activity(request_id, "booked", user_id)
 
     # Update local dict to reflect the confirmed state so the response is accurate
@@ -122,6 +123,12 @@ def handle_accept(identity: dict, action: str) -> dict:
     meeting["acceptedBy"] = accepted
     _meeting_repo.update_meta(request_id, meeting)
     _meeting_repo.log_activity(request_id, "accepted", user_id)
+    # Update participant's personal fairness — only possible once the slot is confirmed
+    slot_start = meeting.get("selectedSlotStart")
+    if slot_start:
+        _apply_personal_fairness(user_id, datetime.fromisoformat(slot_start), int(meeting.get("durationMinutes", 60)))
+    else:
+        logger.info(f"[fairness_update] accept for {request_id}: meeting not yet booked, skipping fairness")
     return {"status": "success", "message": "Meeting accepted", "acceptedBy": accepted}
 
 
@@ -138,9 +145,19 @@ def handle_decline(identity: dict, action: str) -> dict:
     declined = meeting.get("declinedBy", [])
     if user_id not in declined:
         declined.append(user_id)
+    now = datetime.now()
     meeting["declinedBy"] = declined
     meeting["acceptedBy"] = [u for u in meeting.get("acceptedBy", []) if u != user_id]
-    meeting["updatedAt"] = datetime.now().isoformat()
+    meeting["status"] = "cancelled"
+    meeting["cancelledAt"] = now.isoformat()
+    meeting["cancelledBy"] = user_id
+    meeting["updatedAt"] = now.isoformat()
+    if ext_ids := meeting.get("externalEventIds"):
+        try:
+            calendar_client.remove_meeting_from_calendars(ext_ids)
+        except Exception as exc:
+            logger.error(f"Calendar delete failed on decline-cancel for {request_id}: {exc}")
+        meeting["externalEventIds"] = {}
     _meeting_repo.update_meta(request_id, meeting)
     _meeting_repo.log_activity(request_id, "declined", user_id)
     try:
@@ -149,12 +166,12 @@ def handle_decline(identity: dict, action: str) -> dict:
         _user_repo.send_message(
             from_uid=user_id,
             to_uid=meeting.get("creatorUserId", ""),
-            content=f'{decliner_name} declined your meeting: "{meeting.get("title", "Meeting")}"',
+            content=f'{decliner_name} declined your meeting: "{meeting.get("title", "Meeting")}" — the meeting has been cancelled.',
             msg_type="general",
         )
     except Exception as e:
         logger.warning(f"Failed to send decline notification: {e}")
-    return {"status": "success", "message": "Meeting declined", "declinedBy": declined}
+    return {"status": "success", "message": "Meeting declined and cancelled", "declinedBy": declined}
 
 
 def handle_cancel(identity: dict, action: str) -> dict:
@@ -190,15 +207,25 @@ def handle_edit(identity: dict, action: str, data: str | None) -> dict:
         raise HTTPException(status_code=404, detail="Meeting not found")
     if meeting.get("creatorUserId") != user_id:
         raise HTTPException(status_code=403, detail="Only the organizer can edit a meeting")
-    if meeting.get("status") == "cancelled":
+
+    original_status = meeting.get("status")
+    # Allow re-opening only when cancelled by a participant decline (cancelledBy != organizer)
+    declined_cancelled = (
+        original_status == "cancelled"
+        and meeting.get("cancelledBy") is not None
+        and meeting.get("cancelledBy") != user_id
+    )
+    if original_status == "cancelled" and not declined_cancelled:
         raise HTTPException(status_code=400, detail="Cannot edit a cancelled meeting")
 
-    duration_changed = payload.durationMinutes is not None and payload.durationMinutes != meeting.get("durationMinutes")
-    horizon_changed = payload.daysForward is not None and payload.daysForward != meeting.get("daysForward", 7)
-    needs_regen = (duration_changed or horizon_changed) and meeting.get("status") == "pending"
+    needs_regen = original_status == "pending"
 
     if payload.daysForward is not None:
         meeting["daysForward"] = payload.daysForward
+    if payload.preferredHours is not None:
+        meeting["preferredHours"] = payload.preferredHours
+    if payload.excludedWeekdays is not None:
+        meeting["excludedWeekdays"] = payload.excludedWeekdays
 
     updated = _meeting_repo.edit(
         request_id, user_id,
@@ -209,7 +236,12 @@ def handle_edit(identity: dict, action: str, data: str | None) -> dict:
     )
 
     if needs_regen and updated:
-        days_forward = updated.get("daysForward", 7)
+        # Apply preference changes to the fresh `updated` dict (edit() re-fetches from DB)
+        if payload.preferredHours is not None:
+            updated["preferredHours"] = payload.preferredHours
+        if payload.excludedWeekdays is not None:
+            updated["excludedWeekdays"] = payload.excludedWeekdays
+        days_forward = int(updated.get("daysForward") or 7)
         now = datetime.now()
         updated.update({
             "dateRangeStart": now.isoformat(),
@@ -218,26 +250,46 @@ def handle_edit(identity: dict, action: str, data: str | None) -> dict:
         _meeting_repo.update_meta(request_id, updated)
         _meeting_repo.delete_slots(request_id)
         from src.handlers.api._scheduling import build_reschedule_payload, run_local_steps
-        sched_payload = build_reschedule_payload(updated, user_id, request_id, days_forward)
+        sched_payload = build_reschedule_payload(
+            updated, user_id, request_id, days_forward,
+            preferred_hours=payload.preferredHours,
+            excluded_weekdays=payload.excludedWeekdays,
+        )
         run_local_steps(sched_payload)
 
-    if updated and updated.get("status") == "confirmed":
-        external_ids = updated.get("externalEventIds") or {}
-        if external_ids:
-            try:
-                start_iso = updated.get("selectedSlotStart", "")
-                dur = int(updated.get("durationMinutes", 60))
-                if start_iso:
-                    end_iso = (datetime.fromisoformat(start_iso) + timedelta(minutes=dur)).isoformat()
-                    calendar_client.update_meeting_in_calendars(
-                        external_ids=external_ids,
-                        title=updated.get("title", "Meeting"),
-                        start_iso=start_iso, end_iso=end_iso,
-                    )
-            except Exception:
-                pass
+    # For confirmed meetings or meetings being re-opened after a participant decline,
+    # clear participant responses so everyone must accept/decline the updated meeting.
+    if updated and (original_status == "confirmed" or declined_cancelled):
+        if payload.preferredHours is not None:
+            updated["preferredHours"] = payload.preferredHours
+        if payload.excludedWeekdays is not None:
+            updated["excludedWeekdays"] = payload.excludedWeekdays
+        now = datetime.now()
+        updated["acceptedBy"] = []
+        updated["declinedBy"] = []
+        updated["status"] = "confirmed"
+        updated["cancelledAt"] = None
+        updated["cancelledBy"] = None
+        updated["updatedAt"] = now.isoformat()
+        _meeting_repo.update_meta(request_id, updated)
+        # Sync updated title/time to external calendars (only when already confirmed with a slot)
+        if original_status == "confirmed":
+            external_ids = updated.get("externalEventIds") or {}
+            if external_ids:
+                try:
+                    start_iso = updated.get("selectedSlotStart", "")
+                    dur = int(updated.get("durationMinutes", 60))
+                    if start_iso:
+                        end_iso = (datetime.fromisoformat(start_iso) + timedelta(minutes=dur)).isoformat()
+                        calendar_client.update_meeting_in_calendars(
+                            external_ids=external_ids,
+                            title=updated.get("title", "Meeting"),
+                            start_iso=start_iso, end_iso=end_iso,
+                        )
+                except Exception:
+                    pass
     _meeting_repo.log_activity(request_id, "edited", user_id)
-    return {"status": "success", "meeting": updated, "slotsRegenerated": needs_regen}
+    return {"status": "success", "meeting": updated, "slotsRegenerated": needs_regen, "reopened": declined_cancelled}
 
 
 def handle_book_custom(identity: dict, action: str, data: str | None) -> dict:
@@ -275,8 +327,7 @@ def handle_book_custom(identity: dict, action: str, data: str | None) -> dict:
         explanation=slot_info.get("explanation", "Manually selected time"),
     )
     _meeting_repo.write_slot(request_id, slot_start_iso, slot.model_dump(mode="json"))
-    all_pids = list(set([meeting.get("creatorUserId", "")] + meeting.get("participantUserIds", [])))
-    _user_repo.update_fairness_on_booking(all_pids, fairness_impact)
+    _apply_personal_fairness(user_id, datetime.fromisoformat(slot_start_iso), int(meeting.get("durationMinutes", 60)))
     meeting["status"] = "confirmed"
     meeting["selectedSlotStart"] = slot_start_iso
     _meeting_repo.update_meta(request_id, meeting)
@@ -298,13 +349,6 @@ def handle_book_custom(identity: dict, action: str, data: str | None) -> dict:
 def handle_reschedule(identity: dict, action: str, data: str | None) -> dict:
     request_id = action.split(":", 1)[1]
     user_id = identity["user_id"]
-    days_forward = 7
-    if data:
-        try:
-            days_forward = int(json.loads(data).get("daysForward", 7))
-        except Exception:
-            pass
-
     meeting = _meeting_repo.get_meta(request_id)
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
@@ -313,9 +357,16 @@ def handle_reschedule(identity: dict, action: str, data: str | None) -> dict:
     if meeting.get("status") == "cancelled":
         raise HTTPException(status_code=400, detail="Cannot reschedule a cancelled meeting")
 
+    days_forward = int(meeting.get("daysForward") or 7)
+
     now = datetime.now()
     if ext_ids := meeting.get("externalEventIds", {}):
         calendar_client.remove_meeting_from_calendars(ext_ids)
+
+    # Reverse fairness for organizer + all participants who had accepted
+    accepted_pids = meeting.get("acceptedBy", [])
+    for uid in set([user_id] + list(accepted_pids)):
+        _reverse_personal_fairness(uid)
 
     meeting.update({
         "status": "pending",
@@ -505,6 +556,50 @@ def handle_meeting_log(identity: dict, action: str) -> list:
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
+
+def _safe_get_calendar(uid: str, slot_utc: datetime, duration_minutes: int) -> list:
+    """Returns calendar events ±24h around the slot. Never raises."""
+    try:
+        return calendar_client.get_user_busy_slots(
+            uid,
+            slot_utc - timedelta(hours=24),
+            slot_utc + timedelta(hours=24),
+        )
+    except Exception as exc:
+        logger.warning(f"[fairness_update] calendar fetch failed for {uid}: {exc}")
+        return []
+
+
+def _apply_personal_fairness(uid: str, slot_utc: datetime, duration_minutes: int) -> None:
+    """Calculate and persist one participant's personal fairness update."""
+    try:
+        profile   = _user_repo.get_profile_raw(uid) or {}
+        fairness  = _user_repo.get_fairness(uid)
+        mtw = int(float(
+            (fairness.meetingLoadMetrics or {}).get("meetings_this_week", 0)
+        )) if fairness else 0
+        impact, breakdown = fairness_engine.personal_impact_for_participant(
+            slot_utc,
+            get_tz_offset_hours(profile.get("timezone", "UTC")),
+            profile.get("workingDays", [0, 1, 2, 3, 4]),
+            profile.get("workingHours", {"start": "09:00", "end": "18:00"}),
+            profile.get("lunchBreak"),
+            mtw,
+            _safe_get_calendar(uid, slot_utc, duration_minutes),
+            duration_minutes,
+        )
+        _user_repo.update_fairness_for_single(uid, impact, breakdown)
+    except Exception as exc:
+        logger.warning(f"[fairness_update] skipped for {uid}: {exc}")
+
+
+def _reverse_personal_fairness(uid: str) -> None:
+    """Undo the last booking's fairness delta for one user."""
+    try:
+        _user_repo.reverse_fairness_for_single(uid)
+    except Exception as exc:
+        logger.warning(f"[fairness_reversal] skipped for {uid}: {exc}")
+
 
 def _compute_end_iso(start_iso: str, slot_data: dict | None, meeting: dict) -> str:
     if slot_data and slot_data.get("endIso"):
