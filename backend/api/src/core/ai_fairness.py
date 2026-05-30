@@ -23,6 +23,8 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
+from src.common.openai_client import _norm_iso, _redact_events
+
 logger = logging.getLogger(__name__)
 
 # AI call budget: cap input context to avoid runaway cost on huge groups
@@ -45,8 +47,8 @@ heuristic post-processing.
 You receive:
   1. Candidate time slots, each with a reference heuristic pre-score (guidance
      only — use your own judgment).
-  2. Each participant's current fairness score, weekly load, suffering score,
-     and recent fairness trend.
+  2. Each participant's current fairness score, weekly load, and recent
+     fairness trend.
   3. Each participant's calendar density around the proposed slots (event
      details anonymized — only start/end/duration/attendee_count provided).
 
@@ -94,33 +96,6 @@ OUTPUT STRICT JSON ONLY — no markdown, no prose outside the JSON:
 """
 
 
-def _event_duration_minutes(ev: dict) -> Optional[int]:
-    from datetime import datetime
-    try:
-        start = ev.get("start", "")
-        end = ev.get("end", "")
-        if not start or not end:
-            return None
-        s = datetime.fromisoformat(start.replace("Z", "+00:00"))
-        e = datetime.fromisoformat(end.replace("Z", "+00:00"))
-        return max(0, int((e - s).total_seconds() // 60))
-    except Exception:
-        return None
-
-
-def _redact_events(events: List[dict]) -> List[dict]:
-    """Strip sensitive fields from calendar events before sending to the LLM."""
-    redacted = []
-    for ev in events[:MAX_EVENTS_PER_PARTICIPANT]:
-        redacted.append({
-            "start": ev.get("start", ""),
-            "end": ev.get("end", ""),
-            "duration_min": _event_duration_minutes(ev),
-            "attendee_count": len(ev.get("attendees", []) or []),
-        })
-    return redacted
-
-
 def _build_user_prompt(
     candidate_slots: List[dict],
     participants: List[dict],
@@ -143,9 +118,12 @@ def _build_user_prompt(
                 "timezone": p.get("timezone", "UTC"),
                 "current_fairness_score": float(p.get("current_fairness_score", 100.0)),
                 "meetings_this_week": int(p.get("meetings_this_week", 0)),
-                "suffering_score": int(p.get("suffering_score", 0)),
                 "fairness_trend": p.get("fairness_trend", [])[:MAX_HISTORY_ENTRIES],
-                "calendar_density": _redact_events(p.get("calendar_events", [])),
+                "calendar_density": _redact_events(
+                    p.get("calendar_events", []),
+                    max_events=MAX_EVENTS_PER_PARTICIPANT,
+                    include_attendee_count=True,
+                ),
             }
             for p in truncated
         ],
@@ -196,14 +174,6 @@ def _call_openai(user_prompt: str) -> Optional[dict]:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _norm_iso(s: Any) -> str:
-    """Normalize an ISO string for matching (drop fractional secs / timezone offset)."""
-    if not s:
-        return ""
-    s = str(s).split("+")[0].split("Z")[0].split(".")[0]
-    return s.strip()
-
 
 def _heuristic_fallback(
     candidate_slots: List[dict],
@@ -260,8 +230,8 @@ def score_meeting_with_ai(
         candidate_slots: list of dicts with startIso, score (heuristic
             reference), explanation, conflictCount.
         participants: list of dicts with userId, timezone,
-            current_fairness_score, meetings_this_week, suffering_score,
-            fairness_trend, calendar_events.
+            current_fairness_score, meetings_this_week, fairness_trend,
+            calendar_events.
 
     Returns:
         {

@@ -79,7 +79,6 @@ def _build_participants_context(
             "timezone": profile.get("timezone", "UTC"),
             "current_fairness_score": current_score,
             "meetings_this_week": int(float(load_metrics.get("meetings_this_week", 0) or 0)),
-            "suffering_score": int(float(load_metrics.get("suffering_score", 0) or 0)),
             "fairness_trend": trend,
             "calendar_events": calendar_events,
         })
@@ -89,11 +88,12 @@ def _build_participants_context(
 def _run_ai_inline(request_id: str, sfn_input: dict) -> Optional[dict]:
     """
     Runs AI fairness scoring synchronously right after the heuristic SFN.
-    Reads the stored slots, calls OpenAI, updates each slot in DynamoDB with
-    the AI score + description, and writes the aiAnalysis to the meeting META.
+    Reads the stored slots, calls OpenAI, updates each slot's score +
+    explanation in DynamoDB, and writes the meeting-level AI verdict to the
+    top-level ai* fields on meeting META.
 
-    Never raises — on any failure, returns a heuristic-fallback ai_analysis so
-    the meeting flow continues with heuristic scores already in DynamoDB.
+    Never raises — on any failure, returns None and the meeting flow continues
+    with heuristic scores already in DynamoDB.
     """
     from src.core.ai_fairness import score_meeting_with_ai
 
@@ -129,8 +129,7 @@ def _run_ai_inline(request_id: str, sfn_input: dict) -> Optional[dict]:
 
         ai_result = score_meeting_with_ai(request_id, candidate_slots, participants_context)
 
-        # Update each slot in DynamoDB with AI score + description.
-        # Keep the heuristic score in the `explanation` text so it isn't lost.
+        # Update each slot's primary score + explanation with the AI verdict.
         ai_by_start = {str(entry.get("startIso")): entry for entry in ai_result.get("slot_scores", [])}
         for slot in slots:
             start_key = slot.startIso.isoformat()
@@ -139,26 +138,24 @@ def _run_ai_inline(request_id: str, sfn_input: dict) -> Optional[dict]:
                 continue
             slot_dict = slot.model_dump(mode="json")
             ai_score = float(ai_entry.get("ai_score", slot.score))
-            slot_dict["aiScore"] = ai_score
-            slot_dict["aiDescription"] = ai_entry.get("description", "")
-            # Promote AI score to the primary `score` field so existing UI uses it
             slot_dict["score"] = ai_score
+            slot_dict["explanation"] = ai_entry.get("description", slot_dict.get("explanation", ""))
+            slot_dict["aiScored"] = True
             _meeting_repo.write_slot(request_id, start_key, slot_dict)
 
-        ai_analysis = {
-            "method": ai_result.get("method", "unknown"),
-            "model": ai_result.get("model", ""),
-            "summary": ai_result.get("summary", ""),
-            "bestSlot": ai_result.get("best_slot", ""),
-            "bestSlotReason": ai_result.get("best_slot_reason", ""),
-            "calendarSuggestions": ai_result.get("calendar_suggestions", []),
-            "meetingFairnessScore": float(ai_result.get("meeting_fairness_score", 0.0)),
-            "computedAt": datetime.now().isoformat(),
+        meeting_ai_fields = {
+            "aiMeetingScore": float(ai_result.get("meeting_fairness_score", 0.0)),
+            "aiSummary": str(ai_result.get("summary", ""))[:300],
+            "aiBestSlotIso": str(ai_result.get("best_slot", "")),
+            "aiBestSlotReason": str(ai_result.get("best_slot_reason", ""))[:600],
+            "aiCalendarSuggestions": list(ai_result.get("calendar_suggestions", []))[:4],
+            "aiMethod": ai_result.get("method", ""),
+            "aiModel": ai_result.get("model", ""),
         }
 
         meeting = _meeting_repo.get_meta(request_id)
         if meeting:
-            meeting["aiAnalysis"] = ai_analysis
+            meeting.update(meeting_ai_fields)
             _meeting_repo.update_meta(request_id, meeting)
 
         # Feed the per-participant fairness trend so future AI calls have context
@@ -170,7 +167,7 @@ def _run_ai_inline(request_id: str, sfn_input: dict) -> Optional[dict]:
             except Exception as exc:
                 logger.warning(f"[ai_inline] failed to append fairness history: {exc}")
 
-        return ai_analysis
+        return meeting_ai_fields
 
     except Exception as exc:
         logger.warning(f"[ai_inline] failed for {request_id}: {exc}")
@@ -187,7 +184,7 @@ def run_or_schedule(
     """
     Creates the meeting record, runs the heuristic slot pipeline (Step Functions
     or in-process fallback), then runs AI fairness scoring inline. Returns the
-    meeting dict with `aiAnalysis` populated.
+    meeting dict with the top-level ai* fields populated.
     """
     account_id = os.environ.get("AWS_ACCOUNT_ID", "")
     if not account_id or os.environ.get("ENVIRONMENT") == "development":
@@ -236,7 +233,7 @@ def run_or_schedule(
     except Exception as sfn_exc:
         logger.warning(f"SFN failed for {meeting.requestId}, falling back to local: {sfn_exc}")
         try:
-            _run_local_steps(sfn_input)
+            run_local_steps(sfn_input)
         except Exception as local_exc:
             logger.warning(f"Local scheduling also failed for {meeting.requestId}: {local_exc}")
 
@@ -246,25 +243,21 @@ def run_or_schedule(
     if not _meeting_repo.get_slots(meeting.requestId):
         logger.warning(f"No slots stored for {meeting.requestId} after SFN, running local fallback")
         try:
-            _run_local_steps(sfn_input)
+            run_local_steps(sfn_input)
         except Exception as local_exc:
             logger.warning(f"Local fallback after empty SFN failed for {meeting.requestId}: {local_exc}")
 
     # Inline AI scoring — replaces the previous async SFN
-    ai_analysis = _run_ai_inline(meeting.requestId, sfn_input)
+    ai_fields = _run_ai_inline(meeting.requestId, sfn_input)
 
     meeting_dict = meeting.model_dump(mode="json")
-    if ai_analysis:
-        meeting_dict["aiAnalysis"] = ai_analysis
+    if ai_fields:
+        meeting_dict.update(ai_fields)
     return meeting_dict
 
 
 def run_local_steps(payload: dict) -> None:
     """Calls the workflow step handlers sequentially (SFN fallback path)."""
-    _run_local_steps(payload)
-
-
-def _run_local_steps(payload: dict) -> None:
     from src.handlers.workflow import (
         calculate_fairness,
         fetch_participants,

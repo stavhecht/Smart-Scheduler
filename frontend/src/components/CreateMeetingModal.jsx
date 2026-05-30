@@ -63,6 +63,40 @@ export default function CreateMeetingModal({ prefill, onClose, onCreated, onRefr
           description: p.description || m.description,
         }));
         setTitleTouched(true);
+        // Apply scheduling range from parsed intent. If the LLM returned a specific
+        // start date, or a daysForward value that doesn't match a quick preset,
+        // switch the wizard to the Custom range and prefill its inputs.
+        const presetValues = ['3', '7', '14', '30'];
+        const dfStr = p.daysForward ? String(p.daysForward) : null;
+        if (p.dateRangeStart) {
+          setSchedPreset('custom');
+          setCustomFrom(p.dateRangeStart);
+          if (p.daysForward) setCustomDays(p.daysForward);
+        } else if (dfStr && presetValues.includes(dfStr)) {
+          setSchedPreset(dfStr);
+        } else if (p.daysForward) {
+          setSchedPreset('custom');
+          setCustomDays(p.daysForward);
+        }
+        // Time-of-day preference + excluded weekdays (Mon=0 … Sun=6)
+        if (['morning', 'afternoon', 'evening', 'all'].includes(p.timeWindow)) {
+          setTimeWindow(p.timeWindow);
+        }
+        if (Array.isArray(p.excludedWeekdays) && p.excludedWeekdays.length) {
+          const clean = Array.from(new Set(
+            p.excludedWeekdays
+              .map(d => parseInt(d, 10))
+              .filter(d => Number.isInteger(d) && d >= 0 && d <= 6)
+          ));
+          setExcludedWeekdays(clean);
+        }
+        // Auto-expand advanced section so the user immediately sees the parsed prefs
+        if (
+          (p.timeWindow && p.timeWindow !== 'all') ||
+          (Array.isArray(p.excludedWeekdays) && p.excludedWeekdays.length)
+        ) {
+          setShowAdvanced(true);
+        }
         // Resolve parsed participants against the loaded user list
         (p.participants || []).forEach(parsedUser => {
           const match = allUsers.find(u =>

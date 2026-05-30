@@ -14,7 +14,6 @@ from typing import Dict
 from src.common import calendar_client as _cc
 
 from src.core.fairness import engine
-from src.database.repository import get_working_days_intersection, get_working_hours_list
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +23,6 @@ def handler(payload: dict) -> dict:
     date_end = datetime.fromisoformat(payload["date_range_end"])
     duration_minutes = payload.get("duration_minutes", 60)
     tz_offset = float(payload.get("tz_offset_hours", 0.0))
-    profiles = payload.get("participant_profiles", [])
     creator_id = payload.get("creator_id", "")
     all_ids = list({creator_id} | set(payload.get("participant_ids", [])))
 
@@ -130,10 +128,4 @@ def handler(payload: dict) -> dict:
                 "isPreferred": is_preferred,
             })
     payload["candidate_slots"] = candidate_slots
-    # Pass redacted busy intervals (start/end only) to downstream AI scorer.
-    # Cap per-user to bound payload size; AI client redacts further.
-    payload["participant_busy"] = {
-        uid: [{"start": b.get("start", ""), "end": b.get("end", "")} for b in busy_list[:50]]
-        for uid, busy_list in all_busy.items()
-    }
     return payload
