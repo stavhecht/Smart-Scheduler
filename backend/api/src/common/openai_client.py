@@ -26,7 +26,7 @@ OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 MODEL = "gpt-4.1-nano"
 REQUEST_TIMEOUT_SECONDS = 15.0
 MAX_OUTPUT_TOKENS = 2500          # Per-meeting hard cap (slots + summary in one call)
-TEMPERATURE = 0.2                 # Low temperature → consistent fairness verdicts
+TEMPERATURE = 0.3                 # Low temperature → consistent fairness verdicts
 MAX_SLOTS_SENT = 30               # Truncate input slots to bound token usage
 MAX_EVENTS_PER_PARTICIPANT = 25   # Cap calendar event context per person
 MAX_HISTORY_ENTRIES = 10          # Cap fairness trend history per person
@@ -112,15 +112,18 @@ Then produce a meeting-wide summary:
   - meetingScore: average quality across the slate (0-100)
   - summary: one sentence overall verdict
   - bestSlotIso: startIso of the single best slot — MUST match an input slot
-  - bestSlotReason: 2-3 sentences on why it is best and who benefits (refer to
-    participants by userId — never invent names)
+  - bestSlotReason: 2-3 sentences on why it is best and who benefits. Refer to
+    participants by their displayName (e.g. "Sarah Cohen") — NEVER by userId
+    and never invent names not present in the input.
   - calendarSuggestions: 2-4 SPECIFIC actionable changes participants could
-    make to unlock even better slots. Each must reference a userId and a
-    specific day/time (e.g. "userId u3 could shift their recurring Tuesday
-    13:00 event so Tue 14:00 becomes high-quality for the group").
+    make to unlock even better slots. Each must reference a participant by
+    their displayName and a specific day/time (e.g. "Sarah Cohen could shift
+    her recurring Tuesday 13:00 event so Tue 14:00 becomes high-quality for
+    the group").
 
-PRIVACY: never mention event titles, attendee names, or emails — refer to
-events generically ("a focus block", "a back-to-back meeting").
+PRIVACY: never mention event titles or attendee emails — refer to events
+generically ("a focus block", "a back-to-back meeting"). Participant
+displayNames ARE allowed in the summary and suggestions.
 
 Respond ONLY with valid JSON of the form:
 {
@@ -339,6 +342,7 @@ def build_participant_context(
         trend = [str(t) for t in (metrics.get("cancellation_timestamps", []) or [])][-MAX_HISTORY_ENTRIES:]
         out.append({
             "userId": uid,
+            "displayName": profile.get("displayName") or uid,
             "timezone": profile.get("timezone", "UTC"),
             "workingHours": profile.get("workingHours"),
             "workingDays": profile.get("workingDays"),
