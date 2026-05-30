@@ -26,7 +26,7 @@ OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 MODEL = "gpt-4.1-nano"
 REQUEST_TIMEOUT_SECONDS = 15.0
 MAX_OUTPUT_TOKENS = 2500          # Per-meeting hard cap (slots + summary in one call)
-TEMPERATURE = 0.2                 # Low temperature → consistent fairness verdicts
+TEMPERATURE = 0.3                 # Low temperature → consistent fairness verdicts
 MAX_SLOTS_SENT = 30               # Truncate input slots to bound token usage
 MAX_EVENTS_PER_PARTICIPANT = 25   # Cap calendar event context per person
 MAX_HISTORY_ENTRIES = 10          # Cap fairness trend history per person
@@ -119,8 +119,9 @@ Then produce a meeting-wide summary:
     displayName and a specific day/time (e.g. "Alice could shift her Tuesday
     13:00 event so Tue 14:00 becomes high-quality for the group").
 
-PRIVACY: never mention event titles, attendee names, or emails — refer to
-events generically ("a focus block", "a back-to-back meeting").
+PRIVACY: never mention event titles or attendee emails — refer to events
+generically ("a focus block", "a back-to-back meeting"). Participant
+displayNames ARE allowed in the summary and suggestions.
 
 Respond ONLY with valid JSON of the form:
 {
@@ -344,7 +345,7 @@ def build_participant_context(
         )
         out.append({
             "userId": uid,
-            "displayName": display_name,
+            "displayName": profile.get("displayName") or uid,
             "timezone": profile.get("timezone", "UTC"),
             "workingHours": profile.get("workingHours"),
             "workingDays": profile.get("workingDays"),

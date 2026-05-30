@@ -28,7 +28,7 @@ def handler(payload: dict) -> dict:
     preferred_hours = payload.get("preferred_hours")  # None = no preference set
 
     participant_tz_offsets = [get_tz_offset_hours(p.get("timezone", "UTC")) for p in profiles] or None
-    participant_working_days = [p.get("workingDays", list(range(7))) for p in profiles] or None
+    participant_working_days = [p.get("workingDays", [0, 1, 2, 3, 4]) for p in profiles] or None
     participant_lunch_breaks = [p.get("lunchBreak") for p in profiles] or None
 
     # 1. Engine baseline — always runs (cheap; provides fairnessImpact)
