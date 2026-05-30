@@ -87,12 +87,14 @@ class MeetingRequest(BaseDBModel):
     daysForward: Optional[int] = None
     preferredHours: Optional[List[int]] = None
     excludedWeekdays: Optional[List[int]] = None
-    # AI strategic summary — populated by SFN after slot generation; null if AI unavailable
+    # AI strategic summary — populated inline after slot generation; null if AI unavailable
     aiMeetingScore: Optional[float] = None
     aiSummary: Optional[str] = None
     aiBestSlotIso: Optional[str] = None
     aiBestSlotReason: Optional[str] = None
     aiCalendarSuggestions: List[str] = Field(default_factory=list)
+    aiMethod: Optional[str] = None
+    aiModel: Optional[str] = None
 
 
 class MeetingCreateSchema(BaseModel):
@@ -140,8 +142,6 @@ class FairnessState(BaseDBModel):
     meetingLoadMetrics: Dict[str, Any]
     inconvenientMeetingsCount: int
     lastUpdatedAt: datetime = Field(default_factory=datetime.now)
-    cancellation_timestamps: List[str] = Field(default_factory=list)
-    prime_slots_accepted: int = 0
     lastWeekReset: Optional[str] = None
 
 

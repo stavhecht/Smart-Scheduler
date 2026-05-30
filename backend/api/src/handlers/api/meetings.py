@@ -168,6 +168,11 @@ def handle_decline(identity: dict, action: str, data: str | None) -> dict:
 
     invited = meeting.get("participantUserIds", [])
     all_declined = bool(invited) and all(u in declined for u in invited)
+    logger.info(
+        f"[decline] request_id={request_id} decliner={user_id} "
+        f"invited={invited} declined={declined} status={meeting.get('status')} "
+        f"all_declined={all_declined}"
+    )
 
     reshuffled = False
     if all_declined and meeting.get("status") == "confirmed":
@@ -493,7 +498,7 @@ def handle_score_slot(identity: dict, data: str | None) -> dict:
                 openai_client.build_participant_context(participant_states, participant_profiles),
                 duration_minutes,
             )
-            ai = ai_results.get(start_iso)
+            ai = ai_results.get("slots", {}).get(openai_client._norm_iso(start_iso))
             if ai:
                 result["score"] = ai["score"]
                 result["explanation"] = ai["explanation"]
@@ -548,7 +553,6 @@ def handle_parse_meeting_nl(identity: dict, data: str | None) -> dict:
 
     # Resolve participantHints → real users (matches displayName or email, case-insensitive)
     resolved_users = []
-    resolved_emails = []
     hints_lower = [h.lower() for h in parsed["participantHints"]]
     seen_ids: set = set()
     for u in known_users:
@@ -564,8 +568,6 @@ def handle_parse_meeting_nl(identity: dict, data: str | None) -> dict:
                     "displayName": u.get("displayName", ""),
                     "email": u.get("email", ""),
                 })
-                if email:
-                    resolved_emails.append(email)
                 seen_ids.add(uid)
                 break
 
@@ -573,9 +575,11 @@ def handle_parse_meeting_nl(identity: dict, data: str | None) -> dict:
         "title": parsed["title"],
         "durationMinutes": parsed["durationMinutes"],
         "daysForward": parsed["daysForward"],
+        "dateRangeStart": parsed["dateRangeStart"],
+        "timeWindow": parsed["timeWindow"],
+        "excludedWeekdays": parsed["excludedWeekdays"],
         "description": parsed["description"],
         "participants": resolved_users,
-        "participantEmails": resolved_emails,
         "unmatchedHints": [h for h in parsed["participantHints"]
                           if not any(h.lower() == ru["displayName"].lower() or h.lower() == ru["email"].lower()
                                      or h.lower() in ru["displayName"].lower() or h.lower() in ru["email"].lower()
