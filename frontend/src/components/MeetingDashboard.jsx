@@ -19,6 +19,7 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
   const notify = useToast();
   const [expandedId, setExpandedId]             = useState(null);
   const [loading, setLoading]                   = useState(false);
+  const [refreshing, setRefreshing]             = useState(false);
   const [busyId, setBusyId]                     = useState(null); // requestId of in-flight book/accept
   const [editModal, setEditModal]               = useState(null);       // { requestId, title, durationMinutes }
   const [cancelConfirmId, setCancelConfirmId]   = useState(null);       // requestId
@@ -284,7 +285,14 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
           </p>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-          <button className="btn-refresh" onClick={onRefresh} title="Refresh meetings"><RefreshCw size={14} /></button>
+          <button
+            className={`btn-refresh${refreshing ? ' btn-refresh--spinning' : ''}`}
+            onClick={async () => { setRefreshing(true); try { await onRefresh(); } finally { setRefreshing(false); } }}
+            disabled={refreshing}
+            title="Refresh meetings"
+          >
+            <RefreshCw size={14} />
+          </button>
           <button
             className="btn-new"
             onClick={onNewMeetingClick}

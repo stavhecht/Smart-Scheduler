@@ -76,6 +76,7 @@ def _build_participants_context(
 
         participants_context.append({
             "userId": uid,
+            "displayName": profile.get("displayName") or profile.get("email", uid).split("@")[0],
             "timezone": profile.get("timezone", "UTC"),
             "current_fairness_score": current_score,
             "meetings_this_week": int(float(load_metrics.get("meetings_this_week", 0) or 0)),
@@ -120,14 +121,31 @@ def _run_ai_inline(request_id: str, sfn_input: dict) -> Optional[dict]:
             date_start = datetime.utcnow()
             date_end = datetime.utcnow() + timedelta(days=7)
 
+        organizer_id = sfn_input.get("creator_id", "")
         participants_context = _build_participants_context(
-            sfn_input.get("creator_id", ""),
+            organizer_id,
             sfn_input.get("participant_ids", []) or [],
             date_start,
             date_end,
         )
 
-        ai_result = score_meeting_with_ai(request_id, candidate_slots, participants_context)
+        preferred_hours = sfn_input.get("preferred_hours")
+        organizer_preferences = None
+        if preferred_hours:
+            organizer_tz = next(
+                (p.get("timezone", "UTC") for p in participants_context if p.get("userId") == organizer_id),
+                "UTC",
+            )
+            first = preferred_hours[0]
+            label = "morning" if first <= 11 else "afternoon" if first <= 16 else "evening"
+            organizer_preferences = {
+                "organizer_id": organizer_id,
+                "organizer_timezone": organizer_tz,
+                "preferred_hours_local": preferred_hours,
+                "preferred_label": label,
+            }
+
+        ai_result = score_meeting_with_ai(request_id, candidate_slots, participants_context, organizer_preferences)
 
         # Update each slot's primary score + explanation with the AI verdict.
         ai_by_start = {str(entry.get("startIso")): entry for entry in ai_result.get("slot_scores", [])}
