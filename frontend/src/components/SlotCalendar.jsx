@@ -102,7 +102,7 @@ export default function SlotCalendar({ slots, preferredHours, calEvents = null, 
                 {CAL_HOURS.map(h => <div key={h} className="cv-hour-cell" />)}
                 {getCalEventsForDay(day.date).map((ev, j) => (
                   <div key={`ce-${j}`} className="cv-event"
-                    style={{ top: `calc(${ev.topPct}% + 1px)`, height: `calc(${ev.heightPct}% - 2px)`, left: '2px', right: '2px', background: '#6b728030', borderLeft: '3px solid #6b7280', color: '#9ca3af', cursor: 'default', zIndex: 0, pointerEvents: 'none', overflow: 'hidden' }}
+                    style={{ top: `${ev.topPct}%`, height: `${ev.heightPct}%`, left: '0', right: '0', background: '#6b728030', borderLeft: '3px solid #6b7280', color: '#9ca3af', cursor: 'default', zIndex: 0, pointerEvents: 'none', overflow: 'hidden' }}
                     title={`${ev.title} @ ${ev.startStr}`}
                   >
                     <span className="cv-ev-title" style={{ fontSize: '0.65rem', opacity: 0.8 }}>{ev.title}</span>
@@ -110,7 +110,7 @@ export default function SlotCalendar({ slots, preferredHours, calEvents = null, 
                 ))}
                 {getSSEventsForDay(day.date).map((ev, j) => (
                   <div key={`ss-${j}`} className="cv-event"
-                    style={{ top: `calc(${ev.topPct}% + 1px)`, height: `calc(${ev.heightPct}% - 2px)`, left: '2px', right: '2px', background: '#6366f130', borderLeft: '3px solid #6366f1', color: '#818cf8', cursor: 'default', zIndex: 1, pointerEvents: 'none', overflow: 'hidden' }}
+                    style={{ top: `${ev.topPct}%`, height: `${ev.heightPct}%`, left: '0', right: '0', background: '#6366f130', borderLeft: '3px solid #6366f1', color: '#818cf8', cursor: 'default', zIndex: 1, pointerEvents: 'none', overflow: 'hidden' }}
                     title={`📌 ${ev.title} · ${ev.startStr}`}
                   >
                     <span className="cv-ev-title" style={{ fontSize: '0.65rem', display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>📌 {ev.startStr}</span>
@@ -120,11 +120,11 @@ export default function SlotCalendar({ slots, preferredHours, calEvents = null, 
                   const color = scoreColor(e.sc);
                   return (
                     <div key={i} className="cv-event"
-                      style={{ top: `calc(${e.topPct}% + 1px)`, height: `calc(${e.heightPct}% - 2px)`, left: '2px', right: '2px', background: `${color}1a`, borderLeft: `3px solid ${color}`, color, cursor: 'pointer' }}
+                      style={{ top: `${e.topPct}%`, height: `${e.heightPct}%`, left: '0', right: '0', background: `${color}1a`, borderLeft: `3px solid ${color}`, color, cursor: 'pointer' }}
                       onClick={() => onBook(e.s)}
-                      title={`${e.sc}% fairness${e.s.isPreferred && preferredHours?.length > 0 ? ' ⏰ preferred' : ''}${e.s.aiScored ? ' (AI-scored)' : ''}${e.s.explanation ? ' — ' + e.s.explanation : ''}${e.s.aiSuggestions ? '\n💡 ' + e.s.aiSuggestions : ''}`}
+                      title={`${e.sc}% fairness${e.s.isPreferred && preferredHours?.length > 0 ? ' ⏰ preferred' : ''}${e.s.aiScored ? ' · AI-scored' : ' · engine-scored'}${e.s.explanation ? ' — ' + e.s.explanation : ''}${e.s.aiSuggestions ? '\n💡 ' + e.s.aiSuggestions : ''}`}
                     >
-                      <span className="cv-ev-title">{e.isTop ? '⭐ ' : ''}{e.s.aiScored ? '🧠 ' : ''}{e.startStr}</span>
+                      <span className="cv-ev-title">{e.isTop ? '⭐ ' : ''}{e.s.aiScored ? '🧠 ' : '⚙ '}{e.startStr}</span>
                       <span className="cv-ev-time">{e.sc}% fair</span>
                     </div>
                   );

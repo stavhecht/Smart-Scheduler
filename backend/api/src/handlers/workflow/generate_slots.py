@@ -38,8 +38,24 @@ def handler(payload: dict) -> dict:
 
     FULL_DAY_HOURS = list(range(7, 22))
     wh_list = FULL_DAY_HOURS
-    base_wd = list(range(7))
-    wd_list = [d for d in base_wd if d not in excluded_weekdays]
+
+    # Intersect every participant's workingDays so we never schedule on a day
+    # someone doesn't work. If the intersection is empty (totally disjoint
+    # schedules — e.g. one is Sun-Thu and another is Fri-Sat) fall back to the
+    # union so the meeting can still be scheduled with a fairness penalty.
+    profiles = payload.get("participant_profiles", []) or []
+    if profiles:
+        intersected_wd: set = set(range(7))
+        union_wd: set = set()
+        for p in profiles:
+            pwd = set(p.get("workingDays") or [0, 1, 2, 3, 4])
+            intersected_wd &= pwd
+            union_wd |= pwd
+        allowed_wd = intersected_wd if intersected_wd else (union_wd or set(range(7)))
+    else:
+        allowed_wd = set(range(7))
+
+    wd_list = sorted(allowed_wd - excluded_weekdays)
 
     candidates = engine.generate_candidate_slots(
         date_start, date_end,

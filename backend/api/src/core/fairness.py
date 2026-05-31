@@ -95,6 +95,7 @@ class FairnessEngine:
         participant_working_days: Optional[List[List[int]]] = None,
         participant_lunch_breaks: Optional[List[Optional[dict]]] = None,
         busy_count: int = 0,
+        organizer_working_days: Optional[List[int]] = None,
     ) -> Dict[str, Any]:
         """
         Score a candidate time slot using the Social Fairness AI Engine.
@@ -178,7 +179,7 @@ class FairnessEngine:
         # Clamping
         final_score = round(max(0.0, min(100.0, final_score)), 1)
 
-        impact = self._fairness_impact(hour, day)
+        impact = self._fairness_impact(hour, day, organizer_working_days)
 
         return {
             "score": final_score,
@@ -191,15 +192,21 @@ class FairnessEngine:
             "_equity_bonus": equity_bonus,
         }
 
-    def _fairness_impact(self, hour: int, day: int) -> float:
-        """How much scheduling this slot affects the user's fairness total."""
-        if 10 <= hour <= 15 and day < 4:
-            return -1.0   # Prime time
-        elif 9 <= hour <= 17 and day < 5:
+    def _fairness_impact(self, hour: int, day: int, working_days: Optional[List[int]] = None) -> float:
+        """How much scheduling this slot affects the user's fairness total.
+
+        Classification is relative to the organizer's `working_days` profile
+        so non-Western schedules (e.g. Sun–Thu) are handled correctly. Falls
+        back to Mon–Fri when working_days is not provided.
+        """
+        wd = set(working_days) if working_days is not None else {0, 1, 2, 3, 4}
+        if day not in wd:
+            return -6.0   # Critical: organizer's personal time boundary
+        if 10 <= hour <= 15:
+            return -1.0   # Prime time on a working day
+        if 9 <= hour <= 17:
             return -2.5   # Standard window
-        elif day >= 4:
-            return -6.0   # Critical: personal time boundary
-        return -4.5       # Outside normal hours
+        return -4.5       # Working day but outside normal hours
 
     def personal_impact_for_participant(
         self,
@@ -286,9 +293,10 @@ class FairnessEngine:
         }
         return impact, breakdown
 
-    def explain_slot(self, hour: int, day: int, score: float, load_penalty: float, equity_bonus: float) -> str:
+    def explain_slot(self, hour: int, day: int, score: float, load_penalty: float, equity_bonus: float, working_days: Optional[List[int]] = None) -> str:
         """Heuristic explanation used when AI ranking is unavailable."""
         days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        wd = set(working_days) if working_days is not None else {0, 1, 2, 3, 4}
         parts = []
         hw = self.HOUR_WEIGHTS.get(hour, 0.3)
         if hw >= 0.9:
@@ -301,8 +309,8 @@ class FairnessEngine:
             parts.append("uneven load distribution between participants")
         elif equity_bonus > 15:
             parts.append("load well-balanced across participants")
-        if day >= 5:
-            parts.append("weekend slot")
+        if day not in wd:
+            parts.append(f"{days[day]} is outside the organizer's working days")
         if not parts:
             parts.append("standard working window")
         qualifier = "Good" if score >= 70 else ("Fair" if score >= 50 else "Poor")
@@ -336,7 +344,10 @@ class FairnessEngine:
         now_utc = datetime.utcnow()
         current = date_start.replace(hour=9, minute=0, second=0, microsecond=0)
 
-        while current.date() <= date_end.date():
+        # Exclusive end: daysForward=N means N days in the window, not N+1.
+        # date_range_end is set to date_range_start + daysForward, so anything
+        # on date_range_end.date() is "the day after the window".
+        while current.date() < date_end.date():
             if current.weekday() in allowed_days:
                 for local_hour in hours:
                     # Convert local hour → UTC using full fractional offset (e.g. UTC+5:30)

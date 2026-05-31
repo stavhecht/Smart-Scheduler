@@ -390,10 +390,10 @@ export default function CalendarView({ meetings, calendarStatus, profile, onMeet
                       key={ev._id}
                       className={`cv-event${isPending ? ' cv-event-pending' : ''}${isGcal ? ' cv-event-gcal' : ''}`}
                       style={{
-                        top:        `calc(${ev.topPct}% + 1px)`,
-                        height:     `calc(${ev.heightPct}% - 2px)`,
+                        top:        `${ev.topPct}%`,
+                        height:     `${ev.heightPct}%`,
                         left:       `${ev.colIndex * colW}%`,
-                        width:      `calc(${colW}% - 2px)`,
+                        width:      `calc(${colW}% - 1px)`,
                         background: colors.bg,
                         borderLeft: `3px solid ${colors.border}`,
                         color:      colors.text,

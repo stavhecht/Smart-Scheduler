@@ -28,10 +28,10 @@ export default function AiAnalysisPanel({ analysis, selectedSlotStart }) {
     score >= 60 ? 'var(--accent)' :
     score >= 40 ? '#fbbf24'        : 'var(--danger)';
 
-  const methodLabel =
-    method === 'ai' ? (analysis.model || 'gpt-4o-mini') :
-    method === 'heuristic_fallback' ? 'heuristic fallback' :
-    method;
+  const isAi = method === 'ai';
+  const methodIcon  = isAi ? '🧠' : '⚙';
+  const methodTitle = isAi ? 'AI fairness model' : 'Engine (heuristic) — AI unavailable';
+  const methodDetail = isAi ? (analysis.model || 'gpt-4.1-mini') : 'deterministic engine';
 
   const fmtSlot = (iso) => {
     if (!iso) return '';
@@ -47,13 +47,32 @@ export default function AiAnalysisPanel({ analysis, selectedSlotStart }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+      {/* Method badge — explicit so user always knows AI vs engine */}
+      <div
+        title={methodTitle}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '0.4rem',
+          alignSelf: 'flex-start',
+          padding: '0.2rem 0.55rem',
+          borderRadius: '999px',
+          fontSize: '0.7rem',
+          fontWeight: 600,
+          background: isAi ? 'rgba(56,189,248,0.12)' : 'rgba(148,163,184,0.12)',
+          color: isAi ? 'var(--accent)' : '#94a3b8',
+          border: `1px solid ${isAi ? 'rgba(56,189,248,0.3)' : 'rgba(148,163,184,0.3)'}`,
+        }}
+      >
+        <span>{methodIcon}</span>
+        <span>{isAi ? 'AI-scored' : 'Engine-scored'}</span>
+        <span style={{ opacity: 0.65, fontWeight: 400 }}>· {methodDetail}</span>
+      </div>
+
       {/* Score line */}
       <div>
         <span style={{ color: scoreColor, fontWeight: 700, fontSize: '0.95rem' }}>
           {score} / 100
-        </span>
-        <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem', marginLeft: '0.5rem' }}>
-          ({methodLabel})
         </span>
       </div>
 
@@ -61,6 +80,11 @@ export default function AiAnalysisPanel({ analysis, selectedSlotStart }) {
       {summary && (
         <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.8rem', lineHeight: 1.5 }}>
           {summary}
+        </p>
+      )}
+      {!summary && !isAi && (
+        <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.78rem', lineHeight: 1.5, fontStyle: 'italic' }}>
+          AI verdict unavailable — slots ranked by the deterministic engine.
         </p>
       )}
 
@@ -80,7 +104,9 @@ export default function AiAnalysisPanel({ analysis, selectedSlotStart }) {
             color: isBestTheSelected ? 'var(--success)' : 'var(--accent)',
             marginBottom: '0.3rem',
           }}>
-            {isBestTheSelected ? '✓ AI recommended (this slot)' : 'AI recommended slot'}
+            {isBestTheSelected
+              ? (isAi ? '✓ AI recommended (this slot)' : '✓ Top-ranked slot (this one)')
+              : (isAi ? 'AI recommended slot' : 'Top-ranked slot')}
           </div>
           <div style={{ color: 'var(--text-primary)', fontWeight: 600, fontSize: '0.85rem' }}>
             {fmtSlot(bestSlot)}

@@ -452,6 +452,7 @@ def handle_score_slot(identity: dict, data: str | None) -> dict:
 
         user_profile = _user_repo.get_profile_raw(user_id)
         tz_offset = get_tz_offset_hours((user_profile or {}).get("timezone", "UTC"))
+        organizer_working_days = (user_profile or {}).get("workingDays", [0, 1, 2, 3, 4])
 
         # Deterministic engine baseline — same scorer the SFN workflow uses
         result = fairness_engine.score_time_slot(
@@ -459,6 +460,7 @@ def handle_score_slot(identity: dict, data: str | None) -> dict:
             tz_offset_hours=tz_offset,
             participant_tz_offsets=participant_tz_offsets or None,
             participant_working_days=participant_working_days or None,
+            organizer_working_days=organizer_working_days,
         )
 
         # AI overlay — same flow as `_run_ai_inline` uses for meeting creation.
