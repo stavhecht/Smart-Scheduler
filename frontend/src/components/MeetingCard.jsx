@@ -212,7 +212,7 @@ export default function MeetingCard({
             </button>
           )}
 
-          {isOrganizer && isConfirmed && (
+          {isOrganizer && (meeting.declinedBy || []).length > 0 && (
             <DeclineBadge meeting={meeting} onParticipantClick={onParticipantClick} />
           )}
 

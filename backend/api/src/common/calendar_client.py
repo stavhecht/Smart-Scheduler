@@ -196,6 +196,26 @@ def _ensure_fresh_google_token(user_id: str) -> Optional[str]:
     return access_token
 
 
+def _to_utc_iso(s: str) -> str:
+    """Normalize any ISO datetime string to a naive UTC string (YYYY-MM-DDTHH:MM:SS).
+
+    Google Calendar returns datetimes with local timezone offsets (e.g.
+    "2026-05-31T10:00:00+03:00"). The conflict checkers in generate_slots and
+    _local_sim use naive UTC datetimes, so comparing without normalization raises
+    TypeError and silently skips every conflict.
+    """
+    if not s:
+        return s
+    try:
+        if len(s) == 10:  # date-only all-day event — treat as midnight UTC
+            return s + "T00:00:00"
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        utc_dt = dt.replace(tzinfo=None) - dt.utcoffset()
+        return utc_dt.strftime("%Y-%m-%dT%H:%M:%S")
+    except Exception:
+        return s
+
+
 def get_google_events(user_id: str, time_min: str, time_max: str) -> List[dict]:
     """Fetch Google Calendar events for the user in the given ISO time range."""
     token = _ensure_fresh_google_token(user_id)
@@ -213,8 +233,8 @@ def get_google_events(user_id: str, time_min: str, time_max: str) -> List[dict]:
         resp = _http_get(url, headers={'Authorization': f'Bearer {token}'})
         events = []
         for ev in resp.get('items', []):
-            start = ev.get('start', {}).get('dateTime') or ev.get('start', {}).get('date', '')
-            end   = ev.get('end',   {}).get('dateTime') or ev.get('end',   {}).get('date', '')
+            start = _to_utc_iso(ev.get('start', {}).get('dateTime') or ev.get('start', {}).get('date', ''))
+            end   = _to_utc_iso(ev.get('end',   {}).get('dateTime') or ev.get('end',   {}).get('date', ''))
             attendees = [
                 a.get('email', '') for a in ev.get('attendees', [])
                 if a.get('email') and not a.get('self')

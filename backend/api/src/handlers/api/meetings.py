@@ -90,10 +90,15 @@ def handle_book(identity: dict, action: str, data: str | None) -> dict:
     _apply_personal_fairness(user_id, slot_utc, int(meeting.get("durationMinutes", 60)))
     _meeting_repo.log_activity(request_id, "booked", user_id)
 
-    # Update local dict to reflect the confirmed state so the response is accurate
+    # Update local dict to reflect the confirmed state so the response is accurate.
+    # Clear any previous round's declines so participants start fresh.
     meeting["status"] = "confirmed"
     meeting["selectedSlotStart"] = slot_start_iso
+    meeting["acceptedBy"] = []
+    meeting["declinedBy"] = []
+    meeting["declineDetails"] = {}
     meeting["updatedAt"] = datetime.now().isoformat()
+    _meeting_repo.update_meta(request_id, meeting)
 
     end_iso = _compute_end_iso(slot_start_iso, slot_data, meeting)
     ics_content = calendar_client.generate_ics_content(
@@ -183,12 +188,12 @@ def handle_decline(identity: dict, action: str, data: str | None) -> dict:
             except Exception as exc:
                 logger.error(f"Calendar delete failed on all-decline reshuffle for {request_id}: {exc}")
         days_forward = int(meeting.get("daysForward") or 7)
+        # Keep declinedBy/declineDetails so organizer can see who declined and why
+        # on the pending card. They are cleared when the organizer books a new slot.
         meeting.update({
             "status": "pending",
             "selectedSlotStart": None,
             "acceptedBy": [],
-            "declinedBy": [],
-            "declineDetails": {},
             "externalEventIds": {},
             "dateRangeStart": now.isoformat(),
             "dateRangeEnd": (now + timedelta(days=days_forward)).isoformat(),
