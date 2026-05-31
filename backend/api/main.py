@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
 
-from src.common.auth import get_current_user_from_request, validate_access_token
+from src.common.auth import validate_access_token
 from src.handlers.api.dispatcher import dispatch
 from src.handlers.lambda_entry import sfn_router
 
@@ -85,17 +85,12 @@ def health(action: Optional[str] = None, token: Optional[str] = None, data: Opti
 
 
 # ---------------------------------------------------------------------------
-# REST API endpoints (secondary path — JWT authorizer on API Gateway)
+# Google Calendar push-notification webhook (public, no JWT)
 # ---------------------------------------------------------------------------
 
-from src.database.repository import MeetingRepository, UserRepository, CalendarRepository as _CalendarRepo
+from src.database.repository import CalendarRepository as _CalendarRepo
 
 _wh_cal_repo = _CalendarRepo()
-from src.handlers.api import meetings as _mtg_handlers
-from src.handlers.api import profile as _prf_handlers
-
-_user_repo = UserRepository()
-_meeting_repo = MeetingRepository()
 
 
 @app.post("/webhook/google-calendar")
@@ -119,53 +114,3 @@ async def google_calendar_webhook(request: Request):
             _wh_cal_repo.bump_change_token(user_id)
 
     return {"status": "ok"}
-
-
-@app.get("/api/profile", response_model=dict)
-def get_user_profile(request: Request):
-    return _prf_handlers.handle_profile(get_current_user_from_request(request))
-
-
-@app.get("/api/profile/stats", response_model=dict)
-def get_profile_stats(request: Request):
-    return _prf_handlers.handle_profile_stats(get_current_user_from_request(request))
-
-
-@app.get("/api/meetings")
-def get_meetings(request: Request, limit: int = 50, offset: int = 0):
-    identity = get_current_user_from_request(request)
-    user_id = identity["user_id"]
-    all_meetings = _meeting_repo.get_user_meetings(user_id)
-    total = len(all_meetings)
-    page = all_meetings[offset: offset + limit]
-    all_pids: set = set()
-    for m in page:
-        all_pids.update(m.participantUserIds)
-    name_map = _user_repo.get_by_ids(list(all_pids))
-    response_data = []
-    for m in page:
-        slots = _meeting_repo.get_slots(m.requestId)
-        d = m.model_dump(mode="json")
-        d["slots"] = [s.model_dump(mode="json") for s in slots]
-        d["userRole"] = "organizer" if m.creatorUserId == user_id else "participant"
-        d["participantNames"] = {pid: name_map.get(pid, {"name": pid, "email": ""}) for pid in m.participantUserIds}
-        response_data.append(d)
-    return {"meetings": response_data, "total": total, "offset": offset, "limit": limit}
-
-
-@app.post("/api/meetings/create")
-def create_meeting_rest(request: Request):
-    identity = get_current_user_from_request(request)
-    return _mtg_handlers.handle_create_meeting(identity, None)
-
-
-@app.post("/api/meetings/{request_id}/book/{slot_start_iso}")
-def book_meeting_slot(request_id: str, slot_start_iso: str, request: Request):
-    identity = get_current_user_from_request(request)
-    return _mtg_handlers.handle_book(identity, f"book:{request_id}:{slot_start_iso}", None)
-
-
-@app.post("/api/meetings/{request_id}/accept")
-def accept_meeting(request_id: str, request: Request):
-    identity = get_current_user_from_request(request)
-    return _mtg_handlers.handle_accept(identity, f"accept:{request_id}")

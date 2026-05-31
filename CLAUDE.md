@@ -87,7 +87,7 @@ src/
 │   └── timezone.py          # get_tz_offset_hours()
 ├── core/
 │   ├── fairness.py          # FairnessEngine class + global `engine` singleton
-│   └── ai_fairness.py       # score_meeting_with_ai() — primary AI scorer (gpt-4o-mini)
+│   └── ai_fairness.py       # score_meeting_with_ai() — primary AI scorer (gpt-4.1-mini)
 ├── database/
 │   ├── models.py            # Pydantic models (UserProfile, MeetingRequest, SuggestedTimeSlot, FairnessState, MeetingLogEntry)
 │   └── repository.py        # UserRepository, MeetingRepository, CalendarRepository, AIFairnessRepository
@@ -141,7 +141,7 @@ Each step maps to a `sfn_*` function in `db.py`. The workflow is triggered from 
 AI scoring runs **synchronously** within the same `create_meeting` / `reschedule` request, immediately after the heuristic SFN workflow completes. The result is returned directly in the meeting creation response — no async polling needed.
 
 - **Trigger**: `_scheduling.run_or_schedule` calls `_run_ai_inline()` after `SmartSchedulerWorkflow` (or its local fallback) stores slots. Failures are caught and logged; the meeting flow continues with heuristic scores already in DynamoDB.
-- **AI is primary**: `src/core/ai_fairness.py` calls **gpt-4o-mini** and the AI score **replaces** the heuristic score as the primary `score` field on each slot. The heuristic score is preserved in the `explanation` text as a fallback reference.
+- **AI is primary**: `src/core/ai_fairness.py` calls **gpt-4.1-mini** and the AI score **replaces** the heuristic score as the primary `score` field on each slot. The heuristic score is preserved in the `explanation` text as a fallback reference.
 - **Storage**:
   - Each slot's `score` and `aiScore` fields are updated in DynamoDB with the AI value
   - `MEET#<id> / META` — `aiAnalysis` dict added (bestSlot, bestSlotReason, summary, calendarSuggestions, meetingFairnessScore)
@@ -224,8 +224,8 @@ Supports Google Calendar (OAuth2) and Microsoft Outlook (.ics feed URL). Google 
 | `TABLE_NAME` | Lambda / `.env` | DynamoDB table name |
 | `AWS_ACCOUNT_ID` | Lambda | Used to construct SFN ARN; **absent locally** → `_local_sim` path |
 | `FRONTEND_URL` | Lambda | CORS allow-origin |
-| `OPENAI_API_KEY` | Lambda | gpt-4o-mini for inline AI scoring + NL meeting parsing; absent → heuristic-only fallback |
-| `AI_FAIRNESS_MODEL` | Lambda | Defaults to `gpt-4o-mini`; override to pin a different model |
+| `OPENAI_API_KEY` | Lambda | gpt-4.1-mini for inline AI scoring + NL meeting parsing; absent → heuristic-only fallback |
+| `AI_FAIRNESS_MODEL` | Lambda | Defaults to `gpt-4.1-mini`; override to pin a different model |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Lambda | Google Calendar OAuth |
 | `ENVIRONMENT` | local only | Set to `development` for local uvicorn + `.env` loading |
 | `VITE_API_URL` | frontend `.env.local` | Backend URL for the Vite dev server (default: `http://localhost:8000`) |

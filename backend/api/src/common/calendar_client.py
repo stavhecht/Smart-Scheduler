@@ -200,9 +200,9 @@ def _to_utc_iso(s: str) -> str:
     """Normalize any ISO datetime string to a naive UTC string (YYYY-MM-DDTHH:MM:SS).
 
     Google Calendar returns datetimes with local timezone offsets (e.g.
-    "2026-05-31T10:00:00+03:00"). The conflict checkers in generate_slots and
-    _local_sim use naive UTC datetimes, so comparing without normalization raises
-    TypeError and silently skips every conflict.
+    "2026-05-31T10:00:00+03:00"). The conflict checkers in generate_slots use
+    naive UTC datetimes, so comparing without normalization raises TypeError
+    and silently skips every conflict.
     """
     if not s:
         return s
