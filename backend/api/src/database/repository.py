@@ -14,64 +14,7 @@ from botocore.exceptions import ClientError
 from fastapi import HTTPException
 
 from src.common.dynamo import get_db
-from src.common.timezone import get_tz_offset_hours
 from src.database import models
-
-
-# ---------------------------------------------------------------------------
-# Working hours / day helpers (previously in db.py)
-# ---------------------------------------------------------------------------
-
-def get_working_hours_list(participant_profiles: List[dict]) -> List[int]:
-    """Intersection of participants' working hours, skipping personal lunch hours."""
-    from src.core.fairness import engine
-    if not participant_profiles:
-        return engine.WORKING_HOURS
-    try:
-        starts = [
-            int(p.get("workingHours", {}).get("start", "09:00").split(":")[0])
-            for p in participant_profiles
-        ]
-        ends = [
-            int(p.get("workingHours", {}).get("end", "18:00").split(":")[0])
-            for p in participant_profiles
-        ]
-        lunch_hours: set = set()
-        for p in participant_profiles:
-            lb = p.get("lunchBreak") or {}
-            try:
-                start_h = int(str(lb.get("start", "12:00")).split(":")[0])
-                dur = int(lb.get("duration", 60))
-                for h in range(start_h, start_h + max(1, dur // 60)):
-                    lunch_hours.add(h)
-            except (ValueError, TypeError):
-                lunch_hours.add(12)
-        wh_start = max(starts)
-        wh_end = min(ends)
-        if wh_start >= wh_end:
-            return engine.WORKING_HOURS
-        hours = [h for h in range(max(7, wh_start), min(19, wh_end)) if h not in lunch_hours]
-        return hours if hours else engine.WORKING_HOURS
-    except Exception:
-        from src.core.fairness import engine as _e
-        return _e.WORKING_HOURS
-
-
-def get_working_days_intersection(participant_profiles: List[dict]) -> List[int]:
-    """Intersection of participants' working days. Defaults missing/empty
-    workingDays to Mon–Fri so a participant without an explicit setting can't
-    silently expand availability to weekends."""
-    default_days = [0, 1, 2, 3, 4]
-    if not participant_profiles:
-        return default_days
-    try:
-        common = set(range(7))
-        for p in participant_profiles:
-            days = p.get("workingDays") or default_days
-            common &= set(days)
-        return sorted(common) if common else default_days
-    except Exception:
-        return default_days
 
 
 # ---------------------------------------------------------------------------
@@ -99,8 +42,9 @@ class UserRepository:
             models.FairnessState(
                 userId=user_id, fairnessScore=100.0,
                 meetingLoadMetrics={
-                    "meetings_this_week": 0, "suffering_score": 0,
-                    "prime_slots_accepted": 0, "cancellation_timestamps": [],
+                    "meetings_this_week": 0,
+                    "prime_slots_accepted": 0,
+                    "cancellation_timestamps": [],
                 },
                 inconvenientMeetingsCount=0,
                 lastWeekReset=datetime.now().isoformat(),
@@ -165,7 +109,6 @@ class UserRepository:
                 "inconvenientMeetingsCount": (
                     fairness.inconvenientMeetingsCount + updated["inconvenientMeetingsCount"]
                 ),
-                "cancellation_timestamps": raw["meetingLoadMetrics"].get("cancellation_timestamps", []),
                 "lastWeekReset": raw.get("lastWeekReset", now),
                 "lastUpdatedAt": now,
             })
@@ -210,7 +153,6 @@ class UserRepository:
                 "inconvenientMeetingsCount": (
                     fairness.inconvenientMeetingsCount + updated["inconvenientMeetingsCount"]
                 ),
-                "cancellation_timestamps": raw["meetingLoadMetrics"].get("cancellation_timestamps", []),
                 "lastWeekReset":   raw.get("lastWeekReset", now),
                 "lastUpdatedAt":   now,
             })
@@ -249,7 +191,6 @@ class UserRepository:
                 "fairnessScore": new_score,
                 "meetingLoadMetrics": metrics,
                 "inconvenientMeetingsCount": max(0, fairness.inconvenientMeetingsCount - (1 if was_inconvenient else 0)),
-                "cancellation_timestamps": metrics.get("cancellation_timestamps", []),
                 "lastWeekReset": raw.get("lastWeekReset", now),
                 "lastUpdatedAt": now,
             })
@@ -343,7 +284,6 @@ class UserRepository:
             "total_cancelled": total_cancelled,
             "current_fairness_score": round(current_score, 1),
             "meetings_this_week": int(float(load_metrics.get("meetings_this_week", 0))),
-            "suffering_score": int(float(load_metrics.get("suffering_score", 0))),
         }
 
     def get_recent_activity(self, user_id: str, limit: int = 12) -> List[dict]:

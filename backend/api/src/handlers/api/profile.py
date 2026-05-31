@@ -74,7 +74,7 @@ def handle_profile(identity: dict) -> dict:
             "email": email,
             "role": "Professional",
             "fairness_score": 100.0,
-            "details": {"meetings_this_week": 0, "cancellations_last_month": 0, "suffering_score": 0, "prime_slots_accepted": 0},
+            "details": {"meetings_this_week": 0, "cancellations_last_month": 0, "prime_slots_accepted": 0},
         }
 
 
@@ -173,7 +173,6 @@ def handle_reset_fairness(identity: dict) -> dict:
 
 def handle_activity_feed(identity: dict) -> list:
     try:
-        from src.database.repository import UserRepository as _UR
         raw = _user_repo.get_recent_activity(identity["user_id"])
         seen_profiles: dict = {}
         for entry in raw:

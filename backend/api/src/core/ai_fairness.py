@@ -23,6 +23,8 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
+from src.common.openai_client import _norm_iso, _redact_events
+
 logger = logging.getLogger(__name__)
 
 # AI call budget: cap input context to avoid runaway cost on huge groups
@@ -30,7 +32,7 @@ MAX_PARTICIPANTS_FOR_AI = 25
 MAX_EVENTS_PER_PARTICIPANT = 40
 MAX_HISTORY_ENTRIES = 20
 
-MODEL_ID = os.environ.get("AI_FAIRNESS_MODEL", "gpt-4o-mini")
+MODEL_ID = os.environ.get("AI_FAIRNESS_MODEL", "gpt-4.1-mini")
 
 
 # ---------------------------------------------------------------------------
@@ -38,92 +40,35 @@ MODEL_ID = os.environ.get("AI_FAIRNESS_MODEL", "gpt-4o-mini")
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
-You are the Smart Scheduler AI Analyst. Your scores are shown DIRECTLY to users
-as the primary fairness verdict for candidate meeting slots — there is no
-heuristic post-processing.
+You are Smart Scheduler AI. Output STRICT JSON only — no markdown, no prose.
 
-You receive:
-  1. Candidate time slots, each with a reference heuristic pre-score (guidance
-     only — use your own judgment).
-  2. Each participant's current fairness score, weekly load, suffering score,
-     and recent fairness trend.
-  3. Each participant's calendar density around the proposed slots (event
-     details anonymized — only start/end/duration/attendee_count provided).
+Inputs: candidate slots with heuristic_reference_score (reference only — use your own judgment), \
+participants with fairness score/load/calendar density (anonymized: start/end/duration/attendee_count only), \
+optional organizer_preferences.
 
-Your job:
-  A. Score every slot 0–100 based on overall fairness for the GROUP.
-  B. Pick the SINGLE best slot and explain in 2–3 sentences why (mention which
-     participants benefit and how the slot avoids burdens).
-  C. Suggest 2–4 SPECIFIC, ACTIONABLE calendar changes participants could make
-     to unlock even better slots (e.g. "If Alice moves her recurring Tuesday
-     1:1 to a different day, the Tuesday 10am slot would gain ~12 points
-     because she would be coming off a focus block rather than a meeting").
-     Refer to participants by their userId. Suggestions must be concrete and
-     reference specific days/times.
+Tasks:
+A. Score every slot 0-100 for GROUP fairness.
+B. Pick the single best slot; 2-3 sentences on why (who benefits, what burdens are avoided).
+C. 2-4 specific, actionable calendar changes to unlock better slots (reference participant by displayName + day/time).
 
-SCORING CRITERIA:
-  - Time-of-day fairness (prime working hours vs. fringe hours per timezone)
-  - Load balance (do not pile onto someone already overloaded this week)
-  - Calendar context (avoid creating back-to-back chains, respect focus blocks)
-  - Historical equity (someone consistently absorbing bad slots is unfair)
-  - Inclusion (every participant should have at least one workable option)
+Score on: time-of-day quality per timezone · weekly load balance · calendar context (back-to-backs, focus blocks) · historical equity · inclusion across participants.
 
-PRIVACY RULES:
-  - NEVER mention event titles, attendee names, or emails — you do not have
-    them and must not invent them. Refer to events generically: "a focus
-    block", "back-to-back meetings", "a 1:1".
+If organizer_preferences is present and best_slot falls outside the preferred window, \
+open best_slot_reason with one sentence naming the timezone/group trade-off \
+(e.g. "Your morning preference was set aside because that window falls at 02:00 for the New York participant."). \
+No note needed when best_slot is within the preferred window.
 
-OUTPUT STRICT JSON ONLY — no markdown, no prose outside the JSON:
-{
-  "meeting_fairness_score": <0-100 float — average quality of the slate>,
-  "summary": "<one concise sentence — overall verdict on the slate>",
-  "best_slot": "<startIso of the single best slot, must match an input slot exactly>",
-  "best_slot_reason": "<2-3 sentences — why this is the best, who benefits>",
-  "calendar_suggestions": [
-    "<specific actionable suggestion 1>",
-    "<specific actionable suggestion 2>"
-  ],
-  "slot_scores": [
-    {
-      "startIso": "<must match an input slot exactly>",
-      "ai_score": <0-100 float>,
-      "description": "<one sentence — why this slot scores as it does>"
-    }
-  ]
-}
+Never mention event titles, attendee names, or emails. Refer to events as "a focus block", "a 1:1", "back-to-back meetings".
+
+JSON schema:
+{"meeting_fairness_score":<0-100 float>,"summary":"<one sentence verdict>","best_slot":"<startIso exact match>","best_slot_reason":"<2-3 sentences>","calendar_suggestions":["<suggestion>",...],"slot_scores":[{"startIso":"<exact match>","ai_score":<0-100 float>,"description":"<one sentence>"},...]}
 """
-
-
-def _event_duration_minutes(ev: dict) -> Optional[int]:
-    from datetime import datetime
-    try:
-        start = ev.get("start", "")
-        end = ev.get("end", "")
-        if not start or not end:
-            return None
-        s = datetime.fromisoformat(start.replace("Z", "+00:00"))
-        e = datetime.fromisoformat(end.replace("Z", "+00:00"))
-        return max(0, int((e - s).total_seconds() // 60))
-    except Exception:
-        return None
-
-
-def _redact_events(events: List[dict]) -> List[dict]:
-    """Strip sensitive fields from calendar events before sending to the LLM."""
-    redacted = []
-    for ev in events[:MAX_EVENTS_PER_PARTICIPANT]:
-        redacted.append({
-            "start": ev.get("start", ""),
-            "end": ev.get("end", ""),
-            "duration_min": _event_duration_minutes(ev),
-            "attendee_count": len(ev.get("attendees", []) or []),
-        })
-    return redacted
 
 
 def _build_user_prompt(
     candidate_slots: List[dict],
     participants: List[dict],
+    organizer_preferences: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Build the JSON payload sent to the agent."""
     truncated = participants[:MAX_PARTICIPANTS_FOR_AI]
@@ -140,16 +85,22 @@ def _build_user_prompt(
         "participants": [
             {
                 "userId": p.get("userId", ""),
+                "displayName": p.get("displayName") or p.get("userId", ""),
                 "timezone": p.get("timezone", "UTC"),
                 "current_fairness_score": float(p.get("current_fairness_score", 100.0)),
                 "meetings_this_week": int(p.get("meetings_this_week", 0)),
-                "suffering_score": int(p.get("suffering_score", 0)),
                 "fairness_trend": p.get("fairness_trend", [])[:MAX_HISTORY_ENTRIES],
-                "calendar_density": _redact_events(p.get("calendar_events", [])),
+                "calendar_density": _redact_events(
+                    p.get("calendar_events", []),
+                    max_events=MAX_EVENTS_PER_PARTICIPANT,
+                    include_attendee_count=True,
+                ),
             }
             for p in truncated
         ],
     }
+    if organizer_preferences:
+        body["organizer_preferences"] = organizer_preferences
     return json.dumps(body, separators=(",", ":"))
 
 
@@ -197,14 +148,6 @@ def _call_openai(user_prompt: str) -> Optional[dict]:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _norm_iso(s: Any) -> str:
-    """Normalize an ISO string for matching (drop fractional secs / timezone offset)."""
-    if not s:
-        return ""
-    s = str(s).split("+")[0].split("Z")[0].split(".")[0]
-    return s.strip()
-
-
 def _heuristic_fallback(
     candidate_slots: List[dict],
     reason: str = "AI scoring unavailable — heuristic scores used as fallback.",
@@ -250,6 +193,7 @@ def score_meeting_with_ai(
     request_id: str,
     candidate_slots: List[dict],
     participants: List[dict],
+    organizer_preferences: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Run the AI fairness pass on a meeting. AI is the PRIMARY scorer — heuristic
@@ -260,8 +204,8 @@ def score_meeting_with_ai(
         candidate_slots: list of dicts with startIso, score (heuristic
             reference), explanation, conflictCount.
         participants: list of dicts with userId, timezone,
-            current_fairness_score, meetings_this_week, suffering_score,
-            fairness_trend, calendar_events.
+            current_fairness_score, meetings_this_week, fairness_trend,
+            calendar_events.
 
     Returns:
         {
@@ -278,7 +222,7 @@ def score_meeting_with_ai(
     if not candidate_slots:
         return _heuristic_fallback([], "No candidate slots to score.")
 
-    user_prompt = _build_user_prompt(candidate_slots, participants)
+    user_prompt = _build_user_prompt(candidate_slots, participants, organizer_preferences)
     ai = _call_openai(user_prompt)
 
     if not ai:

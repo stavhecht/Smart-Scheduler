@@ -121,7 +121,7 @@ export async function apiPost(path, body) {
 
     // /api/meetings/<id>/decline
     const declineMatch = path.match(/^\/api\/meetings\/([^/]+)\/decline$/);
-    if (declineMatch) return apiProxy(`decline:${declineMatch[1]}`);
+    if (declineMatch) return apiProxy(`decline:${declineMatch[1]}`, body);
 
     // /api/meetings/<id>/cancel
     const cancelMatch = path.match(/^\/api\/meetings\/([^/]+)\/cancel$/);

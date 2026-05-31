@@ -26,7 +26,7 @@ OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 MODEL = "gpt-4.1-nano"
 REQUEST_TIMEOUT_SECONDS = 15.0
 MAX_OUTPUT_TOKENS = 2500          # Per-meeting hard cap (slots + summary in one call)
-TEMPERATURE = 0.2                 # Low temperature → consistent fairness verdicts
+TEMPERATURE = 0.3                 # Low temperature → consistent fairness verdicts
 MAX_SLOTS_SENT = 30               # Truncate input slots to bound token usage
 MAX_EVENTS_PER_PARTICIPANT = 25   # Cap calendar event context per person
 MAX_HISTORY_ENTRIES = 10          # Cap fairness trend history per person
@@ -59,17 +59,28 @@ def _event_duration_minutes(start: str, end: str) -> Optional[int]:
         return None
 
 
-def _redact_events(events: List[dict]) -> List[dict]:
-    """Strip sensitive fields from busy intervals — keep only timing density."""
+def _redact_events(
+    events: List[dict],
+    max_events: int = MAX_EVENTS_PER_PARTICIPANT,
+    include_attendee_count: bool = False,
+) -> List[dict]:
+    """Strip sensitive fields from busy intervals — keep only timing density.
+
+    Shared by the SFN-side scorer and the inline ai_fairness scorer; the latter
+    passes a larger cap and asks for attendee_count.
+    """
     out = []
-    for ev in (events or [])[:MAX_EVENTS_PER_PARTICIPANT]:
+    for ev in (events or [])[:max_events]:
         start = ev.get("start", "")
         end = ev.get("end", "")
-        out.append({
+        item = {
             "start": start,
             "end": end,
             "duration_min": _event_duration_minutes(start, end),
-        })
+        }
+        if include_attendee_count:
+            item["attendee_count"] = len(ev.get("attendees", []) or [])
+        out.append(item)
     return out
 
 
@@ -98,7 +109,7 @@ meeting-wide summary is the headline verdict.
 
 You receive:
   1. Candidate time slots with a heuristic_baseline_score (guidance only).
-  2. Each participant's current fairness state, weekly load, suffering score,
+  2. Each participant's current fairness state, weekly load,
      recent fairness trend, and a REDACTED calendar density window (start/end/
      duration only — no titles, no names, no emails).
   3. The meeting duration.
@@ -119,8 +130,9 @@ Then produce a meeting-wide summary:
     displayName and a specific day/time (e.g. "Alice could shift her Tuesday
     13:00 event so Tue 14:00 becomes high-quality for the group").
 
-PRIVACY: never mention event titles, attendee names, or emails — refer to
-events generically ("a focus block", "a back-to-back meeting").
+PRIVACY: never mention event titles or attendee emails — refer to events
+generically ("a focus block", "a back-to-back meeting"). Participant
+displayNames ARE allowed in the summary and suggestions.
 
 Respond ONLY with valid JSON of the form:
 {
@@ -259,19 +271,29 @@ def parse_meeting_intent(text: str, today_iso: str, known_users: List[Dict[str, 
     ]
 
     system = (
-        "You convert a user's free-text meeting request into a structured JSON form. "
-        f"Today's date is {today_iso}. The user's known contacts are provided. "
-        "Extract these fields and respond ONLY with valid JSON:\n"
-        '{"title": "...", "durationMinutes": <int 15-480>, "daysForward": <int 1-90>, '
-        '"description": "...", "participantHints": ["name or email", ...]}\n\n'
+        f"Convert a meeting request to JSON. Today is {today_iso}; resolve all relative dates against it. "
+        "Respond with ONLY this JSON object:\n"
+        '{"title": str, "durationMinutes": int 15-480, "daysForward": int 1-90, '
+        '"dateRangeStart": "YYYY-MM-DD" or null, '
+        '"timeWindow": "all"|"morning"|"afternoon"|"evening", '
+        '"excludedWeekdays": [int 0-6, ...], '
+        '"description": str, "participantHints": [str, ...]}\n\n'
         "Rules:\n"
-        "- title: short, descriptive (e.g. 'Sync with Sarah'). Required.\n"
-        "- durationMinutes: infer from text ('quick chat'=15, 'sync'=30, 'meeting'=60, 'workshop'=120). Default 60.\n"
-        "- daysForward: how many days ahead to look. 'tomorrow'=2, 'this week'=5, 'next week'=14, 'asap'=3. Default 7.\n"
-        "- description: empty unless text contains agenda/notes.\n"
-        "- participantHints: names or emails EXPLICITLY mentioned by the user. Match loosely against contacts "
-        "(e.g. 'sarah' → 'Sarah Cohen'). Return the matched displayName or email from contacts. "
-        "If no specific person is mentioned, return an EMPTY list — do not guess."
+        "- title: short topic-based headline (e.g. 'Sync with Sarah', 'Design review'). Required.\n"
+        "- durationMinutes: 'quick'=15, 'sync'=30, 'meeting'=60, 'workshop'=120. Default 60.\n"
+        "- dateRangeStart: explicit anchor day as YYYY-MM-DD, else null. "
+        "'tomorrow'→today+1; 'next Monday'/'next week'→Monday of next week; "
+        "'on Friday'→next Friday; 'June 15'→next June 15; 'in 2 weeks'→today+14.\n"
+        "- daysForward: search-window width from the anchor (or today if null). "
+        "Single named day=1, 'this week'=5, 'next week'=7, 'in 2 weeks'=3, 'this month'=30, 'asap'=3. Default 7.\n"
+        "- timeWindow: morning≈8–12, afternoon≈12–17, evening≈17–20. "
+        "'early'/'before noon'→morning; 'after lunch'→afternoon; 'tonight'/'after work'/'late'→evening. Default 'all'.\n"
+        "- excludedWeekdays: Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6. "
+        "'no weekends'/'weekdays only'→[5,6]; 'weekends only'→[0,1,2,3,4]; 'avoid Tuesdays'→[1]. "
+        "Never exclude a day the user is requesting (e.g. 'meeting on Friday' must NOT include 4). Default [].\n"
+        "- description: 1-3 line agenda/purpose if the user gave any ('to discuss X', 'about Y'). Else empty.\n"
+        "- participantHints: names/emails EXPLICITLY mentioned. Match loosely against the contacts list and return "
+        "the matched displayName or email. Empty list if no person mentioned — never guess."
     )
 
     body = {
@@ -280,7 +302,7 @@ def parse_meeting_intent(text: str, today_iso: str, known_users: List[Dict[str, 
             {"role": "system", "content": system},
             {"role": "user", "content": json.dumps({"request": text, "contacts": user_hints})},
         ],
-        "max_completion_tokens": 500,
+        "max_completion_tokens": 600,
         "temperature": TEMPERATURE,
         "response_format": {"type": "json_object"},
     }
@@ -304,10 +326,47 @@ def parse_meeting_intent(text: str, today_iso: str, known_users: List[Dict[str, 
         except (TypeError, ValueError):
             return default
 
+    def _valid_future_date(s: Any) -> Optional[str]:
+        if not s or not isinstance(s, str):
+            return None
+        try:
+            d = datetime.strptime(s.strip()[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return None
+        try:
+            today = datetime.strptime(today_iso, "%Y-%m-%d").date()
+        except ValueError:
+            today = datetime.utcnow().date()
+        delta = (d - today).days
+        if delta < 0 or delta > 365:
+            return None
+        return d.isoformat()
+
+    def _valid_time_window(s: Any) -> str:
+        if isinstance(s, str) and s.strip().lower() in {"morning", "afternoon", "evening", "all"}:
+            return s.strip().lower()
+        return "all"
+
+    def _valid_weekdays(v: Any) -> List[int]:
+        if not isinstance(v, list):
+            return []
+        out: List[int] = []
+        for x in v:
+            try:
+                n = int(x)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= n <= 6 and n not in out:
+                out.append(n)
+        return out
+
     return {
         "title": str(parsed.get("title", "")).strip()[:200] or "New Meeting",
         "durationMinutes": _clamp(parsed.get("durationMinutes"), 15, 480, 60),
         "daysForward": _clamp(parsed.get("daysForward"), 1, 90, 7),
+        "dateRangeStart": _valid_future_date(parsed.get("dateRangeStart")),
+        "timeWindow": _valid_time_window(parsed.get("timeWindow")),
+        "excludedWeekdays": _valid_weekdays(parsed.get("excludedWeekdays")),
         "description": str(parsed.get("description", "")).strip()[:2000],
         "participantHints": [str(h).strip() for h in (parsed.get("participantHints") or []) if h],
     }
@@ -337,20 +396,14 @@ def build_participant_context(
         metrics = state.get("meetingLoadMetrics", {}) or {}
         # Fairness trend: most recent N cancellation timestamps as a coarse trend signal
         trend = [str(t) for t in (metrics.get("cancellation_timestamps", []) or [])][-MAX_HISTORY_ENTRIES:]
-        display_name = (
-            profile.get("displayName")
-            or profile.get("email", "").split("@")[0]
-            or (uid or "")[:8]
-        )
         out.append({
             "userId": uid,
-            "displayName": display_name,
+            "displayName": profile.get("displayName") or uid,
             "timezone": profile.get("timezone", "UTC"),
             "workingHours": profile.get("workingHours"),
             "workingDays": profile.get("workingDays"),
             "fairnessScore": state.get("fairnessScore"),
             "meetings_this_week": metrics.get("meetings_this_week", 0),
-            "suffering_score": metrics.get("suffering_score", 0),
             "prime_slots_accepted": metrics.get("prime_slots_accepted", 0),
             "recent_cancellation_timestamps": trend,
             "calendar_density": _redact_events(busy.get(uid, [])),

@@ -1143,6 +1143,20 @@
   color: #fff;
 }
 
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.btn-refresh--spinning {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.btn-refresh--spinning svg {
+  animation: spin 0.7s linear infinite;
+}
+
 .last-refreshed {
   color: rgba(255,255,255,0.3);
 }
