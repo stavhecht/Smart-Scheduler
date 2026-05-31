@@ -32,7 +32,7 @@ MAX_PARTICIPANTS_FOR_AI = 25
 MAX_EVENTS_PER_PARTICIPANT = 40
 MAX_HISTORY_ENTRIES = 20
 
-MODEL_ID = os.environ.get("AI_FAIRNESS_MODEL", "gpt-4o-mini")
+MODEL_ID = os.environ.get("AI_FAIRNESS_MODEL", "gpt-4.1-mini")
 
 
 # ---------------------------------------------------------------------------
