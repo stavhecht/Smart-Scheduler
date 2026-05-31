@@ -187,7 +187,12 @@ def handle_decline(identity: dict, action: str, data: str | None) -> dict:
                 calendar_client.remove_meeting_from_calendars(ext_ids)
             except Exception as exc:
                 logger.error(f"Calendar delete failed on all-decline reshuffle for {request_id}: {exc}")
-        days_forward = int(meeting.get("daysForward") or 7)
+        # `daysForward` on the record preserves the user's original intent (the
+        # LLM parser can return 1 for "tomorrow"/"on Friday"). For the reshuffle
+        # search itself, floor at 7 days so once we shift the anchor to `now`
+        # there's enough room left for slots to survive working-days, conflicts,
+        # and past-hour filtering.
+        search_days = max(int(meeting.get("daysForward") or 7), 7)
         # Keep declinedBy/declineDetails so organizer can see who declined and why
         # on the pending card. They are cleared when the organizer books a new slot.
         meeting.update({
@@ -196,12 +201,12 @@ def handle_decline(identity: dict, action: str, data: str | None) -> dict:
             "acceptedBy": [],
             "externalEventIds": {},
             "dateRangeStart": now.isoformat(),
-            "dateRangeEnd": (now + timedelta(days=days_forward)).isoformat(),
+            "dateRangeEnd": (now + timedelta(days=search_days)).isoformat(),
         })
         _meeting_repo.update_meta(request_id, meeting)
         _meeting_repo.delete_slots(request_id)
         from src.handlers.api._scheduling import build_reschedule_payload, run_local_steps
-        sched_payload = build_reschedule_payload(meeting, meeting.get("creatorUserId", ""), request_id, days_forward)
+        sched_payload = build_reschedule_payload(meeting, meeting.get("creatorUserId", ""), request_id, search_days)
         run_local_steps(sched_payload)
         _meeting_repo.log_activity(request_id, "reshuffled_all_declined", user_id)
         reshuffled = True
@@ -390,7 +395,12 @@ def handle_reschedule(identity: dict, action: str, data: str | None) -> dict:
     if meeting.get("status") == "cancelled":
         raise HTTPException(status_code=400, detail="Cannot reschedule a cancelled meeting")
 
-    days_forward = int(meeting.get("daysForward") or 7)
+    # `daysForward` on the record preserves the user's original intent (the
+    # LLM parser can return 1 for "tomorrow"/"on Friday"). For the reschedule
+    # search itself, floor at 7 days so once we shift the anchor to `now`
+    # there's enough room left for slots to survive working-days, conflicts,
+    # and past-hour filtering.
+    search_days = max(int(meeting.get("daysForward") or 7), 7)
 
     now = datetime.now()
     if ext_ids := meeting.get("externalEventIds", {}):
@@ -406,7 +416,7 @@ def handle_reschedule(identity: dict, action: str, data: str | None) -> dict:
         "selectedSlotStart": None,
         "acceptedBy": [],
         "dateRangeStart": now.isoformat(),
-        "dateRangeEnd": (now + timedelta(days=days_forward)).isoformat(),
+        "dateRangeEnd": (now + timedelta(days=search_days)).isoformat(),
         "updatedAt": now.isoformat(),
         "externalEventIds": {},
     })
@@ -414,9 +424,9 @@ def handle_reschedule(identity: dict, action: str, data: str | None) -> dict:
     _meeting_repo.delete_slots(request_id)
 
     from src.handlers.api._scheduling import build_reschedule_payload, run_local_steps
-    payload = build_reschedule_payload(meeting, user_id, request_id, days_forward)
+    payload = build_reschedule_payload(meeting, user_id, request_id, search_days)
     run_local_steps(payload)
-    _meeting_repo.log_activity(request_id, "rescheduled", user_id, {"daysForward": days_forward})
+    _meeting_repo.log_activity(request_id, "rescheduled", user_id, {"searchDays": search_days})
     return {"status": "success", "message": "Meeting rescheduled — new slots generated"}
 
 
