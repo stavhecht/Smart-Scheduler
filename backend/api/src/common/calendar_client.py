@@ -197,21 +197,23 @@ def _ensure_fresh_google_token(user_id: str) -> Optional[str]:
 
 
 def _to_utc_iso(s: str) -> str:
-    """Normalize any ISO datetime string to a naive UTC string (YYYY-MM-DDTHH:MM:SS).
+    """Normalize any ISO datetime string to a UTC string with Z suffix.
 
     Google Calendar returns datetimes with local timezone offsets (e.g.
-    "2026-05-31T10:00:00+03:00"). The conflict checkers in generate_slots and
-    _local_sim use naive UTC datetimes, so comparing without normalization raises
-    TypeError and silently skips every conflict.
+    "2026-05-31T10:00:00+03:00"). The conflict checkers in generate_slots use
+    naive UTC datetimes, so comparing without normalization raises TypeError
+    and silently skips every conflict. The Z suffix is essential for the frontend
+    — without it `new Date(str)` parses as local time and the event renders at
+    the wrong hour (offset by the user's UTC offset).
     """
     if not s:
         return s
     try:
         if len(s) == 10:  # date-only all-day event — treat as midnight UTC
-            return s + "T00:00:00"
+            return s + "T00:00:00Z"
         dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
         utc_dt = dt.replace(tzinfo=None) - dt.utcoffset()
-        return utc_dt.strftime("%Y-%m-%dT%H:%M:%S")
+        return utc_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     except Exception:
         return s
 

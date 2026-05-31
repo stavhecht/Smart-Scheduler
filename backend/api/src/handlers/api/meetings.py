@@ -187,7 +187,12 @@ def handle_decline(identity: dict, action: str, data: str | None) -> dict:
                 calendar_client.remove_meeting_from_calendars(ext_ids)
             except Exception as exc:
                 logger.error(f"Calendar delete failed on all-decline reshuffle for {request_id}: {exc}")
-        days_forward = int(meeting.get("daysForward") or 7)
+        # `daysForward` on the record preserves the user's original intent (the
+        # LLM parser can return 1 for "tomorrow"/"on Friday"). For the reshuffle
+        # search itself, floor at 7 days so once we shift the anchor to `now`
+        # there's enough room left for slots to survive working-days, conflicts,
+        # and past-hour filtering.
+        search_days = max(int(meeting.get("daysForward") or 7), 7)
         # Keep declinedBy/declineDetails so organizer can see who declined and why
         # on the pending card. They are cleared when the organizer books a new slot.
         meeting.update({
@@ -196,12 +201,12 @@ def handle_decline(identity: dict, action: str, data: str | None) -> dict:
             "acceptedBy": [],
             "externalEventIds": {},
             "dateRangeStart": now.isoformat(),
-            "dateRangeEnd": (now + timedelta(days=days_forward)).isoformat(),
+            "dateRangeEnd": (now + timedelta(days=search_days)).isoformat(),
         })
         _meeting_repo.update_meta(request_id, meeting)
         _meeting_repo.delete_slots(request_id)
         from src.handlers.api._scheduling import build_reschedule_payload, run_local_steps
-        sched_payload = build_reschedule_payload(meeting, meeting.get("creatorUserId", ""), request_id, days_forward)
+        sched_payload = build_reschedule_payload(meeting, meeting.get("creatorUserId", ""), request_id, search_days)
         run_local_steps(sched_payload)
         _meeting_repo.log_activity(request_id, "reshuffled_all_declined", user_id)
         reshuffled = True
@@ -209,24 +214,6 @@ def handle_decline(identity: dict, action: str, data: str | None) -> dict:
         _meeting_repo.update_meta(request_id, meeting)
 
     _meeting_repo.log_activity(request_id, "declined", user_id, {"reason": payload.reason})
-
-    try:
-        decliner_profile = _user_repo.get_profile(user_id)
-        decliner_name = decliner_profile.displayName if decliner_profile else "A participant"
-        msg = (
-            f'All invited users declined your meeting "{meeting.get("title", "Meeting")}". '
-            'New slots have been generated — please pick a new time.'
-            if reshuffled else
-            f'{decliner_name} declined your meeting: "{meeting.get("title", "Meeting")}" ({payload.reason}).'
-        )
-        _user_repo.send_message(
-            from_uid=user_id,
-            to_uid=meeting.get("creatorUserId", ""),
-            content=msg,
-            msg_type="general",
-        )
-    except Exception as e:
-        logger.warning(f"Failed to send decline notification: {e}")
 
     return {
         "status": "success",
@@ -408,7 +395,12 @@ def handle_reschedule(identity: dict, action: str, data: str | None) -> dict:
     if meeting.get("status") == "cancelled":
         raise HTTPException(status_code=400, detail="Cannot reschedule a cancelled meeting")
 
-    days_forward = int(meeting.get("daysForward") or 7)
+    # `daysForward` on the record preserves the user's original intent (the
+    # LLM parser can return 1 for "tomorrow"/"on Friday"). For the reschedule
+    # search itself, floor at 7 days so once we shift the anchor to `now`
+    # there's enough room left for slots to survive working-days, conflicts,
+    # and past-hour filtering.
+    search_days = max(int(meeting.get("daysForward") or 7), 7)
 
     now = datetime.now()
     if ext_ids := meeting.get("externalEventIds", {}):
@@ -424,7 +416,7 @@ def handle_reschedule(identity: dict, action: str, data: str | None) -> dict:
         "selectedSlotStart": None,
         "acceptedBy": [],
         "dateRangeStart": now.isoformat(),
-        "dateRangeEnd": (now + timedelta(days=days_forward)).isoformat(),
+        "dateRangeEnd": (now + timedelta(days=search_days)).isoformat(),
         "updatedAt": now.isoformat(),
         "externalEventIds": {},
     })
@@ -432,9 +424,9 @@ def handle_reschedule(identity: dict, action: str, data: str | None) -> dict:
     _meeting_repo.delete_slots(request_id)
 
     from src.handlers.api._scheduling import build_reschedule_payload, run_local_steps
-    payload = build_reschedule_payload(meeting, user_id, request_id, days_forward)
+    payload = build_reschedule_payload(meeting, user_id, request_id, search_days)
     run_local_steps(payload)
-    _meeting_repo.log_activity(request_id, "rescheduled", user_id, {"daysForward": days_forward})
+    _meeting_repo.log_activity(request_id, "rescheduled", user_id, {"searchDays": search_days})
     return {"status": "success", "message": "Meeting rescheduled — new slots generated"}
 
 
@@ -451,15 +443,12 @@ def handle_score_slot(identity: dict, data: str | None) -> dict:
     if not start_iso:
         raise HTTPException(status_code=400, detail="startIso is required")
     try:
-        from src.common import openai_client
-
         user_id = identity["user_id"]
         slot_dt = datetime.fromisoformat(start_iso)
         end_dt = slot_dt + timedelta(minutes=duration_minutes)
         all_ids = list(set([user_id] + participant_ids))
 
         participant_states = []
-        participant_profiles = []
         participant_tz_offsets = []
         participant_working_days = []
         for uid in all_ids:
@@ -468,48 +457,58 @@ def handle_score_slot(identity: dict, data: str | None) -> dict:
                 participant_states.append(state.model_dump(mode="json"))
             p = _user_repo.get_profile_raw(uid)
             if p:
-                participant_profiles.append({
-                    "userId": uid,
-                    "timezone": p.get("timezone", "UTC"),
-                    "workingHours": p.get("workingHours"),
-                    "workingDays": p.get("workingDays", [0, 1, 2, 3, 4]),
-                    "lunchBreak": p.get("lunchBreak"),
-                })
                 participant_tz_offsets.append(get_tz_offset_hours(p.get("timezone", "UTC")))
                 participant_working_days.append(p.get("workingDays", [0, 1, 2, 3, 4]))
 
         user_profile = _user_repo.get_profile_raw(user_id)
         tz_offset = get_tz_offset_hours((user_profile or {}).get("timezone", "UTC"))
+        organizer_working_days = (user_profile or {}).get("workingDays", [0, 1, 2, 3, 4])
 
-        # Engine score — baseline + always provides fairnessImpact
+        # Deterministic engine baseline — same scorer the SFN workflow uses
         result = fairness_engine.score_time_slot(
             slot_dt, participant_states, duration_minutes,
             tz_offset_hours=tz_offset,
             participant_tz_offsets=participant_tz_offsets or None,
             participant_working_days=participant_working_days or None,
+            organizer_working_days=organizer_working_days,
         )
 
-        # AI overlay — single-slot batch; falls back silently to engine on any error
+        # AI overlay — same flow as `_run_ai_inline` uses for meeting creation.
+        # Heuristic score is passed in as the AI's reference; AI overrides it.
+        from src.core.ai_fairness import score_meeting_with_ai
+        from src.handlers.api._scheduling import build_participants_context
+
         ai_scored = False
         ai_suggestions = None
         try:
-            ai_results = openai_client.score_slots_with_ai(
-                [{
-                    "startIso": start_iso,
-                    "endIso": end_dt.isoformat(),
-                    "conflictCount": result.get("conflictCount", 0),
-                    "engine_baseline_score": result["score"],
-                }],
-                openai_client.build_participant_context(participant_states, participant_profiles),
-                duration_minutes,
+            participants_context = build_participants_context(
+                user_id, participant_ids or [],
+                slot_dt - timedelta(hours=24),
+                slot_dt + timedelta(hours=24),
             )
-            ai = ai_results.get("slots", {}).get(openai_client._norm_iso(start_iso))
-            if ai:
-                result["score"] = ai["score"]
-                result["explanation"] = ai["explanation"]
-                ai_suggestions = ai["suggestions"]
-                ai_scored = True
-        except openai_client.OpenAIScoreError as e:
+            ai_result = score_meeting_with_ai(
+                request_id="score_slot_preview",
+                candidate_slots=[{
+                    "startIso": start_iso,
+                    "score": result["score"],
+                    "explanation": result.get("explanation", ""),
+                    "conflictCount": result.get("conflictCount", 0),
+                }],
+                participants=participants_context,
+            )
+            if ai_result.get("method") == "ai":
+                slot_scores = ai_result.get("slot_scores") or []
+                if slot_scores:
+                    entry = slot_scores[0]
+                    result["score"] = float(entry.get("ai_score", result["score"]))
+                    result["explanation"] = entry.get("description") or result.get("explanation", "")
+                    ai_scored = True
+                cal_sugg = ai_result.get("calendar_suggestions") or []
+                if cal_sugg:
+                    ai_suggestions = "; ".join(str(s) for s in cal_sugg[:2])
+                elif ai_result.get("best_slot_reason"):
+                    ai_suggestions = ai_result["best_slot_reason"]
+        except Exception as e:
             logger.warning(f"score_slot AI failed, using engine: {e}")
 
         return {

@@ -29,7 +29,13 @@ export default function SlotList({ slots, calEvents = null, ssMeetings = [], onB
                 </span>
                 <span className="sli-time">
                   {dt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
-                  {s.aiScored && <span className="sli-ai">🧠 AI</span>}
+                  <span
+                    className="sli-ai"
+                    title={s.aiScored ? 'Score produced by AI fairness model' : 'Score produced by the deterministic engine (AI unavailable)'}
+                    style={s.aiScored ? undefined : { background: 'rgba(148,163,184,0.15)', color: '#94a3b8', borderColor: 'rgba(148,163,184,0.3)' }}
+                  >
+                    {s.aiScored ? '🧠 AI' : '⚙ Engine'}
+                  </span>
                 </span>
               </div>
               <div className="sli-right">

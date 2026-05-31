@@ -46,11 +46,21 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
     return list;
   }, [meetings, searchQuery, filterStatus]);
 
-  // Split meetings by status then role
+  // Split meetings by status then role.
+  // A meeting that is fully accepted (every invitee has accepted, and the slot is
+  // confirmed) is locked in — surface it in "My Meetings" alongside the user's
+  // own organized meetings, even when the user is a participant.
+  const isFullyAccepted = (m) => {
+    if (m.status !== 'confirmed') return false;
+    const invited = m.participantUserIds || [];
+    if (invited.length === 0) return false;
+    const accepted = new Set(m.acceptedBy || []);
+    return invited.every((pid) => accepted.has(pid));
+  };
   const activeMeetings    = filteredMeetings.filter(m => m.status !== 'cancelled');
   const cancelledMeetings = meetings.filter(m => m.status === 'cancelled');
   const myActiveMeetings  = activeMeetings
-    .filter(m => m.userRole === 'organizer')
+    .filter(m => m.userRole === 'organizer' || isFullyAccepted(m))
     .sort((a, b) => {
       const now = Date.now();
       const aTime = a.selectedSlotStart ? new Date(a.selectedSlotStart).getTime() : 0;
@@ -69,7 +79,7 @@ export default function MeetingDashboard({ meetings, onRefresh, onMeetingUpdate,
 
   // Sort invitations so "needs action" ones appear first
   const invitations = activeMeetings
-    .filter(m => m.userRole === 'participant')
+    .filter(m => m.userRole === 'participant' && !isFullyAccepted(m))
     .sort((a, b) => {
       const aNeedsAct = a.status === 'confirmed' && !(a.acceptedBy || []).includes(currentUserId) ? 1 : 0;
       const bNeedsAct = b.status === 'confirmed' && !(b.acceptedBy || []).includes(currentUserId) ? 1 : 0;

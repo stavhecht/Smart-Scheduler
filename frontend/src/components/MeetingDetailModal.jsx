@@ -208,12 +208,12 @@ export default function MeetingDetailModal({
             </DetailRow>
           )}
 
-          {/* AI analysis — populated synchronously during meeting creation */}
-          {meeting.status !== 'cancelled' && meeting.aiSummary && (
-            <DetailRow label="AI analysis">
+          {/* Scoring verdict — AI when available, engine baseline otherwise */}
+          {meeting.status !== 'cancelled' && meeting.aiMethod && (
+            <DetailRow label={meeting.aiMethod === 'ai' ? 'AI analysis' : 'Scoring'}>
               <AiAnalysisPanel
                 analysis={{
-                  method: meeting.aiMethod || 'ai',
+                  method: meeting.aiMethod,
                   model: meeting.aiModel || '',
                   summary: meeting.aiSummary || '',
                   bestSlot: meeting.aiBestSlotIso || '',

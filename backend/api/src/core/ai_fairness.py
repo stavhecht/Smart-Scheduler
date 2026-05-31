@@ -42,23 +42,20 @@ MODEL_ID = os.environ.get("AI_FAIRNESS_MODEL", "gpt-4.1-mini")
 _SYSTEM_PROMPT = """\
 You are Smart Scheduler AI. Output STRICT JSON only — no markdown, no prose.
 
-Inputs: candidate slots with heuristic_reference_score (reference only — use your own judgment), \
-participants with fairness score/load/calendar density (anonymized: start/end/duration/attendee_count only), \
-optional organizer_preferences.
+Inputs:
+- candidate_slots: each with heuristic_reference_score (reference only — use your own judgment) and conflictCount.
+- participants: displayName, timezone, current_fairness_score, weekly load, fairness_trend, redacted calendar_density (start/end/duration/attendee_count only).
+- organizer_preferences: optional preferred time window.
 
-Tasks:
-A. Score every slot 0-100 for GROUP fairness.
-B. Pick the single best slot; 2-3 sentences on why (who benefits, what burdens are avoided).
-C. 2-4 specific, actionable calendar changes to unlock better slots (reference participant by displayName + day/time).
+For every slot, produce ai_score 0-100 for GROUP fairness, weighing:
+time-of-day quality per timezone · weekly load balance · calendar context (back-to-backs, focus blocks) · historical equity · inclusion across participants.
 
-Score on: time-of-day quality per timezone · weekly load balance · calendar context (back-to-backs, focus blocks) · historical equity · inclusion across participants.
+Then pick the single best slot and explain in 2-3 sentences who benefits and what burdens are avoided.
+Then provide 2-4 specific, actionable calendar_suggestions to unlock better slots — each must name a participant (by displayName) and a concrete day/time.
 
-If organizer_preferences is present and best_slot falls outside the preferred window, \
-open best_slot_reason with one sentence naming the timezone/group trade-off \
-(e.g. "Your morning preference was set aside because that window falls at 02:00 for the New York participant."). \
-No note needed when best_slot is within the preferred window.
+If organizer_preferences is set and best_slot falls outside that window, open best_slot_reason with one sentence naming the timezone/group trade-off (e.g. "Your morning preference was set aside because that window falls at 02:00 for the New York participant.").
 
-Never mention event titles, attendee names, or emails. Refer to events as "a focus block", "a 1:1", "back-to-back meetings".
+PRIVACY: participant displayNames ARE allowed. Never quote calendar event titles or attendee emails — refer to events generically: "a focus block", "a 1:1", "back-to-back meetings".
 
 JSON schema:
 {"meeting_fairness_score":<0-100 float>,"summary":"<one sentence verdict>","best_slot":"<startIso exact match>","best_slot_reason":"<2-3 sentences>","calendar_suggestions":["<suggestion>",...],"slot_scores":[{"startIso":"<exact match>","ai_score":<0-100 float>,"description":"<one sentence>"},...]}
@@ -109,24 +106,24 @@ def _build_user_prompt(
 # ---------------------------------------------------------------------------
 
 def _call_openai(user_prompt: str) -> Optional[dict]:
-    """Invoke gpt-4o-mini with JSON-mode structured output.
+    """Invoke the AI fairness model with JSON-mode structured output.
 
-    Returns the parsed JSON dict on success, or None if the call fails —
-    caller must fall back to heuristic scores so the meeting flow never breaks.
+    Returns the parsed JSON dict on success, or None on any failure — caller
+    falls back to heuristic scores so the meeting flow never breaks.
     """
     api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
-        logger.warning("[ai_fairness] OPENAI_API_KEY not set — skipping AI scoring")
+        logger.error("[ai_fairness] OPENAI_API_KEY not set — AI scoring disabled")
         return None
 
     try:
         from openai import OpenAI
     except ImportError:
-        logger.warning("[ai_fairness] openai package not available — skipping AI scoring")
+        logger.error("[ai_fairness] openai package not installed — AI scoring disabled")
         return None
 
-    client = OpenAI(api_key=api_key)
     try:
+        client = OpenAI(api_key=api_key)
         resp = client.chat.completions.create(
             model=MODEL_ID,
             response_format={"type": "json_object"},
@@ -140,7 +137,7 @@ def _call_openai(user_prompt: str) -> Optional[dict]:
         content = resp.choices[0].message.content or ""
         return json.loads(content)
     except Exception as exc:
-        logger.warning(f"[ai_fairness] OpenAI call failed: {exc}")
+        logger.error(f"[ai_fairness] OpenAI call failed (model={MODEL_ID}): {exc}", exc_info=True)
         return None
 
 
@@ -148,17 +145,18 @@ def _call_openai(user_prompt: str) -> Optional[dict]:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _heuristic_fallback(
-    candidate_slots: List[dict],
-    reason: str = "AI scoring unavailable — heuristic scores used as fallback.",
-) -> Dict[str, Any]:
-    """Produce a fallback result using only the heuristic scores."""
+def _heuristic_fallback(candidate_slots: List[dict]) -> Dict[str, Any]:
+    """Produce a fallback result using only the heuristic scores.
+
+    `summary` and `best_slot_reason` are left empty so the UI doesn't surface
+    an apologetic banner — the heuristic scores still show normally on each slot.
+    """
     if not candidate_slots:
         return {
             "method": "heuristic_fallback",
             "model": MODEL_ID,
             "meeting_fairness_score": 0.0,
-            "summary": reason,
+            "summary": "",
             "best_slot": "",
             "best_slot_reason": "",
             "calendar_suggestions": [],
@@ -170,9 +168,9 @@ def _heuristic_fallback(
         "method": "heuristic_fallback",
         "model": MODEL_ID,
         "meeting_fairness_score": avg,
-        "summary": reason,
+        "summary": "",
         "best_slot": str(best.get("startIso", "")),
-        "best_slot_reason": best.get("explanation", "Top-ranked slot by the heuristic scorer."),
+        "best_slot_reason": "",
         "calendar_suggestions": [],
         "slot_scores": [
             {
@@ -220,7 +218,7 @@ def score_meeting_with_ai(
         }
     """
     if not candidate_slots:
-        return _heuristic_fallback([], "No candidate slots to score.")
+        return _heuristic_fallback([])
 
     user_prompt = _build_user_prompt(candidate_slots, participants, organizer_preferences)
     ai = _call_openai(user_prompt)
