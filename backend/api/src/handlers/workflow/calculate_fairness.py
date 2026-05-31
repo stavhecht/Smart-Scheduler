@@ -28,6 +28,10 @@ def handler(payload: dict) -> dict:
     participant_working_days = [p.get("workingDays", [0, 1, 2, 3, 4]) for p in profiles] or None
     participant_lunch_breaks = [p.get("lunchBreak") for p in profiles] or None
 
+    creator_id = payload.get("creator_id", "")
+    creator_profile = next((p for p in profiles if p.get("userId") == creator_id), None)
+    organizer_working_days = (creator_profile or {}).get("workingDays", [0, 1, 2, 3, 4])
+
     # Engine baseline — provides fairnessImpact and the pre-AI score
     scored = []
     for slot in candidate_slots:
@@ -40,6 +44,7 @@ def handler(payload: dict) -> dict:
             participant_working_days=participant_working_days,
             participant_lunch_breaks=participant_lunch_breaks,
             busy_count=busy_count,
+            organizer_working_days=organizer_working_days,
         )
         scored.append({**slot, **result, "aiScored": False, "aiSuggestions": None})
 
@@ -62,6 +67,7 @@ def handler(payload: dict) -> dict:
                 score=float(slot.get("score", 50)),
                 load_penalty=float(slot.get("_load_penalty", 0.0)),
                 equity_bonus=float(slot.get("_equity_bonus", 20.0)),
+                working_days=organizer_working_days,
             )
         if preferred_hours and slot.get("isPreferred") and not str(slot.get("explanation", "")).startswith("(preferred"):
             slot["explanation"] = "(preferred time) " + slot.get("explanation", "")

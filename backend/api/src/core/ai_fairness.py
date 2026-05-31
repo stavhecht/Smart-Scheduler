@@ -106,24 +106,24 @@ def _build_user_prompt(
 # ---------------------------------------------------------------------------
 
 def _call_openai(user_prompt: str) -> Optional[dict]:
-    """Invoke gpt-4o-mini with JSON-mode structured output.
+    """Invoke the AI fairness model with JSON-mode structured output.
 
-    Returns the parsed JSON dict on success, or None if the call fails —
-    caller must fall back to heuristic scores so the meeting flow never breaks.
+    Returns the parsed JSON dict on success, or None on any failure — caller
+    falls back to heuristic scores so the meeting flow never breaks.
     """
     api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
-        logger.warning("[ai_fairness] OPENAI_API_KEY not set — skipping AI scoring")
+        logger.error("[ai_fairness] OPENAI_API_KEY not set — AI scoring disabled")
         return None
 
     try:
         from openai import OpenAI
     except ImportError:
-        logger.warning("[ai_fairness] openai package not available — skipping AI scoring")
+        logger.error("[ai_fairness] openai package not installed — AI scoring disabled")
         return None
 
-    client = OpenAI(api_key=api_key)
     try:
+        client = OpenAI(api_key=api_key)
         resp = client.chat.completions.create(
             model=MODEL_ID,
             response_format={"type": "json_object"},
@@ -137,7 +137,7 @@ def _call_openai(user_prompt: str) -> Optional[dict]:
         content = resp.choices[0].message.content or ""
         return json.loads(content)
     except Exception as exc:
-        logger.warning(f"[ai_fairness] OpenAI call failed: {exc}")
+        logger.error(f"[ai_fairness] OpenAI call failed (model={MODEL_ID}): {exc}", exc_info=True)
         return None
 
 
@@ -145,17 +145,18 @@ def _call_openai(user_prompt: str) -> Optional[dict]:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _heuristic_fallback(
-    candidate_slots: List[dict],
-    reason: str = "AI scoring unavailable — heuristic scores used as fallback.",
-) -> Dict[str, Any]:
-    """Produce a fallback result using only the heuristic scores."""
+def _heuristic_fallback(candidate_slots: List[dict]) -> Dict[str, Any]:
+    """Produce a fallback result using only the heuristic scores.
+
+    `summary` and `best_slot_reason` are left empty so the UI doesn't surface
+    an apologetic banner — the heuristic scores still show normally on each slot.
+    """
     if not candidate_slots:
         return {
             "method": "heuristic_fallback",
             "model": MODEL_ID,
             "meeting_fairness_score": 0.0,
-            "summary": reason,
+            "summary": "",
             "best_slot": "",
             "best_slot_reason": "",
             "calendar_suggestions": [],
@@ -167,9 +168,9 @@ def _heuristic_fallback(
         "method": "heuristic_fallback",
         "model": MODEL_ID,
         "meeting_fairness_score": avg,
-        "summary": reason,
+        "summary": "",
         "best_slot": str(best.get("startIso", "")),
-        "best_slot_reason": best.get("explanation", "Top-ranked slot by the heuristic scorer."),
+        "best_slot_reason": "",
         "calendar_suggestions": [],
         "slot_scores": [
             {
@@ -217,7 +218,7 @@ def score_meeting_with_ai(
         }
     """
     if not candidate_slots:
-        return _heuristic_fallback([], "No candidate slots to score.")
+        return _heuristic_fallback([])
 
     user_prompt = _build_user_prompt(candidate_slots, participants, organizer_preferences)
     ai = _call_openai(user_prompt)
