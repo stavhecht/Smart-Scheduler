@@ -46,7 +46,6 @@ def handle_calendar_status(identity: dict) -> dict:
         logger.warning(f"[calendar_status] {exc}")
         return {
             "google": {"connected": False, "email": ""},
-            "microsoft": {"connected": False, "email": ""},
             "ics": {"connected": False, "url": ""},
         }
 
@@ -66,13 +65,6 @@ def handle_oauth_url(identity: dict, action: str, data: str | None = None) -> di
                 detail="Google Calendar not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in Lambda environment.",
             )
         return {"url": calendar_client.get_google_auth_url(identity["user_id"], redirect_origin), "provider": "google"}
-    if provider == "microsoft":
-        if not getattr(calendar_client, 'MS_CLIENT_ID', ''):
-            raise HTTPException(
-                status_code=503,
-                detail="Microsoft Calendar not configured. Set MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET in Lambda environment.",
-            )
-        return {"url": calendar_client.get_microsoft_auth_url(identity["user_id"]), "provider": "microsoft"}
     raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
 
 
@@ -118,22 +110,6 @@ def handle_oauth_callback(identity: dict, action: str, data: str | None) -> dict
             "calendar_email": calendar_email,
         })
         return {"status": "success", "provider": "google", "email": calendar_email}
-
-    if provider == "microsoft":
-        try:
-            tokens = calendar_client.exchange_microsoft_code(code)
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"Token exchange failed: {exc}")
-        calendar_email = calendar_client.get_microsoft_user_email(tokens.get("access_token", ""))
-        expires_at = datetime.now(timezone.utc) + timedelta(seconds=tokens.get("expires_in", 3600))
-        _cal_repo.save_oauth_tokens(user_id, "microsoft", {
-            "access_token": tokens.get("access_token", ""),
-            "refresh_token": tokens.get("refresh_token", ""),
-            "expires_at": expires_at.isoformat(),
-            "scope": tokens.get("scope", ""),
-            "calendar_email": calendar_email,
-        })
-        return {"status": "success", "provider": "microsoft", "email": calendar_email}
 
     raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
 

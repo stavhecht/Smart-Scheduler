@@ -168,9 +168,12 @@ class FairnessEngine:
             equity_bonus = 5.0
             final_score = time_score
 
-        # 4. Calendar Conflict Penalty — 12 pts per conflicting participant, max 36
+        # 4. Calendar Conflict Penalty — scales with the fraction of participants blocked.
+        # 1 of 2 conflicting drops the score ~37 pts; 1 of 10 drops only ~7 pts.
         if busy_count > 0:
-            final_score -= min(busy_count * 12.0, 36.0)
+            n_total = max(1, len(participant_states)) if participant_states else 1
+            conflict_ratio = busy_count / n_total
+            final_score -= min(75.0, round(conflict_ratio * 75.0, 1))
 
         # Clamping
         final_score = round(max(0.0, min(100.0, final_score)), 1)

@@ -50,7 +50,7 @@ def _get_state_machine_arn() -> str:
 # Inline AI scoring (replaces the previous async Step Function)
 # ---------------------------------------------------------------------------
 
-def _build_participants_context(
+def build_participants_context(
     creator_id: str,
     participant_ids: list,
     date_start: datetime,
@@ -122,7 +122,7 @@ def _run_ai_inline(request_id: str, sfn_input: dict) -> Optional[dict]:
             date_end = datetime.utcnow() + timedelta(days=7)
 
         organizer_id = sfn_input.get("creator_id", "")
-        participants_context = _build_participants_context(
+        participants_context = build_participants_context(
             organizer_id,
             sfn_input.get("participant_ids", []) or [],
             date_start,
@@ -201,13 +201,11 @@ def run_or_schedule(
 ) -> dict:
     """
     Creates the meeting record, runs the heuristic slot pipeline (Step Functions
-    or in-process fallback), then runs AI fairness scoring inline. Returns the
-    meeting dict with the top-level ai* fields populated.
+    when available, in-process otherwise), then runs AI fairness scoring inline.
+    Returns the meeting dict with the top-level ai* fields populated.
     """
     account_id = os.environ.get("AWS_ACCOUNT_ID", "")
-    if not account_id or os.environ.get("ENVIRONMENT") == "development":
-        from src.handlers.api._local_sim import run_simulation
-        return run_simulation(meeting_data, user_id)
+    is_local = not account_id or os.environ.get("ENVIRONMENT") == "development"
 
     meeting = _meeting_repo.create_record(meeting_data, user_id)
     creator_profile = _user_repo.get_profile_raw(user_id)
@@ -239,33 +237,37 @@ def run_or_schedule(
         "excluded_weekdays": getattr(meeting_data, "excludedWeekdays", None),
     }
 
-    try:
-        sfn = _get_sfn_client()
-        resp = sfn.start_sync_execution(
-            stateMachineArn=_get_state_machine_arn(),
-            name=f"schedule-{meeting.requestId}",
-            input=json.dumps(sfn_input),
-        )
-        if resp["status"] == "FAILED":
-            raise Exception(resp.get("error", "Workflow failed"))
-    except Exception as sfn_exc:
-        logger.warning(f"SFN failed for {meeting.requestId}, falling back to local: {sfn_exc}")
+    if is_local:
         try:
             run_local_steps(sfn_input)
         except Exception as local_exc:
-            logger.warning(f"Local scheduling also failed for {meeting.requestId}: {local_exc}")
-
-    # Guard: SFN can return SUCCEEDED yet leave no slots in DynamoDB if the
-    # store_results step misbehaves. Verify slots were actually written and
-    # fall back to running the workflow in-process if not.
-    if not _meeting_repo.get_slots(meeting.requestId):
-        logger.warning(f"No slots stored for {meeting.requestId} after SFN, running local fallback")
+            logger.warning(f"Local scheduling failed for {meeting.requestId}: {local_exc}")
+    else:
         try:
-            run_local_steps(sfn_input)
-        except Exception as local_exc:
-            logger.warning(f"Local fallback after empty SFN failed for {meeting.requestId}: {local_exc}")
+            sfn = _get_sfn_client()
+            resp = sfn.start_sync_execution(
+                stateMachineArn=_get_state_machine_arn(),
+                name=f"schedule-{meeting.requestId}",
+                input=json.dumps(sfn_input),
+            )
+            if resp["status"] == "FAILED":
+                raise Exception(resp.get("error", "Workflow failed"))
+        except Exception as sfn_exc:
+            logger.warning(f"SFN failed for {meeting.requestId}, falling back to local: {sfn_exc}")
+            try:
+                run_local_steps(sfn_input)
+            except Exception as local_exc:
+                logger.warning(f"Local scheduling also failed for {meeting.requestId}: {local_exc}")
 
-    # Inline AI scoring — replaces the previous async SFN
+        # Guard: SFN can return SUCCEEDED yet leave no slots in DynamoDB if the
+        # store_results step misbehaves. Re-run the workflow in-process if so.
+        if not _meeting_repo.get_slots(meeting.requestId):
+            logger.warning(f"No slots stored for {meeting.requestId} after SFN, running local fallback")
+            try:
+                run_local_steps(sfn_input)
+            except Exception as local_exc:
+                logger.warning(f"Local fallback after empty SFN failed for {meeting.requestId}: {local_exc}")
+
     ai_fields = _run_ai_inline(meeting.requestId, sfn_input)
 
     meeting_dict = meeting.model_dump(mode="json")

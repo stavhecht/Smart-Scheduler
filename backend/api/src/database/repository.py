@@ -86,33 +86,6 @@ class UserRepository:
         data = self._db.get(f"USER#{user_id}", "FAIRNESS")
         return models.FairnessState(**data) if data else None
 
-    def update_fairness_on_booking(self, user_ids: List[str], fairness_impact: float) -> None:
-        from src.core.fairness import engine
-        for uid in user_ids:
-            fairness = self.get_fairness(uid)
-            if not fairness:
-                self.ensure_profile(uid, "", uid[:8])
-                fairness = self.get_fairness(uid)
-            if not fairness:
-                continue
-            now = datetime.now().isoformat()
-            raw = self._maybe_reset_weekly(fairness.model_dump(mode="json"))
-            updated = engine.update_score_after_booking(
-                {"fairnessScore": float(raw["fairnessScore"]),
-                 "meetingLoadMetrics": raw["meetingLoadMetrics"],
-                 "lastUpdatedAt": raw.get("lastUpdatedAt", now)},
-                fairness_impact,
-            )
-            self._db.put(f"USER#{uid}", "FAIRNESS", {
-                "userId": uid,
-                **updated,
-                "inconvenientMeetingsCount": (
-                    fairness.inconvenientMeetingsCount + updated["inconvenientMeetingsCount"]
-                ),
-                "lastWeekReset": raw.get("lastWeekReset", now),
-                "lastUpdatedAt": now,
-            })
-
     def update_fairness_for_single(
         self,
         user_id: str,
@@ -533,16 +506,15 @@ class CalendarRepository:
         self._db.delete(f"USER#{user_id}", f"OAUTH#{provider}")
 
     def get_connected_calendars(self, user_id: str) -> dict:
-        result = {}
-        for provider in ("google", "microsoft"):
-            tokens = self.get_oauth_tokens(user_id, provider)
-            result[provider] = (
+        tokens = self.get_oauth_tokens(user_id, "google")
+        return {
+            "google": (
                 {"connected": True, "email": tokens.get("calendarEmail", ""),
                  "connectedAt": tokens.get("connectedAt", "")}
                 if tokens
                 else {"connected": False, "email": ""}
             )
-        return result
+        }
 
     def get_ics_url(self, user_id: str) -> str:
         profile = self._db.get(f"USER#{user_id}", "PROFILE")
@@ -621,48 +593,13 @@ class CalendarRepository:
 class AIFairnessRepository:
     """
     Storage layout (single-table):
-      MEET#<id>   / AISCORE                → latest AI verdict for a meeting
-      MEET#<id>   / AIHIST#<iso_ts>        → audit trail (TTL: 90 days)
       USER#<id>   / AIFAIRHIST#<iso_ts>    → per-user fairness trajectory (TTL: 365 days)
     """
 
-    AI_HIST_TTL_DAYS = 90
     USER_HIST_TTL_DAYS = 365
 
     def __init__(self) -> None:
         self._db = get_db()
-
-    # --- Meeting-level ---
-
-    def write_meeting_score(self, request_id: str, result: dict) -> None:
-        item = {
-            "requestId": request_id,
-            "method":    result.get("method", "unknown"),
-            "model":     result.get("model", ""),
-            "meetingFairnessScore": float(result.get("meeting_fairness_score", 0.0)),
-            "summary":             str(result.get("summary", ""))[:280],
-            "slotScores":          result.get("slot_scores", []),
-            "participantEquity":   result.get("participant_equity", []),
-            "error":               result.get("error", ""),
-            "computedAt":          datetime.now().isoformat(),
-        }
-        self._db.put(f"MEET#{request_id}", "AISCORE", item)
-
-    def get_meeting_score(self, request_id: str) -> Optional[dict]:
-        return self._db.get(f"MEET#{request_id}", "AISCORE")
-
-    def append_meeting_history(self, request_id: str, result: dict) -> None:
-        ts = datetime.now().isoformat()
-        self._db.put(f"MEET#{request_id}", f"AIHIST#{ts}", {
-            "requestId": request_id,
-            "method":    result.get("method", "unknown"),
-            "meetingFairnessScore": float(result.get("meeting_fairness_score", 0.0)),
-            "summary":   str(result.get("summary", ""))[:280],
-            "recordedAt": ts,
-            "ttlExpiry": int(time.time()) + (self.AI_HIST_TTL_DAYS * 86400),
-        })
-
-    # --- User-level ---
 
     def append_user_fairness_point(self, user_id: str, request_id: str, score: float) -> None:
         ts = datetime.now().isoformat()
