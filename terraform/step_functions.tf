@@ -85,7 +85,7 @@ resource "aws_sfn_state_machine" "scheduler" {
   })
 
   logging_configuration {
-    level                  = "OFF"
+    level                  = "ALL"
     include_execution_data = false
   }
 
