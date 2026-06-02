@@ -8,6 +8,13 @@
 # Uses Express Workflow (synchronous, < 5 min) so the API can await results.
 # ---------------------------------------------------------------------------
 
+# Existing CloudWatch log group used by the state machine. Referenced as a
+# data source because AWS Academy's LabRole creates it automatically and
+# Terraform cannot create/destroy log groups in this account.
+data "aws_cloudwatch_log_group" "sfn_logs" {
+  name = "/aws/vendedlogs/states/SmartSchedulerWorkflow-Logs"
+}
+
 resource "aws_sfn_state_machine" "scheduler" {
   name     = "SmartSchedulerWorkflow"
   role_arn = local.lab_role_arn
@@ -86,7 +93,8 @@ resource "aws_sfn_state_machine" "scheduler" {
 
   logging_configuration {
     level                  = "ALL"
-    include_execution_data = false
+    include_execution_data = true
+    log_destination        = "${data.aws_cloudwatch_log_group.sfn_logs.arn}:*"
   }
 
   tags = {
