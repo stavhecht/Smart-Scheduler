@@ -230,28 +230,40 @@ export default function MeetingCard({
       {/* Slot selection panel — organizer, pending, expanded, not in-flight */}
       {isExpanded && isOrganizer && !isConfirmed && busyId !== meeting.requestId && (
         <div className="mc-panel slots-panel">
-          {/* AI strategic summary — one-line verdict */}
-          {meeting.aiSummary && (
+          {/* AI's choice — slot recommendation + reasoning */}
+          {meeting.aiBestSlotReason && (
             <div style={{
               border: '1px solid #8b5cf644',
               background: 'linear-gradient(135deg, #8b5cf60d, #8b5cf604)',
               borderRadius: '10px',
               padding: '0.65rem 0.9rem',
               marginBottom: '0.75rem',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.75rem',
-              flexWrap: 'wrap',
             }}>
-              <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#8b5cf6', background: '#8b5cf61a', border: '1px solid #8b5cf644', borderRadius: '10px', padding: '0.15rem 0.5rem', flexShrink: 0 }}>
-                🧠 AI Verdict
-              </span>
-              {typeof meeting.aiMeetingScore === 'number' && (
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', flexShrink: 0 }}>
-                  <strong style={{ color: '#8b5cf6' }}>{Math.round(meeting.aiMeetingScore)}%</strong>
-                </span>
-              )}
-              <span style={{ fontSize: '0.82rem', flex: 1, minWidth: 0 }}>{meeting.aiSummary}</span>
+              <div style={{
+                fontSize: '0.72rem',
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '0.04em',
+                color: '#8b5cf6',
+                marginBottom: '0.3rem',
+              }}>
+                🧠 AI's choice
+                {meeting.aiBestSlotIso && (() => {
+                  const d = new Date(meeting.aiBestSlotIso);
+                  return isNaN(d) ? '' : ` — ${d.toLocaleString('en-US', {
+                    weekday: 'short', month: 'short', day: 'numeric',
+                    hour: '2-digit', minute: '2-digit',
+                  })}`;
+                })()}
+              </div>
+              <p style={{
+                margin: 0,
+                fontSize: '0.8rem',
+                lineHeight: 1.5,
+                color: 'var(--text-secondary)',
+              }}>
+                {meeting.aiBestSlotReason}
+              </p>
             </div>
           )}
 

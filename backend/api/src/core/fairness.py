@@ -29,9 +29,6 @@ class FairnessEngine:
     REST_DAY_WEIGHT: float     = 0.2
     LUNCH_BREAK_WEIGHT: float  = 0.15  # Applied to any configured lunch break hour
 
-    # Threshold below which the Reshuffling Engine activates
-    OPTIMIZATION_THRESHOLD: float = 60.0
-
     # Working hours for slot generation
     WORKING_HOURS: List[int] = [10, 11, 13, 14, 15, 16]
 
@@ -400,36 +397,6 @@ class FairnessEngine:
 
         chosen = _pick_diverse(preferred, preferred_count) + _pick_diverse(outside, outside_count)
         return chosen[:count]
-
-    # ---------------------------------------------------------------------------
-    # Dynamic Reshuffling Engine
-    # ---------------------------------------------------------------------------
-
-    def needs_optimization(self, scored_slots: List[dict]) -> bool:
-        """
-        Checks if the Dynamic Reshuffling Engine should activate.
-        Triggers when average score across suggested slots falls below threshold.
-        """
-        if not scored_slots:
-            return False
-        avg = sum(s['score'] for s in scored_slots) / len(scored_slots)
-        return avg < self.OPTIMIZATION_THRESHOLD
-
-    def reshuffle(self, all_scored_slots: List[dict], count: int = 8) -> List[dict]:
-        """
-        Dynamic Reshuffling Engine: re-selects the best available slots.
-        Preferred slots (user-requested time window) are always included regardless
-        of score; non-preferred slots are filtered to score >= 40.
-        """
-        preferred = [s for s in all_scored_slots if s.get("isPreferred")]
-        rest = [s for s in all_scored_slots if not s.get("isPreferred") and s["score"] >= 40]
-        pool = (
-            sorted(preferred, key=lambda s: -s["score"]) +
-            sorted(rest, key=lambda s: -s["score"])
-        )
-        if not pool:
-            pool = sorted(all_scored_slots, key=lambda s: -s["score"])
-        return self.select_best_slots(pool, count=count)
 
     # ---------------------------------------------------------------------------
     # Fairness score update on booking

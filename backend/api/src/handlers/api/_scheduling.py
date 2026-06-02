@@ -14,7 +14,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Optional
 
 import boto3
@@ -24,6 +26,13 @@ from src.database import models
 from src.database.repository import AIFairnessRepository, MeetingRepository, UserRepository
 
 logger = logging.getLogger(__name__)
+
+
+class _DecimalEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, Decimal):
+            return int(o) if o % 1 == 0 else float(o)
+        return super().default(o)
 
 _sfn_client = None
 _meeting_repo = MeetingRepository()
@@ -145,7 +154,14 @@ def _run_ai_inline(request_id: str, sfn_input: dict) -> Optional[dict]:
                 "preferred_label": label,
             }
 
+        # Capture the heuristic's preferred slot BEFORE AI overwrites slot scores —
+        # we'll compare against AI's pick to measure disagreement in production.
+        heuristic_best = max(candidate_slots, key=lambda s: float(s.get("score", 0.0)), default=None)
+        heuristic_best_iso = str(heuristic_best.get("startIso", "")) if heuristic_best else ""
+
+        t0 = time.time()
         ai_result = score_meeting_with_ai(request_id, candidate_slots, participants_context, organizer_preferences)
+        ai_latency_ms = int((time.time() - t0) * 1000)
 
         # Update each slot's primary score + explanation with the AI verdict.
         ai_by_start = {str(entry.get("startIso")): entry for entry in ai_result.get("slot_scores", [])}
@@ -161,14 +177,32 @@ def _run_ai_inline(request_id: str, sfn_input: dict) -> Optional[dict]:
             slot_dict["aiScored"] = True
             _meeting_repo.write_slot(request_id, start_key, slot_dict)
 
+        ai_best_iso = str(ai_result.get("best_slot", ""))
+        differs = bool(ai_best_iso and heuristic_best_iso and ai_best_iso != heuristic_best_iso)
+        ai_score_for_ai_pick = float(ai_by_start.get(ai_best_iso, {}).get("ai_score", 0.0)) if ai_best_iso else 0.0
+        ai_score_for_heuristic_pick = float(ai_by_start.get(heuristic_best_iso, {}).get("ai_score", 0.0)) if heuristic_best_iso else 0.0
+        score_gap = round(ai_score_for_ai_pick - ai_score_for_heuristic_pick, 1)
+
+        logger.info(
+            f"[ai_inline] request_id={request_id} method={ai_result.get('method')} "
+            f"latency_ms={ai_latency_ms} slots={len(candidate_slots)} "
+            f"participants={len(participants_context)} disagree={differs} score_gap={score_gap}"
+        )
+
         meeting_ai_fields = {
             "aiMeetingScore": float(ai_result.get("meeting_fairness_score", 0.0)),
             "aiSummary": str(ai_result.get("summary", ""))[:300],
-            "aiBestSlotIso": str(ai_result.get("best_slot", "")),
+            "aiBestSlotIso": ai_best_iso,
             "aiBestSlotReason": str(ai_result.get("best_slot_reason", ""))[:600],
             "aiCalendarSuggestions": list(ai_result.get("calendar_suggestions", []))[:4],
             "aiMethod": ai_result.get("method", ""),
             "aiModel": ai_result.get("model", ""),
+            "aiLatencyMs": ai_latency_ms,
+            "aiHeuristicBestIso": heuristic_best_iso,
+            "aiDisagreedWithHeuristic": differs,
+            "aiScoreGap": score_gap,
+            "aiSlotCount": len(candidate_slots),
+            "aiParticipantCount": len(participants_context),
         }
 
         meeting = _meeting_repo.get_meta(request_id)
@@ -248,7 +282,7 @@ def run_or_schedule(
             resp = sfn.start_sync_execution(
                 stateMachineArn=_get_state_machine_arn(),
                 name=f"schedule-{meeting.requestId}",
-                input=json.dumps(sfn_input),
+                input=json.dumps(sfn_input, cls=_DecimalEncoder),
             )
             if resp["status"] == "FAILED":
                 raise Exception(resp.get("error", "Workflow failed"))
@@ -282,14 +316,11 @@ def run_local_steps(payload: dict) -> None:
         calculate_fairness,
         fetch_participants,
         generate_slots,
-        reshuffle_slots,
         store_results,
     )
     payload = fetch_participants.handler(payload)
     payload = generate_slots.handler(payload)
     payload = calculate_fairness.handler(payload)
-    if payload.get("optimization_needed"):
-        payload = reshuffle_slots.handler(payload)
     store_results.handler(payload)
 
 

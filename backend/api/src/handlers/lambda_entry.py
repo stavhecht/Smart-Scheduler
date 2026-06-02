@@ -6,7 +6,6 @@ from src.handlers.workflow import (
     calculate_fairness,
     fetch_participants,
     generate_slots,
-    reshuffle_slots,
     store_results,
 )
 
@@ -14,7 +13,6 @@ _ACTION_MAP = {
     "fetch_participants":  fetch_participants.handler,
     "generate_slots":      generate_slots.handler,
     "calculate_fairness":  calculate_fairness.handler,
-    "reshuffle_slots":     reshuffle_slots.handler,
     "store_results":       store_results.handler,
 }
 

@@ -104,7 +104,6 @@ src/
         ├── fetch_participants.py
         ├── generate_slots.py
         ├── calculate_fairness.py
-        ├── reshuffle_slots.py
         └── store_results.py
 ```
 
@@ -132,7 +131,7 @@ Key actions:
 ### Step Functions Workflow
 
 `SmartSchedulerWorkflow` (EXPRESS type) runs when a meeting is created:
-`FetchParticipantData → GenerateCandidateSlots → CalculateFairnessScores → CheckOptimizationNeeded → [ReshuffleSlots] → StoreResults`
+`FetchParticipantData → GenerateCandidateSlots → CalculateFairnessScores → StoreResults`
 
 Each step maps to a `sfn_*` function in `db.py`. The workflow is triggered from `main.py` when creating a meeting.
 
@@ -173,7 +172,6 @@ Single `FairnessEngine` class, global `engine` singleton. Key concepts:
   - `load_penalty` = up to −30 based on participants' meetings this week
   - `equity_bonus` = ±15 (rewards slots where high-fairness participants get convenient time)
   - `conflict_penalty` = 12 pts per participant with a calendar conflict, capped at 36
-- **Reshuffling Engine**: activates when average slot score < 75 (`OPTIMIZATION_THRESHOLD`); filters slots below 60, re-selects best from viable pool.
 
 ### DynamoDB Access Pattern (`src/database/repository.py`)
 
