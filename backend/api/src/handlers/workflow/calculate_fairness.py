@@ -74,5 +74,4 @@ def handler(payload: dict) -> dict:
         clean_scored.append({k: v for k, v in slot.items() if k not in _internal})
 
     payload["scored_slots"] = clean_scored
-    payload["optimization_needed"] = engine.needs_optimization(clean_scored)
     return payload
