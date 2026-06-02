@@ -1,7 +1,7 @@
 """
 AI-powered fairness scoring — primary scorer.
 
-This module wraps an OpenAI gpt-4o-mini agent that takes:
+This module wraps an OpenAI gpt-4.1-mini agent that takes:
   - heuristic candidate slots (used only as a sanity-check reference)
   - each participant's historical fairness scores + load metrics
   - each participant's Google Calendar events for the meeting horizon
@@ -13,7 +13,9 @@ would unlock even better options.
 The AI's score is the score the user sees. The heuristic score is only used
 as a fallback if the AI call fails (OpenAI down, no API key, parse error).
 
-Runtime model: gpt-4o-mini (cheap, fast, JSON-mode output).
+Runtime model: gpt-4.1-mini (cheap, fast, JSON-mode output). Override via the
+AI_FAIRNESS_MODEL env var. Only gpt-4.1-mini and gpt-4.1-nano are validated
+against this project's OpenAI access.
 """
 
 from __future__ import annotations
