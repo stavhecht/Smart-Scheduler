@@ -402,6 +402,7 @@ function AppContent() {
                 onConnectCalendar={() => navigate('/profile', { state: { initialTab: 'calendar' } })}
                 onNewMeeting={() => { setMeetingPrefill(null); setShowGlobalCreate(true); }}
                 onNewMeetingFromText={handleNewMeetingFromText}
+                onViewFairness={() => navigate('/profile', { state: { initialTab: 'fairness', expandFairness: true } })}
               />
             } />
 
@@ -471,6 +472,7 @@ function AppContent() {
                   onCalendarDisconnect={handleCalendarDisconnect}
                   onProfileUpdate={setProfile}
                   initialTab={location.state?.initialTab}
+                  expandFairness={location.state?.expandFairness}
                 />
               </div>
             } />

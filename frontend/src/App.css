@@ -548,6 +548,23 @@
   max-width: 46ch;
 }
 
+.fairness-hero-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+  transition: opacity var(--transition);
+}
+
+.fairness-hero-link:hover {
+  opacity: 0.8;
+  text-decoration: underline;
+}
+
 @media (max-width: 640px) {
   .fairness-hero { flex-direction: column; text-align: center; gap: 1.25rem; padding: 1.5rem; }
   .fairness-hero-desc { max-width: none; }
