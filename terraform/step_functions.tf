@@ -3,10 +3,17 @@
 #
 # Implements the "Social Fairness Algorithm" orchestration workflow:
 #   FetchParticipantData → GenerateCandidateSlots → CalculateFairnessScores
-#   → (Choice) CheckOptimizationNeeded → [ReshuffleSlots] → StoreResults
+#   → StoreResults
 #
 # Uses Express Workflow (synchronous, < 5 min) so the API can await results.
 # ---------------------------------------------------------------------------
+
+# Existing CloudWatch log group used by the state machine. Referenced as a
+# data source because AWS Academy's LabRole creates it automatically and
+# Terraform cannot create/destroy log groups in this account.
+data "aws_cloudwatch_log_group" "sfn_logs" {
+  name = "/aws/vendedlogs/states/SmartSchedulerWorkflow-Logs"
+}
 
 resource "aws_sfn_state_machine" "scheduler" {
   name     = "SmartSchedulerWorkflow"
@@ -23,8 +30,8 @@ resource "aws_sfn_state_machine" "scheduler" {
         Type     = "Task"
         Resource = aws_lambda_function.api_handler.arn
         Parameters = {
-          sfn_action    = "fetch_participants"
-          "payload.$"   = "$"
+          sfn_action  = "fetch_participants"
+          "payload.$" = "$"
         }
         ResultPath = "$"
         Retry = [
@@ -67,37 +74,10 @@ resource "aws_sfn_state_machine" "scheduler" {
           "payload.$" = "$"
         }
         ResultPath = "$"
-        Next       = "CheckOptimizationNeeded"
-      }
-
-      # --- State 4: Choice — activate Dynamic Reshuffling Engine? ---
-      CheckOptimizationNeeded = {
-        Type = "Choice"
-        Choices = [
-          {
-            Variable       = "$.optimization_needed"
-            BooleanEquals  = true
-            Next           = "ReshuffleSlots"
-          }
-        ]
-        Default = "StoreResults"
-        Comment = "Activate Reshuffling Engine when avg score < 75"
-      }
-
-      # --- State 5 (conditional): Dynamic Reshuffling Engine ---
-      ReshuffleSlots = {
-        Type     = "Task"
-        Resource = aws_lambda_function.api_handler.arn
-        Parameters = {
-          sfn_action  = "reshuffle_slots"
-          "payload.$" = "$"
-        }
-        ResultPath = "$"
         Next       = "StoreResults"
-        Comment    = "Re-selects best slots when fairness scores are too low"
       }
 
-      # --- State 6: Persist ranked slots to DynamoDB ---
+      # --- State 4: Persist ranked slots to DynamoDB ---
       StoreResults = {
         Type     = "Task"
         Resource = aws_lambda_function.api_handler.arn
@@ -112,8 +92,9 @@ resource "aws_sfn_state_machine" "scheduler" {
   })
 
   logging_configuration {
-    level                  = "OFF"
-    include_execution_data = false
+    level                  = "ALL"
+    include_execution_data = true
+    log_destination        = "${data.aws_cloudwatch_log_group.sfn_logs.arn}:*"
   }
 
   tags = {

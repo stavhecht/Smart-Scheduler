@@ -12,6 +12,7 @@ __pycache__/
 venv/
 backend/api/package/
 backend/api/debug_slots.py
+backend/api/evals/
 
 # Deployment packages
 *.zip

@@ -133,7 +133,16 @@ def parse_meeting_intent(text: str, today_iso: str, known_users: List[Dict[str, 
         "- participantHints: ONLY names/emails the user explicitly named in the request text. "
         "Resolve each to a contact's displayName or email when there is a match, otherwise return the literal mention. "
         "NEVER include anyone not named in the input — no inferring, no 'likely attendees'. "
-        "Examples: 'schedule a meeting'→[]; 'meet with Sarah'→['Sarah Johnson'] when Sarah Johnson is in contacts."
+        "The contacts list is a LOOKUP TABLE for resolving names that DO appear in the request — it is NOT a pool of attendees to draw from. "
+        "If the request text contains no proper noun (capitalized name), no @ symbol, and no group reference ('the team', 'engineering'), return []. "
+        "Verbs like 'meet', 'schedule', 'set up a meeting' do NOT imply attendees — only an explicit name does. "
+        "Examples:\n"
+        "  'schedule a meeting' → []\n"
+        "  'set up a meeting tomorrow afternoon' → []\n"
+        "  'schedule a design review next week' → []\n"
+        "  'block off 90 min for focus work' → []\n"
+        "  'meet with Sarah' → ['Sarah Johnson']  (when Sarah Johnson is in contacts)\n"
+        "  'sync with the team' → ['the team']"
     )
 
     body = {

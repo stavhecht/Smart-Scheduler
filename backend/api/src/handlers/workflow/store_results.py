@@ -1,13 +1,13 @@
 """
 SFN State: StoreResults
 
-Persists the final ranked slots to DynamoDB. Uses final_slots (post-reshuffle)
-if present, otherwise selects the best from scored_slots.
+Persists the final ranked slots to DynamoDB by selecting the best from
+scored_slots.
 
 Meeting-level AI verdict is written separately by `_scheduling._run_ai_inline`
 after this step completes.
 
-Input:  payload with request_id, scored_slots, and optionally final_slots
+Input:  payload with request_id and scored_slots
 Output: adds stored_slots_count
 """
 import logging
@@ -31,12 +31,8 @@ def handler(payload: dict) -> dict:
     except Exception:
         days_forward = 7
     slot_count = min(50, max(10, days_forward * 4))
-    logger.info(f"store_results: scored={len(scored_slots)} days_forward={days_forward} slot_count={slot_count} has_final={'final_slots' in payload}")
-    best_slots = (
-        payload["final_slots"]
-        if "final_slots" in payload
-        else engine.select_best_slots(scored_slots, count=slot_count)
-    )
+    logger.info(f"store_results: scored={len(scored_slots)} days_forward={days_forward} slot_count={slot_count}")
+    best_slots = engine.select_best_slots(scored_slots, count=slot_count)
 
     for slot_data in best_slots:
         slot = models.SuggestedTimeSlot(
