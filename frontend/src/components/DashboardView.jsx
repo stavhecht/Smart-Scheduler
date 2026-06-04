@@ -1,7 +1,21 @@
-import { useMemo } from 'react';
-import ActivityFeed from './ActivityFeed.jsx';
+import { useMemo, useState } from 'react';
 
-export default function DashboardView({ profile, meetings, activities, onNavigate, needsAction, isCalendarConnected, onConnectCalendar, onNewMeeting }) {
+export default function DashboardView({ profile, meetings, onNavigate, needsAction, isCalendarConnected, onConnectCalendar, onNewMeeting, onNewMeetingFromText }) {
+  const [aiText, setAiText] = useState('');
+  const [aiParsing, setAiParsing] = useState(false);
+
+  const submitAi = async () => {
+    const text = aiText.trim();
+    if (!text || aiParsing) return;
+    setAiParsing(true);
+    try {
+      await onNewMeetingFromText?.(text);
+      setAiText('');
+    } finally {
+      setAiParsing(false);
+    }
+  };
+
   const myPending    = meetings.filter(m => m.status === 'pending' && m.userRole === 'organizer');
   const confirmed    = meetings.filter(m => m.status === 'confirmed');
   const total        = meetings.length;
@@ -83,19 +97,23 @@ export default function DashboardView({ profile, meetings, activities, onNavigat
         </div>
       )}
 
-      {/* Stats grid */}
-      <div className="stats-row">
-        <div className="stat-card">
-          <div className="stat-body">
-            <div className="stat-value" style={{ color: scoreColor }}>{score}</div>
-            <div className="stat-label">Fairness Score</div>
-            <div className="stat-subtext">
-              {score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : 'Below average'}
-            </div>
+      {/* Fairness Score — dominant hero */}
+      <div className="fairness-hero" style={{ '--score-color': scoreColor }}>
+        <div className="fairness-hero-ring" style={{ background: `conic-gradient(${scoreColor} ${score * 3.6}deg, rgba(255,255,255,0.07) 0deg)` }}>
+          <div className="fairness-hero-ring-inner">
+            <div className="fairness-hero-score" style={{ color: scoreColor }}>{score}</div>
+            <div className="fairness-hero-max">/ 100</div>
           </div>
-          <div className="stat-bar-track">
-            <div className="stat-bar-fill" style={{ width: `${score}%`, background: scoreColor }} />
+        </div>
+        <div className="fairness-hero-body">
+          <div className="fairness-hero-label">Fairness Score</div>
+          <div className="fairness-hero-status" style={{ color: scoreColor }}>
+            {score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : 'Below average'}
           </div>
+          <p className="fairness-hero-desc">
+            Your scheduling fairness across all meetings. Starts at 100 — reduced by a heavy week
+            and cancellations, boosted when you accept less convenient slots for the team.
+          </p>
           <details className="score-explainer">
             <summary>How is this calculated?</summary>
             <div className="score-explainer-body">
@@ -103,7 +121,48 @@ export default function DashboardView({ profile, meetings, activities, onNavigat
             </div>
           </details>
         </div>
+      </div>
 
+      {/* AI meeting setup */}
+      <div className="ai-setup">
+        <textarea
+          className="ai-setup-input"
+          value={aiText}
+          onChange={(e) => setAiText(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitAi(); } }}
+          placeholder="30 min sync with Dana next Tuesday afternoon"
+          rows={3}
+          disabled={aiParsing}
+        />
+        <div className="ai-setup-footer">
+          <span className="ai-setup-hint"> Describe a meeting in plain language</span>
+          {aiText.trim() ? (
+            <button
+              className="btn-primary ai-setup-btn ai-setup-btn--icon"
+              onClick={submitAi}
+              disabled={aiParsing}
+              aria-label="Set up with AI"
+              title="Set up with AI"
+            >
+              {aiParsing ? (
+                <span className="ai-setup-spinner" />
+              ) : (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <line x1="12" y1="19" x2="12" y2="5" />
+                  <polyline points="5 12 12 5 19 12" />
+                </svg>
+              )}
+            </button>
+          ) : (
+            <button className="btn-primary ai-setup-btn" onClick={submitAi} disabled>
+              Set up with AI
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Stats grid */}
+      <div className="stats-row">
         <div className="stat-card">
           <div className="stat-body">
             <div className="stat-value">{total}</div>
@@ -240,14 +299,6 @@ export default function DashboardView({ profile, meetings, activities, onNavigat
             </div>
           )}
         </div>
-      </div>
-
-      {/* Activity Feed */}
-      <div className="dash-card" style={{ marginBottom: '1.25rem' }}>
-        <div className="dash-card-head">
-          <h3>Recent Activity</h3>
-        </div>
-        <ActivityFeed activities={activities} />
       </div>
 
       {/* Recommendations */}
