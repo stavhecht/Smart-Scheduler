@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
+import { fairnessColor, fairnessLabel } from '../fairnessColor';
 
-export default function DashboardView({ profile, meetings, onNavigate, needsAction, isCalendarConnected, onConnectCalendar, onNewMeeting, onNewMeetingFromText }) {
+export default function DashboardView({ profile, meetings, onNavigate, needsAction, isCalendarConnected, onConnectCalendar, onNewMeeting, onNewMeetingFromText, onViewFairness }) {
   const [aiText, setAiText] = useState('');
   const [aiParsing, setAiParsing] = useState(false);
 
@@ -22,7 +23,7 @@ export default function DashboardView({ profile, meetings, onNavigate, needsActi
   const organized    = meetings.filter(m => m.userRole === 'organizer').length;
   const invited      = meetings.filter(m => m.userRole === 'participant').length;
   const score        = Number.isFinite(Number(profile.fairness_score)) ? Math.round(Number(profile.fairness_score)) : 100;
-  const scoreColor   = score >= 80 ? '#22c55e' : score >= 60 ? '#f59e0b' : '#ef4444';
+  const scoreColor   = fairnessColor(score);
   const thisWeek     = profile.details?.meetings_this_week ?? 0;
 
   // Deterministic fairness trend — linear from (score + thisWeek*2) 6 days ago to score today
@@ -108,18 +109,15 @@ export default function DashboardView({ profile, meetings, onNavigate, needsActi
         <div className="fairness-hero-body">
           <div className="fairness-hero-label">Fairness Score</div>
           <div className="fairness-hero-status" style={{ color: scoreColor }}>
-            {score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : 'Below average'}
+            {fairnessLabel(score)}
           </div>
           <p className="fairness-hero-desc">
-            Your scheduling fairness across all meetings. Starts at 100 — reduced by a heavy week
-            and cancellations, boosted when you accept less convenient slots for the team.
+            Your scheduling fairness across all meetings. Starts at 50 (neutral) — it rises when you
+            accept weekend or off-peak slots and dips for prime-time slots and cancellations.
           </p>
-          <details className="score-explainer">
-            <summary>How is this calculated?</summary>
-            <div className="score-explainer-body">
-              Starts at 100. Reduced by meetings this week (−2 each) and cancellations (−5 each). Boosted by accepting inconvenient slots (+3 each). Time slots are scored 0–100 by time of day, day of week, participant load, and fairness balance.
-            </div>
-          </details>
+          <button type="button" className="fairness-hero-link" onClick={onViewFairness}>
+            How is this calculated? →
+          </button>
         </div>
       </div>
 
