@@ -5,7 +5,10 @@
 #   FetchParticipantData → GenerateCandidateSlots → CalculateFairnessScores
 #   → StoreResults
 #
-# Uses Express Workflow (synchronous, < 5 min) so the API can await results.
+# Uses a Standard Workflow. Standard has no StartSyncExecution, so the API
+# starts the execution asynchronously and polls DescribeExecution for the
+# result (see _scheduling._start_and_wait). In exchange it gives full
+# execution history in the console, which Express does not retain.
 # ---------------------------------------------------------------------------
 
 # Existing CloudWatch log group used by the state machine. Referenced as a
@@ -18,7 +21,7 @@ data "aws_cloudwatch_log_group" "sfn_logs" {
 resource "aws_sfn_state_machine" "scheduler" {
   name     = "SmartSchedulerWorkflow"
   role_arn = local.lab_role_arn
-  type     = "EXPRESS"
+  type     = "STANDARD"
 
   definition = jsonencode({
     Comment = "Smart Scheduler: Fairness-based meeting slot optimization workflow"

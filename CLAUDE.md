@@ -29,8 +29,32 @@ python build_lambda.py             # → terraform/api_deployment.zip
 
 **Terraform deploy (from `terraform/`):**
 ```bash
-terraform apply -var="lab_role_arn=arn:aws:iam::975049889875:role/LabRole"
+terraform apply
 # api_deployment.zip must already exist in terraform/ before plan/apply
+# LabRole is derived from the caller's own account — no -var needed
+```
+
+**Redeploying into a fresh AWS Academy account** (each new lab = new account ID):
+```bash
+# 1. Refresh ~/.aws/credentials from the lab, then confirm the account:
+aws sts get-caller-identity
+
+# 2. Create the Step Functions log group — step_functions.tf reads it as a
+#    data source, so plan FAILS if it does not exist yet:
+aws logs create-log-group \
+  --log-group-name "/aws/vendedlogs/states/SmartSchedulerWorkflow-Logs" --region us-east-1
+
+# 3. Archive the old state — it references the dead account and cannot be reused:
+mv terraform/terraform.tfstate{,.backup} <somewhere outside terraform/>
+
+# 4. python build_lambda.py && cd terraform && terraform init && terraform apply
+# 5. Copy the new cognito_user_pool_id / cognito_client_id into
+#    frontend/src/aws-exports.js, and api_endpoint_url into frontend/.env.local
+#    + root .env AWS_ACCOUNT_ID.
+# 6. Create the Amplify app, deploy the frontend, then set frontend_url in
+#    terraform.tfvars to the new main.<appId>.amplifyapp.com URL and re-apply
+#    so API Gateway CORS and the Lambda FRONTEND_URL match.
+# 7. Add the new Amplify URL + API Gateway callback to the Google OAuth client.
 ```
 
 **Quick Lambda deploy (no Terraform):**
@@ -43,9 +67,13 @@ aws lambda update-function-code --function-name smart_scheduler_api \
 **Frontend deploy to Amplify (manual — NOT connected to GitHub):**
 ```bash
 # Build (from frontend/)
-VITE_API_URL=https://5xv230dk19.execute-api.us-east-1.amazonaws.com npm run build
-# Zip dist/ using .NET ZipFile API (PowerShell Compress-Archive produces wrong structure → assets 404)
+VITE_API_URL=https://xds04k0icj.execute-api.us-east-1.amazonaws.com npm run build
+# Zip dist/ with index.html at the ZIP ROOT (not nested in a dist/ folder → assets 404).
+# macOS/Linux:  cd dist && zip -r ../dist.zip .
+# Windows:      use the .NET ZipFile API (PowerShell Compress-Archive nests wrongly)
 # Then: aws amplify create-deployment → PUT to zipUploadUrl → start-deployment
+# Run these with AWS_MAX_ATTEMPTS=1: a CLI retry of create-deployment leaves an
+# orphan PENDING slot that blocks the next one (clear with `aws amplify stop-job`).
 ```
 
 ## Architecture
@@ -158,10 +186,16 @@ creation can be demoed without anyone connecting Google.
 
 ### Step Functions Workflow
 
-`SmartSchedulerWorkflow` (EXPRESS type) runs when a meeting is created:
+`SmartSchedulerWorkflow` (STANDARD type) runs when a meeting is created:
 `FetchParticipantData → GenerateCandidateSlots → CalculateFairnessScores → StoreResults`
 
 Each step maps to a `sfn_*` function in `db.py`. The workflow is triggered from `main.py` when creating a meeting.
+
+STANDARD has no `StartSyncExecution`, so `_scheduling._start_and_wait` starts the
+execution and polls `DescribeExecution` (20s budget, backing off 0.4s→1.5s) — well
+inside the Lambda's 30s timeout. A failed execution or an exhausted budget falls
+through to `run_local_steps`, which produces the same slots in-process. Execution
+names get a millisecond suffix because STANDARD enforces unique names for 90 days.
 
 ### AI Fairness Scoring (inline — `_scheduling._run_ai_inline`)
 
@@ -281,7 +315,10 @@ There is no test suite. No pytest files exist in `backend/` and no Jest/Vitest f
 
 ## Terraform Notes
 
-- No `terraform.tfvars` — always pass `lab_role_arn` via `-var=`.
+- `terraform.tfvars` exists but is gitignored (it holds the OpenAI key and Google client secret). Defaults in `variables.tf` cover a fresh clone.
+- There is no `lab_role_arn` variable — `local.lab_role_arn` is built from `data.aws_caller_identity.current.account_id`, so the config follows whichever account the credentials belong to.
+- `data.aws_cloudwatch_log_group.sfn_logs` must already exist — create `/aws/vendedlogs/states/SmartSchedulerWorkflow-Logs` by hand in a new account before the first plan.
+- `prevent_destroy` on the Cognito user pool: any plan that would replace it hard-errors. In a new account start from empty state rather than trying to destroy.
 - `lifecycle { ignore_changes = [target] }` on API Gateway (import drift).
 - `lifecycle { ignore_changes = [explicit_auth_flows] }` on Cognito client.
 - Lambda ARN for Step Functions is constructed at runtime from env vars to avoid circular Terraform dependency.
