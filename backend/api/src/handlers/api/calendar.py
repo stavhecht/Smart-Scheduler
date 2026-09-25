@@ -5,10 +5,11 @@ import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from src.common import calendar_client
+from src.common import calendar_client, mock_calendar
 from fastapi import HTTPException
 
 from src.database.repository import CalendarRepository, UserRepository
+from src.handlers.api import demo as _demo
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,8 @@ def handle_calendar_events(identity: dict, data: str | None) -> list:
             for ev in calendar_client.get_ics_events(ics_url, time_min, time_max):
                 ev["source"] = "ics"
                 events.append(ev)
+        # Empty unless this account itself carries a mock calendar.
+        events.extend(mock_calendar.get_mock_events(user_id, time_min, time_max))
         return events
     except Exception as exc:
         logger.warning(f"[calendar_events] {exc}")
@@ -38,15 +41,20 @@ def handle_calendar_events(identity: dict, data: str | None) -> list:
 
 def handle_calendar_status(identity: dict) -> dict:
     try:
-        result = _cal_repo.get_connected_calendars(identity["user_id"])
-        ics_url = _cal_repo.get_ics_url(identity["user_id"])
+        user_id = identity["user_id"]
+        result = _cal_repo.get_connected_calendars(user_id)
+        ics_url = _cal_repo.get_ics_url(user_id)
         result["ics"] = {"connected": bool(ics_url), "url": ics_url}
+        result["demo"] = _demo.handle_demo_status(identity)
+        result["mock"] = mock_calendar.describe(user_id) or {"connected": False}
         return result
     except Exception as exc:
         logger.warning(f"[calendar_status] {exc}")
         return {
             "google": {"connected": False, "email": ""},
             "ics": {"connected": False, "url": ""},
+            "demo": {"enabled": False, "users": []},
+            "mock": {"connected": False},
         }
 
 
@@ -114,18 +122,6 @@ def handle_oauth_callback(identity: dict, action: str, data: str | None) -> dict
     raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
 
 
-def handle_ics_url(identity: dict, data: str | None) -> dict:
-    if not data:
-        raise HTTPException(status_code=400, detail="Missing data")
-    try:
-        payload = json.loads(data)
-        ics_url = payload.get("icsUrl", "").strip()
-        _cal_repo.save_ics_url(identity["user_id"], ics_url)
-        return {"status": "success"}
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-
-
 def handle_disconnect(identity: dict, action: str) -> dict:
     provider = action.split(":", 1)[1]
     user_id = identity["user_id"]
@@ -171,16 +167,6 @@ def handle_register_watch(identity: dict) -> dict:
     )
     _cal_repo.save_watch_channel(user_id, result["id"], result["resourceId"], expires_at)
     return {"status": "registered", "expiresAt": expires_at}
-
-
-def handle_stop_watch(identity: dict) -> dict:
-    """Stop the active watch channel for the current user."""
-    user_id = identity["user_id"]
-    channel = _cal_repo.get_watch_channel(user_id)
-    if channel:
-        calendar_client.stop_google_watch(user_id, channel["channelId"], channel["resourceId"])
-        _cal_repo.delete_watch_channel(user_id)
-    return {"status": "stopped"}
 
 
 def handle_check_sync(identity: dict) -> dict:

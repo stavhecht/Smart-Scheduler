@@ -18,6 +18,42 @@ logger = logging.getLogger(__name__)
 _meeting_repo = MeetingRepository()
 _user_repo = UserRepository()
 
+# A meeting moves pending → awaiting → confirmed. `awaiting` means the organizer
+# has booked a time but at least one invitee has not accepted it yet; the meeting
+# only becomes `confirmed` once every invitee has accepted.
+BOOKED_STATUSES = ("awaiting", "confirmed")
+
+
+def _status_after_responses(meeting: dict) -> str:
+    """`confirmed` once every invitee has accepted, `awaiting` otherwise."""
+    invited = meeting.get("participantUserIds") or []
+    accepted = set(meeting.get("acceptedBy") or [])
+    return "confirmed" if all(uid in accepted for uid in invited) else "awaiting"
+
+
+def _demo_auto_accepts(meeting: dict) -> list:
+    """
+    Demo colleagues accept the moment a time is booked — nobody can sign in as
+    them to press Accept, so a demo would otherwise stall at `awaiting` forever.
+    Returns the invited demo user ids; empty for a meeting of real people.
+    """
+    from src.handlers.api import demo as _demo
+    return [
+        uid for uid in (meeting.get("participantUserIds") or [])
+        if _demo.is_demo_user(uid)
+    ]
+
+
+def _record_demo_accepts(
+    request_id: str, user_ids: list, slot_utc: datetime | None,
+    duration_minutes: int, apply_fairness: bool = True,
+) -> None:
+    """Log each auto-accept and move the demo user's fairness as a real accept would."""
+    for uid in user_ids:
+        if apply_fairness and slot_utc is not None:
+            _apply_personal_fairness(uid, slot_utc, duration_minutes)
+        _meeting_repo.log_activity(request_id, "accepted", uid, {"auto": "demo"})
+
 
 def handle_meetings(identity: dict) -> list:
     user_id = identity["user_id"]
@@ -78,27 +114,35 @@ def handle_book(identity: dict, action: str, data: str | None) -> dict:
     meeting = _meeting_repo.get_meta(request_id)
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
-    if meeting.get("status") == "confirmed":
+    if meeting.get("status") in BOOKED_STATUSES:
         raise HTTPException(status_code=409, detail="This meeting has already been booked — please refresh and try another slot")
 
     slot_data = _meeting_repo.get_slot(request_id, slot_start_iso)
 
-    # Confirm slot first (conditional write — raises 409 if slot already taken)
-    _meeting_repo.confirm_slot(request_id, slot_start_iso)
+    # Booking parks the meeting in `awaiting` — invitees still have to accept.
+    # A meeting with no invitees (or only demo colleagues, who accept on the
+    # spot) has nobody left to wait on, so it is confirmed outright.
+    # (Conditional write — raises 409 if slot already taken.)
+    auto_accepted = _demo_auto_accepts(meeting)
+    booked_status = _status_after_responses({**meeting, "acceptedBy": auto_accepted})
+    _meeting_repo.confirm_slot(request_id, slot_start_iso, booked_status)
     # Update organizer's personal fairness only after successful confirmation
     slot_utc = datetime.fromisoformat(slot_start_iso)
     _apply_personal_fairness(user_id, slot_utc, int(meeting.get("durationMinutes", 60)))
     _meeting_repo.log_activity(request_id, "booked", user_id)
 
-    # Update local dict to reflect the confirmed state so the response is accurate.
+    # Update local dict to reflect the booked state so the response is accurate.
     # Clear any previous round's declines so participants start fresh.
-    meeting["status"] = "confirmed"
+    meeting["status"] = booked_status
     meeting["selectedSlotStart"] = slot_start_iso
-    meeting["acceptedBy"] = []
+    meeting["acceptedBy"] = auto_accepted
     meeting["declinedBy"] = []
     meeting["declineDetails"] = {}
     meeting["updatedAt"] = datetime.now().isoformat()
     _meeting_repo.update_meta(request_id, meeting)
+    _record_demo_accepts(
+        request_id, auto_accepted, slot_utc, int(meeting.get("durationMinutes", 60))
+    )
 
     end_iso = _compute_end_iso(slot_start_iso, slot_data, meeting)
     ics_content = calendar_client.generate_ics_content(
@@ -107,7 +151,10 @@ def handle_book(identity: dict, action: str, data: str | None) -> dict:
     write_result = _write_to_calendars(meeting, slot_start_iso, end_iso, request_id)
     return {
         "status": "success",
-        "message": "Meeting confirmed successfully",
+        "message": (
+            "Meeting confirmed successfully" if booked_status == "confirmed"
+            else "Time booked — waiting on participants to accept"
+        ),
         "meeting": meeting,
         "icsContent": ics_content,
         "calendarSyncWarning": _calendar_warning(user_id, write_result),
@@ -126,15 +173,29 @@ def handle_accept(identity: dict, action: str) -> dict:
     if user_id not in accepted:
         accepted.append(user_id)
     meeting["acceptedBy"] = accepted
+    # An accept can also clear an earlier decline from the same person.
+    meeting["declinedBy"] = [u for u in meeting.get("declinedBy", []) if u != user_id]
+    meeting["declineDetails"] = {
+        k: v for k, v in (meeting.get("declineDetails") or {}).items() if k != user_id
+    }
+    # The last outstanding accept is what flips a booked meeting to confirmed.
+    if meeting.get("status") in BOOKED_STATUSES:
+        meeting["status"] = _status_after_responses(meeting)
+    meeting["updatedAt"] = datetime.now().isoformat()
     _meeting_repo.update_meta(request_id, meeting)
     _meeting_repo.log_activity(request_id, "accepted", user_id)
-    # Update participant's personal fairness — only possible once the slot is confirmed
+    # Update participant's personal fairness — only possible once the slot is booked
     slot_start = meeting.get("selectedSlotStart")
     if slot_start:
         _apply_personal_fairness(user_id, datetime.fromisoformat(slot_start), int(meeting.get("durationMinutes", 60)))
     else:
         logger.info(f"[fairness_update] accept for {request_id}: meeting not yet booked, skipping fairness")
-    return {"status": "success", "message": "Meeting accepted", "acceptedBy": accepted}
+    return {
+        "status": "success",
+        "message": "Meeting accepted",
+        "acceptedBy": accepted,
+        "meetingStatus": meeting.get("status"),
+    }
 
 
 def handle_decline(identity: dict, action: str, data: str | None) -> dict:
@@ -170,6 +231,10 @@ def handle_decline(identity: dict, action: str, data: str | None) -> dict:
     meeting["declineDetails"] = details
     meeting["acceptedBy"] = [u for u in meeting.get("acceptedBy", []) if u != user_id]
     meeting["updatedAt"] = now.isoformat()
+    # A decline means not everyone is on board any more, so a confirmed meeting
+    # drops back to awaiting.
+    if meeting.get("status") in BOOKED_STATUSES:
+        meeting["status"] = _status_after_responses(meeting)
 
     invited = meeting.get("participantUserIds", [])
     all_declined = bool(invited) and all(u in declined for u in invited)
@@ -180,7 +245,7 @@ def handle_decline(identity: dict, action: str, data: str | None) -> dict:
     )
 
     reshuffled = False
-    if all_declined and meeting.get("status") == "confirmed":
+    if all_declined and meeting.get("status") in BOOKED_STATUSES:
         # All invited users declined — reshuffle: release the slot, regenerate, back to pending
         if ext_ids := meeting.get("externalEventIds"):
             try:
@@ -308,18 +373,24 @@ def handle_edit(identity: dict, action: str, data: str | None) -> dict:
         )
         run_local_steps(sched_payload)
 
-    # Editing a confirmed meeting clears participant responses so everyone must respond again.
-    if updated and original_status == "confirmed":
+    # Editing a booked meeting clears participant responses so everyone must
+    # respond again — which drops it back to awaiting.
+    if updated and original_status in BOOKED_STATUSES:
         if payload.preferredHours is not None:
             updated["preferredHours"] = payload.preferredHours
         if payload.excludedWeekdays is not None:
             updated["excludedWeekdays"] = payload.excludedWeekdays
         now = datetime.now()
-        updated["acceptedBy"] = []
+        # Demo colleagues re-accept straight away; their fairness was already
+        # moved when the time was booked, so it is not applied a second time.
+        auto_accepted = _demo_auto_accepts(updated)
+        updated["acceptedBy"] = auto_accepted
         updated["declinedBy"] = []
         updated["declineDetails"] = {}
+        updated["status"] = _status_after_responses(updated)
         updated["updatedAt"] = now.isoformat()
         _meeting_repo.update_meta(request_id, updated)
+        _record_demo_accepts(request_id, auto_accepted, None, 0, apply_fairness=False)
         external_ids = updated.get("externalEventIds") or {}
         if external_ids:
             try:
@@ -374,10 +445,21 @@ def handle_book_custom(identity: dict, action: str, data: str | None) -> dict:
     )
     _meeting_repo.write_slot(request_id, slot_start_iso, slot.model_dump(mode="json"))
     _apply_personal_fairness(user_id, datetime.fromisoformat(slot_start_iso), int(meeting.get("durationMinutes", 60)))
-    meeting["status"] = "confirmed"
+    # Same as handle_book: a fresh booking waits on the invitees' accepts,
+    # except for demo colleagues, who accept on the spot.
+    auto_accepted = _demo_auto_accepts(meeting)
+    meeting["acceptedBy"] = auto_accepted
+    meeting["declinedBy"] = []
+    meeting["declineDetails"] = {}
+    meeting["status"] = _status_after_responses(meeting)
     meeting["selectedSlotStart"] = slot_start_iso
+    meeting["updatedAt"] = datetime.now().isoformat()
     _meeting_repo.update_meta(request_id, meeting)
     _meeting_repo.log_activity(request_id, "booked", user_id, {"custom": True})
+    _record_demo_accepts(
+        request_id, auto_accepted, datetime.fromisoformat(slot_start_iso),
+        int(meeting.get("durationMinutes", 60)),
+    )
 
     ics_content = calendar_client.generate_ics_content(
         title=meeting.get("title", "Meeting"), start_iso=slot_start_iso, end_iso=effective_end
@@ -431,11 +513,14 @@ def handle_reschedule(identity: dict, action: str, data: str | None) -> dict:
     _meeting_repo.update_meta(request_id, meeting)
     _meeting_repo.delete_slots(request_id)
 
-    from src.handlers.api._scheduling import build_reschedule_payload, run_local_steps, _run_ai_inline
+    from src.handlers.api._scheduling import build_reschedule_payload, run_local_steps, dispatch_or_run_ai
     payload = build_reschedule_payload(meeting, user_id, request_id, search_days)
     run_local_steps(payload)
 
-    ai_fields = _run_ai_inline(request_id, payload)
+    # AI scoring off the critical path (async in Lambda). If it ran inline
+    # (local / fallback) we merge its fields now; the async job writes them to
+    # META itself.
+    ai_fields = dispatch_or_run_ai(request_id, payload)
     if ai_fields:
         meeting.update(ai_fields)
         _meeting_repo.update_meta(request_id, meeting)
@@ -465,6 +550,7 @@ def handle_score_slot(identity: dict, data: str | None) -> dict:
         participant_states = []
         participant_tz_offsets = []
         participant_working_days = []
+        participant_lunch_breaks = []
         for uid in all_ids:
             state = _user_repo.get_fairness(uid)
             if state:
@@ -473,6 +559,7 @@ def handle_score_slot(identity: dict, data: str | None) -> dict:
             if p:
                 participant_tz_offsets.append(get_tz_offset_hours(p.get("timezone", "UTC")))
                 participant_working_days.append(p.get("workingDays", [0, 1, 2, 3, 4]))
+                participant_lunch_breaks.append(p.get("lunchBreak"))
 
         user_profile = _user_repo.get_profile_raw(user_id)
         tz_offset = get_tz_offset_hours((user_profile or {}).get("timezone", "UTC"))
@@ -484,6 +571,7 @@ def handle_score_slot(identity: dict, data: str | None) -> dict:
             tz_offset_hours=tz_offset,
             participant_tz_offsets=participant_tz_offsets or None,
             participant_working_days=participant_working_days or None,
+            participant_lunch_breaks=participant_lunch_breaks or None,
             organizer_working_days=organizer_working_days,
         )
 

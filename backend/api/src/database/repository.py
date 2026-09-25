@@ -40,7 +40,7 @@ class UserRepository:
         self._db.put(
             f"USER#{user_id}", "FAIRNESS",
             models.FairnessState(
-                userId=user_id, fairnessScore=100.0,
+                userId=user_id, fairnessScore= 50.0,
                 meetingLoadMetrics={
                     "meetings_this_week": 0,
                     "prime_slots_accepted": 0,
@@ -86,6 +86,18 @@ class UserRepository:
         data = self._db.get(f"USER#{user_id}", "FAIRNESS")
         return models.FairnessState(**data) if data else None
 
+    @staticmethod
+    def _fairness_is_pinned(user_id: str) -> bool:
+        """Mock users hold a neutral 50 forever.
+
+        Demo colleagues auto-accept every booking, so letting their balance move
+        would drift them off 50 over a demo without anyone choosing anything on
+        their behalf. Pinning them keeps the equity_bonus a demo shows off
+        driven by the real participants.
+        """
+        from src.common import mock_calendar
+        return mock_calendar.is_mock_user(user_id)
+
     def update_fairness_for_single(
         self,
         user_id: str,
@@ -94,6 +106,8 @@ class UserRepository:
     ) -> None:
         """Update one participant's fairness using their personal impact value."""
         from src.core.fairness import engine
+        if self._fairness_is_pinned(user_id):
+            return
         try:
             fairness = self.get_fairness(user_id)
             if not fairness:
@@ -135,6 +149,8 @@ class UserRepository:
     def reverse_fairness_for_single(self, user_id: str) -> None:
         """Undo the last booking's fairness delta for one user."""
         from src.core.fairness import engine
+        if self._fairness_is_pinned(user_id):
+            return
         try:
             fairness = self.get_fairness(user_id)
             if not fairness:
@@ -173,6 +189,8 @@ class UserRepository:
     def update_fairness_on_cancel(self, user_id: str) -> None:
         """Add a cancellation timestamp to the organizer's fairness record (expires in 30 days)."""
         from src.core.fairness import engine
+        if self._fairness_is_pinned(user_id):
+            return
         fairness = self.get_fairness(user_id)
         if not fairness:
             return
@@ -240,13 +258,13 @@ class UserRepository:
         recent_titles = []
         for mid in list(shared_ids)[:5]:
             m = self._db.get(f"MEET#{mid}", "META")
-            if m and m.get("status") == "confirmed":
+            if m and m.get("status") in ("awaiting", "confirmed"):
                 recent_titles.append(m.get("title", ""))
         return {"count": len(shared_ids), "recentTitles": recent_titles[:3]}
 
     def get_stats(self, user_id: str, meetings: List[models.MeetingRequest]) -> dict:
         total_organised = sum(1 for m in meetings if m.creatorUserId == user_id)
-        total_accepted = sum(1 for m in meetings if m.status == "confirmed")
+        total_accepted = sum(1 for m in meetings if m.status in ("awaiting", "confirmed"))
         total_cancelled = sum(1 for m in meetings if m.status == "cancelled")
         fairness_item = self._db.get(f"USER#{user_id}", "FAIRNESS")
         current_score = float(fairness_item.get("fairnessScore", 100)) if fairness_item else 100.0
@@ -258,29 +276,6 @@ class UserRepository:
             "current_fairness_score": round(current_score, 1),
             "meetings_this_week": int(float(load_metrics.get("meetings_this_week", 0))),
         }
-
-    def get_recent_activity(self, user_id: str, limit: int = 12) -> List[dict]:
-        part_items = self._db.query_prefix(f"USER#{user_id}", "PART#")
-        part_items.sort(key=lambda x: x.get("addedAt", ""), reverse=True)
-        meeting_ids = [item.get("meetingId") for item in part_items if item.get("meetingId")]
-        meeting_ids = meeting_ids[:20]
-        all_logs: List[dict] = []
-        for mid in meeting_ids:
-            meeting = self._db.get(f"MEET#{mid}", "META")
-            if not meeting:
-                continue
-            meeting_title = meeting.get("title", "Meeting")
-            log_items = self._db.query_prefix(f"MEET#{mid}", "LOG#")
-            for log in log_items:
-                all_logs.append({
-                    "meetingId": mid,
-                    "meetingTitle": meeting_title,
-                    "action": log.get("action", ""),
-                    "by": log.get("by", ""),
-                    "at": log.get("at", ""),
-                })
-        all_logs.sort(key=lambda x: x.get("at", ""), reverse=True)
-        return all_logs[:limit]
 
 
 # ---------------------------------------------------------------------------
@@ -358,16 +353,22 @@ class MeetingRepository:
             for s in slots:
                 batch.delete_item(Key={"PK": s["PK"], "SK": s["SK"]})
 
-    def confirm_slot(self, request_id: str, slot_start_iso: str) -> None:
-        """Conditional write — raises HTTP 409 if slot already confirmed."""
+    def confirm_slot(
+        self, request_id: str, slot_start_iso: str, new_status: str = "confirmed"
+    ) -> None:
+        """Conditional write — raises HTTP 409 if slot already booked.
+
+        `new_status` is normally `awaiting` (the invitees still have to accept);
+        it is `confirmed` only when there is nobody left to wait on.
+        """
         try:
             self._db.table.update_item(
                 Key={"PK": f"MEET#{request_id}", "SK": "META"},
-                UpdateExpression="SET #st = :confirmed, selectedSlotStart = :slot, updatedAt = :now",
+                UpdateExpression="SET #st = :booked, selectedSlotStart = :slot, updatedAt = :now",
                 ConditionExpression="attribute_not_exists(selectedSlotStart) OR #st = :pending",
                 ExpressionAttributeNames={"#st": "status"},
                 ExpressionAttributeValues={
-                    ":confirmed": "confirmed",
+                    ":booked": new_status,
                     ":slot": slot_start_iso,
                     ":now": datetime.now().isoformat(),
                     ":pending": "pending",
@@ -519,13 +520,6 @@ class CalendarRepository:
     def get_ics_url(self, user_id: str) -> str:
         profile = self._db.get(f"USER#{user_id}", "PROFILE")
         return (profile or {}).get("icsUrl", "")
-
-    def save_ics_url(self, user_id: str, ics_url: str) -> None:
-        data = self._db.get(f"USER#{user_id}", "PROFILE")
-        if not data:
-            return
-        data["icsUrl"] = ics_url
-        self._db.put(f"USER#{user_id}", "PROFILE", data)
 
     def save_oauth_state(self, user_id: str, provider: str, state: str) -> None:
         self._db.put(f"USER#{user_id}", f"OAUTH_STATE#{state}", {

@@ -116,8 +116,12 @@ def handle_profile_stats(identity: dict) -> dict:
 
 
 def handle_list_users(identity: dict) -> list:
+    from src.handlers.api import demo as _demo
     try:
         users = _user_repo.get_all_users(identity["user_id"])
+        # Demo colleagues are only visible to accounts that turned demo mode on.
+        if not _demo.is_enabled(identity["user_id"]):
+            users = [u for u in users if not _demo.is_demo_user(u.get("userId", ""))]
         return [
             {
                 "userId": u.get("userId", ""),
@@ -130,6 +134,7 @@ def handle_list_users(identity: dict) -> list:
                 "fairness_score": u.get("fairness_score", 100.0),
                 "skills": u.get("skills", []),
                 "statusMessage": u.get("statusMessage", ""),
+                "isDemo": _demo.is_demo_user(u.get("userId", "")),
             }
             for u in users
         ]
@@ -169,18 +174,3 @@ def handle_reset_fairness(identity: dict) -> dict:
         "lastUpdatedAt": now,
     })
     return {"fairnessScore": new_score, "meetingLoadMetrics": new_metrics}
-
-
-def handle_activity_feed(identity: dict) -> list:
-    try:
-        raw = _user_repo.get_recent_activity(identity["user_id"])
-        seen_profiles: dict = {}
-        for entry in raw:
-            actor_id = entry.get("by", "")
-            if actor_id and actor_id not in seen_profiles:
-                p = _user_repo.get_profile(actor_id)
-                seen_profiles[actor_id] = p.displayName if p else actor_id[:8]
-            entry["actorName"] = seen_profiles.get(actor_id, actor_id[:8])
-        return raw
-    except Exception:
-        return []

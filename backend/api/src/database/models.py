@@ -55,14 +55,6 @@ class UserProfile(BaseDBModel):
     showFairnessScore: bool = True
     createdAt: datetime = Field(default_factory=datetime.now)
 
-
-class ConnectedCalendar(BaseDBModel):
-    provider: str
-    email: str
-    connectedAt: datetime = Field(default_factory=datetime.now)
-    scopes: List[str] = []
-
-
 class MeetingRequest(BaseDBModel):
     requestId: str
     creatorUserId: str
@@ -72,6 +64,8 @@ class MeetingRequest(BaseDBModel):
     durationMinutes: int
     dateRangeStart: datetime
     dateRangeEnd: datetime
+    # pending (no time booked) → awaiting (time booked, invitees still to accept)
+    # → confirmed (every invitee accepted). Plus cancelled.
     status: str = "pending"
     selectedSlotStart: Optional[str] = None
     acceptedBy: List[str] = []
@@ -143,13 +137,4 @@ class FairnessState(BaseDBModel):
     inconvenientMeetingsCount: int
     lastUpdatedAt: datetime = Field(default_factory=datetime.now)
     lastWeekReset: Optional[str] = None
-
-
-class MeetingLogEntry(BaseDBModel):
-    requestId: str
-    action: str
-    by: str
-    at: datetime = Field(default_factory=datetime.now)
-    changes: Optional[Dict[str, Any]] = None
-
 

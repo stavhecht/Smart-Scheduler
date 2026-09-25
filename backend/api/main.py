@@ -11,7 +11,9 @@ if os.environ.get('ENVIRONMENT') == 'development':
     except ImportError:
         pass
 
-from fastapi import FastAPI, HTTPException, Request
+import json
+
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
 
@@ -52,24 +54,35 @@ def handler(event, context):
 # API Endpoints
 # ---------------------------------------------------------------------------
 
-@app.get("/health")
-def health(action: Optional[str] = None, token: Optional[str] = None, data: Optional[str] = None):
+@app.post("/api/proxy")
+async def api_proxy(request: Request, authorization: Optional[str] = Header(None)):
     """
-    Public route (no JWT authorizer on API Gateway).
-    Without query params → simple health check.
-    With action + token → CORS-safe proxy used by the React frontend to bypass
-    the JWT authorizer OPTIONS pre-flight issue on ANY /{proxy+}.
+    The frontend's sole authenticated transport. The Cognito access token rides
+    in the Authorization header (off the URL and out of access logs) and the
+    payload in the JSON body (no URL-length limit). Route has no gateway
+    authorizer — we validate the access token here via cognito-idp:GetUser, then
+    dispatch.
+
+    Body: {"action": "<action>", "data": <object|string|null>}
+    Always returns HTTP 200; check body.status === 'error' on the frontend.
     """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Body must be JSON")
+
+    action = body.get("action")
+    data = body.get("data")
+    # dispatch() expects data as a JSON string.
+    if data is not None and not isinstance(data, str):
+        data = json.dumps(data)
+
+    token = None
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+
     if not action or not token:
-        try:
-            import boto3 as _boto3
-            _boto3.client("dynamodb", region_name="us-east-1").describe_table(
-                TableName=os.environ.get("TABLE_NAME", "SmartScheduler_V1")
-            )
-            db_status = "DynamoDB Active"
-        except Exception as _e:
-            db_status = f"DynamoDB ERROR: {str(_e)[:100]}"
-        return {"status": "ok", "db": db_status, "sfn": "SmartSchedulerWorkflow"}
+        raise HTTPException(status_code=400, detail="Missing action or Authorization token")
 
     try:
         identity = validate_access_token(token)
