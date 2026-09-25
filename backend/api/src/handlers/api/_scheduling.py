@@ -55,6 +55,55 @@ def _get_state_machine_arn() -> str:
     return f"arn:aws:states:{region}:{account_id}:stateMachine:SmartSchedulerWorkflow"
 
 
+# Wait budget for a Step Functions execution. The state machine is STANDARD
+# type, which has no StartSyncExecution, so we start the execution and poll
+# DescribeExecution. The cap keeps us inside the Lambda's 30s timeout with room
+# left to build the response; running out sends the caller to the local
+# fallback, which produces the same slots in-process.
+_SFN_MAX_WAIT_SECONDS = 20.0
+_SFN_POLL_INITIAL = 0.4
+_SFN_POLL_MAX = 1.5
+
+
+class _SfnTimeout(Exception):
+    """Raised when a STANDARD execution is still RUNNING at the wait budget."""
+
+
+def _start_and_wait(request_id: str, sfn_input: dict) -> None:
+    """Starts SmartSchedulerWorkflow and blocks until it leaves RUNNING.
+
+    Raises on a failed execution or when the wait budget runs out, so the
+    caller falls back to running the steps in-process.
+    """
+    sfn = _get_sfn_client()
+    # STANDARD enforces unique execution names for 90 days, so the request id
+    # on its own is not a safe name if the same meeting is ever retried.
+    resp = sfn.start_execution(
+        stateMachineArn=_get_state_machine_arn(),
+        name=f"schedule-{request_id}-{int(time.time() * 1000)}",
+        input=json.dumps(sfn_input, cls=_DecimalEncoder),
+    )
+    execution_arn = resp["executionArn"]
+
+    deadline = time.monotonic() + _SFN_MAX_WAIT_SECONDS
+    delay = _SFN_POLL_INITIAL
+    while True:
+        desc = sfn.describe_execution(executionArn=execution_arn)
+        status = desc["status"]
+        if status == "SUCCEEDED":
+            return
+        if status != "RUNNING":
+            detail = desc.get("error") or desc.get("cause") or ""
+            raise Exception(f"Workflow {status}: {detail}".strip())
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise _SfnTimeout(
+                f"still RUNNING after {_SFN_MAX_WAIT_SECONDS}s ({execution_arn})"
+            )
+        time.sleep(min(delay, remaining))
+        delay = min(delay * 1.5, _SFN_POLL_MAX)
+
+
 _lambda_client = None
 
 
@@ -353,14 +402,7 @@ def run_or_schedule(
             logger.warning(f"Local scheduling failed for {meeting.requestId}: {local_exc}")
     else:
         try:
-            sfn = _get_sfn_client()
-            resp = sfn.start_sync_execution(
-                stateMachineArn=_get_state_machine_arn(),
-                name=f"schedule-{meeting.requestId}",
-                input=json.dumps(sfn_input, cls=_DecimalEncoder),
-            )
-            if resp["status"] == "FAILED":
-                raise Exception(resp.get("error", "Workflow failed"))
+            _start_and_wait(meeting.requestId, sfn_input)
         except Exception as sfn_exc:
             logger.warning(f"SFN failed for {meeting.requestId}, falling back to local: {sfn_exc}")
             try:
